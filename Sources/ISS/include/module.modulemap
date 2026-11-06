@@ -1,0 +1,6 @@
+module ISS {
+    header "ISS.h"
+    link framework "ApplicationServices"
+    link framework "IOKit"
+    export *
+}
