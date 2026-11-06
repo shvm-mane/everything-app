@@ -4,14 +4,6 @@
 import CoreGraphics
 import Darwin
 
-/// Reads a Quartz event timestamp as nanoseconds of uptime.
-///
-/// `CGEventTimestamp` is documented as nanoseconds, and that is what a session
-/// tap sees. A tap at the HID stage sees hardware events stamped in mach
-/// absolute time instead, which on Apple Silicon advances once every 125/3 ns,
-/// while events posted by software still arrive there in nanoseconds (#1689).
-/// Because one HID tap sees both kinds, the unit is decided per event: of the
-/// two readings, the one nearer the current uptime is the unit it carries.
 enum EventTimestamp {
     struct Timebase: Equatable {
         let numer: UInt64
@@ -26,8 +18,6 @@ enum EventTimestamp {
         return Timebase(numer: UInt64(info.numer), denom: UInt64(info.denom))
     }()
 
-    /// The event's timestamp in nanoseconds of uptime, the clock
-    /// `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)` reads.
     static func nanoseconds(of event: CGEvent) -> UInt64 {
         nanoseconds(raw: event.timestamp, nowTicks: mach_absolute_time(), timebase: machTimebase)
     }
@@ -39,8 +29,6 @@ enum EventTimestamp {
         return distance(raw, now) <= distance(fromTicks, now) ? raw : fromTicks
     }
 
-    /// `ticks * numer / denom`, rounded down like the system's own conversion
-    /// and saturating instead of trapping on a nonsense timestamp.
     static func nanoseconds(ticks: UInt64, timebase: Timebase) -> UInt64 {
         guard timebase.denom > 0 else { return ticks }
         let whole = (ticks / timebase.denom).multipliedReportingOverflow(by: timebase.numer)

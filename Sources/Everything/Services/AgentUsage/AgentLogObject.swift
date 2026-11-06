@@ -4,9 +4,6 @@
 import Darwin
 import Foundation
 
-/// Indexes just one JSON object's fields. Strings and nested payloads are
-/// skipped in place; only explicitly requested small fields are decoded.
-/// A nested tool result can never supply an envelope's type or agentId.
 struct AgentLogObject {
     private let data: Data
     private let fields: [String: Range<Int>]

@@ -6,14 +6,9 @@ import Carbon.HIToolbox
 import SwiftUI
 import Vision
 
-/// Everything the annotation editor can do to one capture: the mutable
-/// document (image, annotations, undo history) and the export paths. The
-/// SwiftUI editor view observes this model; geometry is in image pixels.
 final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
     @Published private(set) var baseImage: CGImage
     @Published var annotations: [ScreenshotSupport.Annotation] = []
-    /// How dark a spotlight turns everything outside its regions,
-    /// remembered between captures like the blur strength.
     @Published var spotlightDimStrength: CGFloat {
         didSet {
             UserDefaults.standard.set(Double(spotlightDimStrength),
@@ -47,18 +42,11 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             }
         }
     }
-    /// Words recognized in the capture and selectable with the select tool.
     @Published private(set) var textWords: [ScreenshotSupport.RecognizedWord] = []
-    /// The recognized words joined into the runs text only blur areas cover,
-    /// or nil until recognition has read all of the current capture.
     @Published private(set) var textRuns: [CGRect]?
-    /// Runs a crop carried over to the capture it made. Recognition misses a
-    /// line the crop cut through, so the cropped capture's runs keep these
-    /// once it is read, and after an undo or redo back to it.
     private var carriedRuns: [ObjectIdentifier: [CGRect]] = [:]
     @Published private(set) var selectedWordIndexes: [Int] = []
     private var textSelectionAnchor: CGPoint?
-    /// A QR code found in the capture, offered as a copy or open action.
     @Published private(set) var qrReading: BarcodeDetector.Reading?
     @Published var color: ScreenshotSupport.ColorID {
         didSet {
@@ -117,8 +105,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             refreshDirtyState()
         }
     }
-    /// The full backdrop configuration (kind, colors or image, margin and
-    /// corner sliders), persisted as JSON and applied live on the canvas.
     @Published var backdropStyle: ScreenshotSupport.BackdropStyle {
         didSet {
             UserDefaults.standard.set(backdropStyle.encoded(),
@@ -127,7 +113,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             refreshDirtyState()
         }
     }
-    /// Custom backdrops the user chose to keep.
     @Published private(set) var backdropPresets: [ScreenshotSupport.BackdropStyle] {
         didSet {
             UserDefaults.standard.set(
@@ -135,11 +120,7 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                 forKey: DefaultsKey.screenshotBackdropPresets)
         }
     }
-    /// Loaded image for an image-kind backdrop; nil when missing on disk,
-    /// which quietly renders as no backdrop.
     @Published private(set) var backdropImage: CGImage?
-    /// A mark of your own over the capture, persisted as JSON like the
-    /// backdrop and applied live on the canvas.
     @Published var watermarkStyle: ScreenshotSupport.WatermarkStyle {
         didSet {
             UserDefaults.standard.set(watermarkStyle.encoded(),
@@ -148,10 +129,7 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             refreshDirtyState()
         }
     }
-    /// Loaded picture for an image-kind watermark; nil when missing on disk,
-    /// which quietly draws nothing.
     @Published private(set) var watermarkImage: CGImage?
-    /// Watermarks the user chose to keep.
     @Published private(set) var watermarkPresets: [ScreenshotSupport.WatermarkStyle] {
         didSet {
             UserDefaults.standard.set(
@@ -160,29 +138,19 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
     @Published var cropDraft: CGRect?
-    /// Exact image pixel under a crop resize grip. Nil while moving the
-    /// whole crop so the loupe appears only when it adds precision.
     @Published private(set) var cropLoupePoint: CGPoint?
-    /// Continuous zoom (view points per image pixel); nil fits the window.
     @Published var zoomOverride: CGFloat?
-    /// What the view actually laid out last, so pinch and scroll zoom start
-    /// from the visible scale even in fit mode. Plain var on purpose: the
-    /// view writes it during layout.
     var currentDisplayZoom: CGFloat = 0.5
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
-    /// True while there is work that never left the app: closing then asks.
     @Published private(set) var isDirty = false
 
     let scale: CGFloat
-    /// Sampled mosaics of the base image, one per blur level in use.
     private(set) var pixelated: [Int: CGImage] = [:]
-    /// Small soft blurs of the base image, one per blur level in use.
     private(set) var softBlurred: [Int: CGImage] = [:]
     private let eraseCache = ScreenshotRenderer.EraseCache()
     private let imageLayerCache = ScreenshotRenderer.ImageLayerCache()
 
-    /// What blur areas paint from, shared by the canvas and the exporter.
     var blurSources: ScreenshotRenderer.BlurSources {
         ScreenshotRenderer.BlurSources(mosaics: pixelated,
                                        softBlurs: softBlurred,
@@ -202,9 +170,7 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
     private var cleanAnnotationShadowsEnabled = false
     private var cleanSpotlightDimStrength: CGFloat = 0.5
 
-    // Gesture state, in image pixels.
     private var dragStart: CGPoint = .zero
-    /// The shape a drag is drawing, until it lands.
     @Published private(set) var draftID: UUID?
     private var moveOrigin: CGRect = .zero
     private var movePoints: [CGPoint] = []
@@ -215,8 +181,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
     private var dragRegistered = false
     private var editingSelectedAnnotation = false
     private var newTextID: UUID?
-    /// System uptime of the last press, drag or release in the editor window.
-    /// Nothing on screen reads it, so it is not published.
     private(set) var lastPointerActivityUptime: TimeInterval = -.infinity
 
     func notePointerActivity() {
@@ -227,7 +191,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         CGSize(width: baseImage.width, height: baseImage.height)
     }
 
-    /// Natural on-screen size in points (pixels over capture scale).
     var pointSize: CGSize {
         CGSize(width: CGFloat(baseImage.width) / scale, height: CGFloat(baseImage.height) / scale)
     }
@@ -271,8 +234,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         recordCleanState()
     }
 
-    /// Backdrop margin in image pixels for the current settings; zero while
-    /// the backdrop is off. The live canvas and the exporter share this.
     var backdropPaddingPixels: CGFloat {
         showsBackdrop
             ? ScreenshotSupport.backdropPadding(for: imageSize,
@@ -280,19 +241,15 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             : 0
     }
 
-    /// Corner rounding of the capture card in image pixels.
     var cardCornerPixels: CGFloat {
         ScreenshotSupport.cardCornerRadius(for: imageSize,
                                            factor: CGFloat(backdropStyle.cornerRadius))
     }
 
-    /// The card's outline, which its shadow follows: a window's own rounded
-    /// corners when they are rounder than the user's, as the exporter draws.
     var cardOutlineCornerPixels: CGFloat {
         max(cardCornerPixels, baseImageCornerPixels)
     }
 
-    /// Read once per picture: a crop or a canvas change makes a new one.
     private var measuredBaseImageCorner: (image: CGImage, radius: CGFloat)?
 
     private var baseImageCornerPixels: CGFloat {
@@ -302,15 +259,11 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         return radius
     }
 
-    /// True when something actually paints behind the capture (an image
-    /// backdrop whose file vanished counts as nothing).
     var showsBackdrop: Bool {
         if case .none = backdropFill { return false }
         return true
     }
 
-    /// The style resolved into what the renderer paints, shared by the live
-    /// canvas and the exporter.
     var backdropFill: ScreenshotRenderer.BackdropFill {
         let style = backdropStyle.sanitized()
         switch style.kind {
@@ -344,8 +297,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     private var loadedBackdropPath: String?
 
-    /// True when a mark actually draws: text with something typed, or a
-    /// picture that loaded.
     var showsWatermark: Bool {
         switch watermarkStyle.sanitized().kind {
         case .none: return false
@@ -366,8 +317,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     private var loadedWatermarkPath: String?
 
-    /// Loads and caps a backdrop or watermark picture; wallpapers can be 6K
-    /// and neither needs more than the export canvas.
     private static func loadImageFile(_ path: String) -> CGImage? {
         let url = URL(fileURLWithPath: path)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
@@ -381,13 +330,10 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     // MARK: - Backdrop presets
 
-    /// Keeps the current custom backdrop (colors or image) in the presets
-    /// row; duplicates are ignored.
     func saveCurrentBackdropAsPreset() {
         let style = backdropStyle.sanitized()
         guard style.kind != .none, style.kind != .preset else { return }
         var snapshot = style
-        // A preset is the look, not this capture's sliders.
         snapshot.padding = 0.5
         snapshot.cornerRadius = 0.1
         snapshot.blur = 0
@@ -409,8 +355,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     // MARK: - Watermark presets
 
-    /// Keeps the current mark, placement and all, in the presets row;
-    /// duplicates are ignored.
     func saveCurrentWatermarkAsPreset() {
         let style = watermarkStyle.sanitized()
         guard style.kind != .none, !watermarkPresets.contains(style) else { return }
@@ -438,16 +382,11 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         textWords.firstIndex { $0.rect.insetBy(dx: -2 * scale, dy: -2 * scale).contains(point) }
     }
 
-    /// Word-level recognition of the base capture, off the main thread; the
-    /// boxes land in image pixels with their line index.
     func recognizeText() {
         let image = baseImage
         let width = CGFloat(image.width)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let tiles = ScreenshotSupport.recognitionTiles(width: image.width, height: image.height)
-            // One read per band, nil for a band recognition failed on. A band
-            // left out or failed keeps text only areas covering all of
-            // themselves, because its text is unknown.
             var reads: [[ScreenshotSupport.BandWord]?] = []
             var lineOffset = 0
             for band in tiles {
@@ -476,7 +415,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                 var read: [ScreenshotSupport.BandWord] = []
                 for (line, observation) in observations.enumerated() {
                     let lineBox = imageRect(observation.boundingBox)
-                    // A line read without any text is still text to cover.
                     guard let candidate = observation.topCandidates(1).first else {
                         read.append(ScreenshotSupport.BandWord(text: "", rect: nil, lineBox: lineBox,
                                                                line: lineOffset + line))
@@ -510,9 +448,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
 
-    /// Scans the capture for a QR code off the main thread; the result drives
-    /// the copy or open action in the toolbar. Re-run whenever the base image
-    /// changes (crop, undo) so a cropped out code stops being offered.
     func recognizeQRCodes() {
         let image = baseImage
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -531,14 +466,12 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     static let zoomRange: ClosedRange<CGFloat> = 0.05...3
 
-    /// Multiplies the current zoom (pinch, ⌃ scroll, ⌘ plus and minus).
     func adjustZoom(by factor: CGFloat) {
         let current = zoomOverride ?? currentDisplayZoom
         zoomOverride = min(max(current * factor, Self.zoomRange.lowerBound),
                            Self.zoomRange.upperBound)
     }
 
-    /// Absolute zoom for pinch gestures anchored at the gesture's start.
     func setZoom(_ zoom: CGFloat) {
         zoomOverride = min(max(zoom, Self.zoomRange.lowerBound), Self.zoomRange.upperBound)
     }
@@ -567,9 +500,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         let oldBounds = CGRect(origin: .zero, size: oldSize)
         annotations = annotations.compactMap { annotation in
             var moved = annotation
-            // A spotlight region lights only its part on the image. Past the
-            // old edge it would land in the new margin and light it, or start
-            // dimming the canvas while lighting nothing of the content.
             if moved.tool == .spotlight {
                 let lit = moved.rect.standardized.intersection(oldBounds)
                 guard !lit.isEmpty else { return nil }
@@ -627,7 +557,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         restore(next)
     }
 
-    /// Keeps carried runs only for captures the editor can still show.
     private func pruneCarriedRuns() {
         let live = Set([ObjectIdentifier(baseImage)] + (undoStack + redoStack).map { ObjectIdentifier($0.image) })
         carriedRuns = carriedRuns.filter { live.contains($0.key) }
@@ -639,8 +568,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             baseImage = state.image
             pixelated = [:]
             softBlurred = [:]
-            // The runs belong to the other image. Text only areas cover all
-            // of themselves until this one is read.
             textRuns = nil
             clearTextSelection()
             recognizeText()
@@ -682,15 +609,12 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             || backdropStyle.sanitized() != cleanBackdropStyle
             || watermarkStyle.sanitized() != cleanWatermarkStyle
             || annotationShadowsEnabled != cleanAnnotationShadowsEnabled
-            // Without a region the dim changes nothing in the output.
             || (spotlightDimStrength != cleanSpotlightDimStrength
                 && annotations.contains { $0.tool == .spotlight })
     }
 
     // MARK: - Selection styling
 
-    /// Applies color, thickness, text size, or arrow style changes to the
-    /// selected annotation.
     private func applyStyleToSelection() {
         guard let selectedID,
               let index = annotations.firstIndex(where: { $0.id == selectedID })
@@ -700,8 +624,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             && annotations[index].arrowStyle != arrowStyle
         let textSizeChanged = annotations[index].tool == .text
             && annotations[index].textSize != textSize
-        // Marks without a thickness control keep theirs, so picking one never
-        // records an edit nobody made.
         let usesStroke = ScreenshotSupport.selectionStyle(for: annotations[index]).stroke != nil
         let strokeChanged = usesStroke && annotations[index].stroke != stroke
         guard annotations[index].color != color
@@ -738,8 +660,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                 || mark.blurStyle != blurStyle
                 || mark.blurTextOnly != blurTextOnly
         else { return }
-        // The sample must exist before the mark points at it, or the redraw
-        // would show the area uncovered. Without one the area keeps its look.
         guard ensureBlurSample(blurStyle, level: blurLevel) else {
             self.selectedID = nil
             syncControls(to: mark)
@@ -763,8 +683,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         annotations[index].text = sticker.rawValue
     }
 
-    /// Copies only the controls that have meaning for the picked annotation.
-    /// Unused values remain available as defaults for the next new mark.
     private func syncControls(to annotation: ScreenshotSupport.Annotation) {
         let style = ScreenshotSupport.selectionStyle(for: annotation)
         if let color = style.color { self.color = color }
@@ -785,8 +703,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         dragStart = point
         dragRegistered = false
         editingSelectedAnnotation = false
-        // A spotlight region claims only its handles and edge, so a drag
-        // inside the one just drawn lights another region.
         if tool != .select, tool != .crop, tool != .expandCanvas,
            selectedAnnotationOwns(point, includingInterior: tool != .spotlight) {
             editingSelectedAnnotation = true
@@ -885,7 +801,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             movePoints = hit.points
             clearTextSelection()
         } else if let word = wordIndex(at: point) {
-            // A drag over recognized text selects intersecting words.
             textSelectionAnchor = point
             selectedWordIndexes = [word]
         }
@@ -961,7 +876,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
         let delta = CGPoint(x: point.x - dragStart.x, y: point.y - dragStart.y)
         if annotations[index].tool == .image {
-            // Whole pixels, so the moved layer still exports pixel for pixel.
             annotations[index].rect = CGRect(origin: CGPoint(x: (moveOrigin.minX + delta.x).rounded(),
                                                              y: (moveOrigin.minY + delta.y).rounded()),
                                              size: moveOrigin.size)
@@ -974,9 +888,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
 
-    /// `isTap` is decided by the view in screen points, so a click stays a
-    /// click at any zoom level; deciding it here in image pixels made taps
-    /// on zoomed-out Retina captures read as drags (the text tool bug).
     func endDrag(at point: CGPoint, isTap: Bool) {
         defer {
             draftID = nil
@@ -1034,8 +945,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             selectedID = annotation.id
         case .arrow, .line, .rect, .ellipse, .highlight, .pixelate, .redact, .spotlight, .freehand:
             if isTap {
-                // A tap never leaves a degenerate shape behind; treat it as
-                // picking whatever is under the cursor instead.
                 annotations.removeAll { $0.id == draftID }
                 if !undoStack.isEmpty { undoStack.removeLast() }
                 refreshUndoFlags()
@@ -1062,9 +971,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
 
-    /// The visible selection remains directly editable after creation. A new
-    /// tool or a gesture outside it ends that priority and creates normally.
-    /// Without the interior, an area mark answers only at its handles and edge.
     func selectedAnnotationOwns(_ point: CGPoint, includingInterior: Bool = true) -> Bool {
         guard let selectedID,
               let selected = annotations.first(where: { $0.id == selectedID })
@@ -1101,10 +1007,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
 
-    /// A click on an existing mark always means "edit this", even while a
-    /// creation tool is active. Real drags still create with the active tool.
-    /// Sticker selection updates the style picker without mutating the mark;
-    /// text enters its inline editor immediately.
     @discardableResult
     private func selectExistingAnnotation(at point: CGPoint) -> Bool {
         guard let hitID = hitTest(point, includeShapeInteriors: false),
@@ -1129,10 +1031,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         mutate(&annotations[index])
     }
 
-    /// `includeShapeInteriors: false` is the creation-tap variant: area
-    /// shapes (boxes, ellipses, highlights, censors) only answer near their
-    /// edge, so their inside stays free for placing a new text, sticker or
-    /// counter — the tap that used to create one there must keep doing so.
     func hitTest(_ point: CGPoint, includeShapeInteriors: Bool = true) -> UUID? {
         let tolerance = 10 * scale
         for annotation in annotations.reversed() {
@@ -1162,8 +1060,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                 if includeShapeInteriors {
                     return annotation.id
                 }
-                // Edge ring only: a shape too small to have a meaningful
-                // interior stays fully tappable.
                 let inner = annotation.rect.insetBy(dx: tolerance, dy: tolerance)
                 if inner.isEmpty || inner.width <= 0 || inner.height <= 0
                     || !inner.contains(point) {
@@ -1193,9 +1089,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         expansionRejected = false
     }
 
-    /// Escape backs out of Expand canvas the way it backs out of crop: a drag
-    /// in progress is dropped first, then the tool itself is left, so the
-    /// editor only closes once there is nothing left to leave.
     func leaveCanvasExpansion() {
         if expansionDraft != nil || expansionRejected {
             cancelCanvasExpansion()
@@ -1217,10 +1110,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         if newTextID == selectedID { newTextID = nil }
     }
 
-    /// Moves the selected annotation one step through the drawing order, so a
-    /// box drawn last can sit behind text written first. Counters are numbered
-    /// by their place in the array, so moving one past another renumbers both,
-    /// the same way deleting one already does.
     func moveSelected(_ move: ScreenshotSupport.LayerMove) {
         guard let selectedID else { return }
         let reordered = ScreenshotSupport.reordering(annotations, moving: selectedID, move)
@@ -1293,9 +1182,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             guard moved.intersects(croppedBounds) else { return nil }
             return ScreenshotSupport.RecognizedWord(text: word.text, rect: moved, line: word.line)
         }
-        // Moved runs still cover the cropped capture's text, including what
-        // the words alone miss, and stay once it is read again. If the old
-        // one was never read, text only areas keep waiting for recognition.
         let previousCarried = carriedRuns[ObjectIdentifier(previousImage)]
         textRuns = ScreenshotSupport.croppedRuns(textRuns, by: cropRect)
         if let carried = textRuns ?? ScreenshotSupport.croppedRuns(previousCarried, by: cropRect), !carried.isEmpty {
@@ -1337,8 +1223,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             spotlightDimStrength: spotlightDimStrength)
     }
 
-    /// Makes the sample a blur area of this style and level paints from, and
-    /// says whether it is there. Erasing reads the capture and needs none.
     @discardableResult
     private func ensureBlurSample(_ style: ScreenshotSupport.BlurStyleID, level: Int) -> Bool {
         switch style {
@@ -1357,7 +1241,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
     }
 
-    /// Keeps a sample for each style and level in use and drops the rest.
     private func ensureBlurSamplesForAnnotations() {
         let mosaicLevels = ScreenshotSupport.mosaicLevels(for: annotations)
         let softBlurLevels = ScreenshotSupport.softBlurLevels(for: annotations)
@@ -1370,8 +1253,6 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
 // MARK: - Window controller
 
-/// Hosts one editor window per capture and owns everything with a side
-/// effect: clipboard, files, pins, text recognition and the close-confirm.
 final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     let model: ScreenshotEditorModel
     private var window: NSWindow?
@@ -1395,32 +1276,21 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     func show() {
         let screen = NSScreen.pointerVisibleFrame
         let minimumSize = ScreenshotSupport.editorMinimumContentSize(visibleSize: screen.size)
-        // The hosting view rewrites the window's size limits on its first
-        // layout pass, so a contentMinSize set on the window is silently
-        // lost. Declare the minimum on the hosted view and track just that:
-        // the hosting controller then maintains contentMinSize itself.
         let content = ScreenshotEditorView(model: model, controller: self)
             .frame(minWidth: minimumSize.width, minHeight: minimumSize.height)
         let host = NSHostingController(rootView: content)
         host.sizingOptions = [.minSize]
         let window = NSWindow(contentViewController: host)
-        // One continuous surface: the canvas fills the window and the
-        // controls float over it, so the editor reads as a single object.
         window.title = strings.editorTitle
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        // Keep the editor dark so canvas contrast and popovers stay consistent.
         window.appearance = NSAppearance(named: .darkAqua)
-        // Content drags edit annotations. Only the title strip moves the window.
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
 
-        // Chrome must equal the view's designed margins exactly (rail 64 +
-        // sides, action band above, style band below), so a fresh window
-        // opens with zero leftover stage around the capture.
         let contentSize = ScreenshotSupport.editorContentSize(
             imagePointSize: model.pointSize,
             visibleSize: screen.size)
@@ -1431,7 +1301,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         installKeyMonitor()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        // Let the window appear before starting competing Vision workloads.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.window?.isVisible == true else { return }
             self.model.recognizeText()
@@ -1443,7 +1312,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    /// Closes without the discard confirmation used by the titlebar button.
     func discardAndClose() {
         window?.close()
     }
@@ -1458,16 +1326,12 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
                     editorWindowNumber: window.windowNumber,
                     editorIsKey: window.isKeyWindow)
             else { return event }
-            // The recorder owns every key, including editor commands.
             if ShortcutCapture.isCapturing { return event }
-            // While a text field edits, every key belongs to it.
             if window.firstResponder is NSText || self.model.editingTextID != nil {
                 return event
             }
             return self.handleKey(event) ? nil : event
         }
-        // A stroke, a slider or the drag-out handle can draw a select-to-copy
-        // utility's posted ⌘C; see `ScreenshotSupport.editorIgnoresPostedCopy`.
         pointerMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             if let self, let window = self.window, event.windowNumber == window.windowNumber {
@@ -1475,7 +1339,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
             }
             return event
         }
-        // Control-scroll adjusts canvas zoom.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, let window = self.window,
                   ScreenshotSupport.editorOwnsKeyEvent(
@@ -1492,11 +1355,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Reads and decodes the clipboard image on the shared pasteboard lane,
-    /// as opening the clipboard image in the editor does: the read can race
-    /// with the clipboard history poll, data another app only promised can
-    /// keep it waiting, and a large photo copied in Finder takes a while to
-    /// decode. The paste lands only while this editor is still open.
     private func pasteImageFromClipboard() {
         GeneralPasteboardAccess.shared.async({
             autoreleasepool {
@@ -1535,8 +1393,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         if flags.contains(.command) {
             switch key {
             case kVK_ANSI_C:
-                // Text selected on the canvas copies as text and keeps the
-                // editor open; otherwise the capture leaves as an image.
                 if !model.selectedWordIndexes.isEmpty {
                     copySelectedText()
                 } else if !ScreenshotSupport.editorIgnoresPostedCopy(
@@ -1599,8 +1455,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
 
     // MARK: Export actions
 
-    /// Uploads the rendered editor result without copying the URL or closing
-    /// the editor. The view presents the owner controls after it succeeds.
     func share(duration: ScreenshotShareDuration,
                completion: @escaping (ScreenshotShareRecord?) -> Void) {
         guard let export = model.exportImage() else {
@@ -1621,8 +1475,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
                 completion(nil)
                 return
             }
-            // Rendering may outlive the editor or the feature. Recheck before
-            // transmitting the capture, not only when the server answers.
             guard self.window != nil,
                   AppFeature.screenshot.isAvailable,
                   UserDefaults.standard.bool(forKey: DefaultsKey.screenshotSharingEnabled) else {
@@ -1649,16 +1501,12 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The edited image as it would be saved, in a temporary file for the
-    /// system share sheet.
     func shareFile() -> URL? {
         guard let export = model.exportImage() else { return nil }
         return ScreenshotService.temporaryExportFile(image: export.image, scale: export.scale,
                                                      strings: strings)
     }
 
-    /// Every final output closes the editor: the capture leaves the app
-    /// and the window's job is done, so nothing lingers to tidy up.
     func copyToClipboard() {
         guard let export = model.exportImage() else { return }
         guard Self.copyImage(export, fileNamePrefix: strings.fileNamePrefix) else {
@@ -1696,9 +1544,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     static func copyFile(_ url: URL?, payload: ClipboardPayload,
                          imageOnly: Bool = UserDefaults.standard.bool(
                             forKey: DefaultsKey.screenshotCopyImageOnly)) -> Bool {
-        // Chromium treats a file URL as a file even when the same item has
-        // PNG/TIFF data. Keep the file representation for apps that need it,
-        // and let image-only copies reach image paste targets instead.
         if imageOnly { return copyClipboardPayload(payload) }
         guard let url else { return false }
         let pasteboard = NSPasteboard.general
@@ -1791,8 +1636,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The edited image goes to the shelf as a file named like a saved
-    /// capture, and the editor closes as it does after Save.
     func addToShelf() {
         guard let export = model.exportImage(),
               let data = ScreenshotRenderer.pngData(from: export.image, scale: export.scale)
@@ -1807,14 +1650,12 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    /// Pinning snapshots the current export and leaves the editor open.
     func pin() {
         guard let export = model.exportImage(withBackdrop: false) else { return }
         ScreenshotPinController.shared.pin(image: export.image, scale: export.scale)
         model.markExported()
     }
 
-    /// Copies the words selected on the canvas as plain text.
     func copySelectedText() {
         let text = model.selectedText
         guard !text.isEmpty else { return }
@@ -1825,8 +1666,6 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         QuickToolHUD.show(icon: "text.viewfinder", message: L10n.shared.s.ocrCopied)
     }
 
-    /// Shows the detected code's content in the shared result panel; the
-    /// editor stays open behind it so the capture can still be worked on.
     func showQRResult() {
         guard let reading = model.qrReading else { return }
         QRResultController.shared.show(reading: reading)

@@ -143,7 +143,6 @@ private final class AsyncResultBox<T>: @unchecked Sendable {
     }
 }
 
-/// A workspace can outlive its visible panel while its requested export runs.
 final class MediaWorkspaceSelection: ObservableObject {
     @Published var inputURLs: [URL] = []
     @Published var inputImageSize: CGSize?
@@ -331,9 +330,6 @@ final class MediaService: ObservableObject {
             "--output", stagedOutputURL.path,
             "--replace",
             "--progress",
-            // Deliberately not the reader's region: these are arguments for
-            // a tool that reads a decimal point, and a comma would break the
-            // trim in every country that writes numbers that way.
             "--start", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), trim.start),
             "--duration", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), trim.duration),
         ]
@@ -399,8 +395,6 @@ final class MediaService: ObservableObject {
                 destination: stagedOutputURL,
                 isCancelled: { token.isCancelled },
                 progress: { value in
-                    // The encoder reports every frame, which would put thousands
-                    // of hops on the main queue for one conversion.
                     let percent = Int(value * 100)
                     guard percent != publishedPercent else { return }
                     publishedPercent = percent
@@ -434,11 +428,6 @@ final class MediaService: ObservableObject {
                                               assetDuration: metadata.duration)
         guard trim.duration > 0 else { throw MediaFailureBox(.unsupported) }
 
-        // A GIF has no bitrate to aim at, so a target size can only be reached
-        // by measuring what a pass produced and shrinking what feeds the next
-        // one. Aiming starts from the source itself rather than from the width
-        // the resolution mode last used, so the result is the largest GIF that
-        // fits instead of the one that happened to be configured.
         var width = targeted
             ? MediaSupport.targetGIFStartWidth(sourceWidth: metadata.displaySize.width)
             : options.width
@@ -756,8 +745,6 @@ final class MediaService: ObservableObject {
         publish(.completed(result), operationID: operationID)
     }
 
-    /// A dropped file that does not fit the selected tool: surface the same
-    /// "unsupported" message a failed run would, instead of accepting it.
     func rejectUnsupportedInput() {
         state = .failed(.unsupported)
     }
@@ -1111,10 +1098,6 @@ final class MediaService: ObservableObject {
         return clean
     }
 
-    /// CGImageDestination accepts com.adobe.pdf but ignores the lossy quality,
-    /// embedding the bitmap losslessly. Re-encoding as JPEG at the chosen
-    /// quality and drawing that image into a PDF context makes Quartz embed
-    /// the JPEG stream as-is, so the quality slider keeps working for PDF.
     private func writePDF(image: CGImage, outputURL: URL, quality: Double) throws {
         let jpegData = NSMutableData()
         guard let encoder = CGImageDestinationCreateWithData(jpegData, UTType.jpeg.identifier as CFString, 1, nil) else {
@@ -1165,9 +1148,6 @@ final class MediaService: ObservableObject {
         if token.isCancelled { throw MediaFailureBox(.cancelled) }
     }
 
-    /// Launch and cancellation share one lock, so a process either starts and
-    /// becomes cancellable before the lock is released, or never starts after
-    /// its operation was replaced or cancelled.
     private func launch(process: Process,
                         operationID: UUID,
                         token: MediaCancellationToken) throws {

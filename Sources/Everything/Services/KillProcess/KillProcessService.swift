@@ -5,9 +5,6 @@ import AppKit
 import Darwin
 import Foundation
 
-/// One row of the live process list: either a single process, or - when
-/// grouping is on - a responsible app with every helper process it owns
-/// folded into it (`groupedCount > 1`).
 struct KillProcessEntry: Identifiable, Equatable {
     let pid: pid_t
     let ppid: pid_t
@@ -19,18 +16,11 @@ struct KillProcessEntry: Identifiable, Equatable {
     let bundleURL: URL?
     let groupedCount: Int
     let isProtected: Bool
-    /// Kernel start time in microseconds. A PID alone is reusable and is not a
-    /// safe identity for a destructive action confirmed from an old row.
     let startedAt: UInt64?
 
     var id: pid_t { pid }
 }
 
-/// Lists every running process (via `ps`, the same source
-/// `ProcessUsageService` uses for the resource breakdown) and kills,
-/// force-kills, restarts, or tears down whole process trees. Backs both the
-/// Kill Process settings page and its Command Bar rows, which share this
-/// service's cache instead of shelling out twice.
 final class KillProcessService: ObservableObject {
     static let shared = KillProcessService()
 
@@ -58,10 +48,6 @@ final class KillProcessService: ObservableObject {
     @Published private(set) var sortAscending: Bool
     @Published private(set) var groupRelated: Bool
     @Published private(set) var isRefreshing = false
-    /// True once a `ps` snapshot has completed successfully at least once, so
-    /// the view can tell "still loading for the first time" apart from
-    /// "search matched nothing" - both look like an empty `entries` array
-    /// otherwise.
     @Published private(set) var hasLoadedOnce = false
 
     private let cacheLock = NSLock()
@@ -110,9 +96,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Column-header sorting: clicking the active column flips direction,
-    /// clicking a different one switches to it at that column's natural
-    /// default direction (highest-first for CPU/memory/PID, A-Z for name).
     func toggleSort(_ value: SortBy) {
         if sortBy == value {
             sortAscending.toggle()
@@ -130,13 +113,6 @@ final class KillProcessService: ObservableObject {
         refresh(force: true)
     }
 
-    /// Refreshes the process list off the main thread and republishes on the
-    /// main thread. `force` bypasses the freshness cache, so a kill's
-    /// reconciling refresh and an explicit tap of the refresh button always
-    /// see the current state. `completion` always fires on the main thread,
-    /// even when the cache was already fresh, so a caller that needs the
-    /// current snapshot (the Command Bar's lazy load) can sequence off it
-    /// instead of guessing at a delay.
     func refresh(force: Bool = false, completion: (() -> Void)? = nil) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { self.refresh(force: force, completion: completion) }
@@ -161,9 +137,6 @@ final class KillProcessService: ObservableObject {
                     completion?()
                     return
                 }
-                // A failed or empty `ps` call (transient - a timeout under
-                // load, a hiccup) must never wipe a list that was already
-                // showing good data; only a genuine snapshot replaces it.
                 if let rows {
                     self.entries = rows
                     self.hasLoadedOnce = true
@@ -187,8 +160,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Kills a process identified by its pid, name, and kernel start time.
-    /// This is the shared safe path for rows supplied by another feature.
     func kill(pid: pid_t,
               name: String,
               startedAt: UInt64,
@@ -205,7 +176,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Kills every currently listed process sharing this exact name.
     func killAll(named name: String, force: Bool) {
         let targets = entries.filter { $0.name == name && !$0.isProtected }
             .compactMap(Self.target(for:))
@@ -216,8 +186,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Kills a process together with every descendant, deepest first, so a
-    /// parent never outlives children it might otherwise try to restart.
     func killTree(_ entry: KillProcessEntry, force: Bool) {
         guard !entry.isProtected, let root = Self.target(for: entry) else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -231,9 +199,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Sends the direct-kill signal to every pid, then escalates every pid
-    /// that came back EPERM through a single `AdminShell` prompt, so killing
-    /// several processes owned by another user asks for the password once.
     private func killBatch(_ targets: [KillTarget],
                            force: Bool,
                            adminPromptProcessName: String) -> Set<pid_t> {
@@ -289,10 +254,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Removes killed rows immediately so the list feels responsive, then
-    /// reconciles with a real `ps` snapshot shortly after - long enough for
-    /// the kernel to have reaped the process, short enough nobody notices
-    /// the wait.
     private func finishKill(removed: Set<pid_t>, completion: (() -> Void)? = nil) {
         DispatchQueue.main.async {
             if !removed.isEmpty {
@@ -305,15 +266,6 @@ final class KillProcessService: ObservableObject {
         }
     }
 
-    /// Every descendant of `pid`, walked in memory from a single `ps` parent
-    /// table. The BFS used to run `pgrep -P` once per pid it had found, so
-    /// tearing down a tree of a few hundred processes forked that many short
-    /// lived helpers one after another - seconds of stalling while the list
-    /// had already dropped the rows.
-    ///
-    /// A grandchild forked between this snapshot and the signal is missed;
-    /// the per-pid `pgrep` walk raced the same way, and `killBatch` still
-    /// re-checks every target's identity before it signals anything.
     private static func descendants(of pid: pid_t) -> [pid_t] {
         let listing = Shell.run("/bin/ps", ["-eo", "pid,ppid"])
         guard listing.status == 0 else { return [] }
@@ -333,9 +285,6 @@ final class KillProcessService: ObservableObject {
         !entry.isProtected && entry.bundleURL != nil && entry.startedAt != nil
     }
 
-    /// Terminates the app, waits for the real termination notification (not
-    /// a fixed delay), then relaunches it - the same sequence
-    /// `CommandBarService.restart` uses for its own restart row.
     func restart(_ entry: KillProcessEntry) {
         guard !entry.isProtected,
               let url = entry.bundleURL,
@@ -433,9 +382,6 @@ final class KillProcessService: ObservableObject {
 
     // MARK: - Snapshot
 
-    /// Nil on a failed or clearly-wrong snapshot (a timed-out or non-zero
-    /// `ps`, or zero rows parsed - never legitimately true on a running Mac),
-    /// so a transient hiccup can be told apart from an actually-empty list.
     private static func snapshot(grouped: Bool) -> [KillProcessEntry]? {
         let result = Shell.run("/bin/ps", ["-eo", "pid,ppid,pcpu,rss,comm"])
         guard result.status == 0 else { return nil }
@@ -444,7 +390,6 @@ final class KillProcessService: ObservableObject {
         return (grouped ? groupedByApp(rows) : rows).sorted { $0.cpuPercent > $1.cpuPercent }
     }
 
-    /// Lines look like "  437     1  12.5  20480 /System/Library/.../WindowServer".
     private static func parsePS(_ output: String) -> [KillProcessEntry] {
         var rows: [KillProcessEntry] = []
         for line in output.split(separator: "\n").dropFirst() {
@@ -480,9 +425,6 @@ final class KillProcessService: ObservableObject {
         return rows
     }
 
-    /// Folds helper processes under the app responsible for them, summing
-    /// their CPU/memory - the same grouping `ProcessUsageService` applies to
-    /// the resource breakdown, reused here via `ResponsibleProcess`.
     private static func groupedByApp(_ rows: [KillProcessEntry]) -> [KillProcessEntry] {
         var byOwner: [pid_t: [KillProcessEntry]] = [:]
         for row in rows {

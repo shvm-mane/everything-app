@@ -5,10 +5,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// A session-scoped view of macOS Now Playing. The read itself lives in the
-/// bridge below, out of process; a failed run, a timeout and malformed
-/// metadata all arrive here as an empty playback session.
-/// Nothing here is required for the radial menu itself to work.
 final class RadialNowPlayingService {
     static let shared = RadialNowPlayingService()
 
@@ -276,23 +272,15 @@ enum RadialNowPlayingApplication {
         return icon
     }
 
-    /// The island and the radial card are non-activating panels, so Vorssaint
-    /// rarely holds activation when one is clicked. Since macOS 14 a bare
-    /// request from an inactive app is refused, and the player stayed behind.
     static func open(_ snapshot: RadialNowPlayingSnapshot) {
         if let application = runningApplication(for: snapshot) {
-            // A helper takes no activation; the handoff would leave Vorssaint in front.
             guard application.activationPolicy == .regular else { return }
-            // Read before the unhide below: a hidden player's windows come back with it.
             let showsNoWindow = !application.isHidden && !hasWindowOnScreen(pid: application.processIdentifier)
             if application.isHidden { application.unhide() }
             ActivationHandoff.yield(to: application)
             if !application.activate(from: NSRunningApplication.current, options: [.activateAllWindows]) {
                 application.activate(options: [.activateAllWindows])
             }
-            // Like a Dock click, a player that keeps playing with its window
-            // closed shows one again, the way the App Switcher reopens a
-            // windowless app. Activation alone would leave nothing to see.
             if showsNoWindow, let url = application.bundleURL {
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = false
@@ -307,8 +295,6 @@ enum RadialNowPlayingApplication {
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    /// Whether the player has a window on the current Space. One on another
-    /// Space reads as none, and the reopen that follows is harmless there.
     private static func hasWindowOnScreen(pid: pid_t) -> Bool {
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                  kCGNullWindowID) as? [[String: Any]] ?? []
@@ -318,19 +304,8 @@ enum RadialNowPlayingApplication {
     }
 }
 
-/// Reads Now Playing through `/usr/bin/perl` loading the adapter library
-/// (`Sources/NowPlayingAdapter`). Since macOS 15.4 MediaRemote answers only
-/// processes carrying Apple's signature; perl is one, the app is not. A
-/// missing script or library, a failed run, a timeout and malformed output
-/// all read as an empty playback session.
 private final class MediaRemoteNowPlayingBridge {
     private let queue = DispatchQueue(label: "com.vorssaint.radial-now-playing", qos: .userInitiated)
-    /// 2 s: a cold perl load measured 500 ms with no session playing, and a
-    /// real reply adds the MediaRemote round trip plus up to 16 MB of base64
-    /// artwork through the pipe. A kill reads as nothing playing, so a deadline
-    /// that is too tight empties the first wheel after login (#1280). The wheel
-    /// shows `.loading` and holds the card anchor while it waits, so the extra
-    /// second costs nothing on screen.
     private static let replyTimeout: TimeInterval = 2.0
 
     func fetch(completion: @escaping (RadialNowPlayingSnapshot?) -> Void) {

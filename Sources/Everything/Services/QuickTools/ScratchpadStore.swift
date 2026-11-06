@@ -3,7 +3,6 @@
 
 import Foundation
 
-/// A failed read must never authorize a later autosave or migration cleanup.
 struct ScratchpadStore {
     let directoryURL: URL?
     let defaults: UserDefaults

@@ -3,10 +3,6 @@
 
 import Foundation
 
-/// Reads OpenCode database rows as handed over by `AgentOpenCodeReader`.
-/// Every session keeps its own turn and model tracking inside the shared
-/// state, and a row that arrives after its session went quiet starts a
-/// task of its own.
 struct OpenCodeReader: AgentHarnessReader {
     var provider: AgentProvider { .opencode }
 
@@ -34,9 +30,6 @@ struct OpenCodeReader: AgentHarnessReader {
 
         let timeCreated = (json["time"] as? [String: Any])?["created"] ?? json["time_created"]
         let date = AgentLogParser.seconds(timeCreated) ?? now
-        // A session quiet this long with no reply being written starts its
-        // next prompt as a task of its own, so what it kept to tell its rows
-        // apart can go. Sessions are looked over only as a new one appears.
         if state.openCodeSessions[sessionID] == nil {
             state.openCodeSessions = state.openCodeSessions.filter { _, kept in
                 !kept.writingReplyID.isEmpty
@@ -49,20 +42,11 @@ struct OpenCodeReader: AgentHarnessReader {
         switch role {
         case "user":
             if !id.isEmpty {
-                // A prompt read again, as when its summary is saved, is no new one.
                 if sessionState.seenUserMessageIDs.contains(id) { return [] }
                 remember(id, in: &sessionState.seenUserMessageIDs)
                 sessionState.activeUserMessageID = id
             }
-            // OpenCode writes prompts of its own in the middle of a task: the
-            // request that starts a compaction, the follow up after one, the
-            // summary after a command's subtask. A prompt sent while it works
-            // joins the running loop too, so inside a turn each is activity.
             var entries: [AgentLogEntry] = []
-            // A prompt that arrives after the session went quiet is a task of
-            // its own: the one before stopped without a word, as when a tool
-            // call was rejected, and nothing finished. While a reply is still
-            // being written, as through a long command, the prompt joins it.
             let quiet: Bool
             if let settled = sessionState.settledAt {
                 quiet = date.timeIntervalSince(settled) >= AgentLogParser.openCodeSettle
@@ -117,14 +101,9 @@ struct OpenCodeReader: AgentHarnessReader {
             let hasError = json["error"].map { !($0 is NSNull) } ?? false
             let finish = json["finish"] as? String
             if let completed { sessionState.lastActivity = max(sessionState.lastActivity ?? completed, completed) }
-            // A step that starts after the last one settled is the loop going on.
             if let settled = sessionState.settledAt, date >= settled { sessionState.settledAt = nil }
 
             var entries: [AgentLogEntry] = []
-            // OpenCode completes each reply before it answers a prompt sent
-            // meanwhile. A reply to a newer prompt while an older one never
-            // completed means OpenCode stopped in the middle of it, as when
-            // it was killed, and the newer prompt started a task of its own.
             if !id.isEmpty, !sessionState.writingReplyID.isEmpty, sessionState.writingReplyID != id,
                sessionState.turnOpen, !parentID.isEmpty, parentID == sessionState.activeUserMessageID,
                let prompt = sessionState.activePromptDate, let started = sessionState.turnStarted, prompt > started {
@@ -147,11 +126,6 @@ struct OpenCodeReader: AgentHarnessReader {
                 entries.append(usage)
             }
 
-            // OpenCode's loop goes on after tool calls, after a reply that
-            // still holds calls whatever its finish says, and after the
-            // summary of a compaction it started on its own. Any other finish
-            // stops it, as does an error or a reply that completes without a
-            // finish, like a shell command's.
             let ends: Bool
             if hasError {
                 ends = true
@@ -182,11 +156,6 @@ struct OpenCodeReader: AgentHarnessReader {
                 if !id.isEmpty { remember(id, in: &sessionState.completedAssistantMessageIDs) }
                 if !parentID.isEmpty { remember(parentID, in: &sessionState.completedUserMessageIDs) }
             } else if !isAlreadyCompleted && matchesActivePrompt {
-                // A step that completed hands over to the next one at once,
-                // unless the loop stopped there. OpenCode 2 saves the next
-                // step only once the model starts to answer, which a long
-                // prompt can delay past the wait, and marks where its loop
-                // stopped with a row of its own instead.
                 if let completed, sessionState.turnOpen {
                     if json["version"] as? Int == 2 {
                         entries.append(.turnActive(completed))
@@ -205,9 +174,6 @@ struct OpenCodeReader: AgentHarnessReader {
             return entries
 
         case "compaction":
-            // OpenCode 2 compacts in a row of its own, saved as it starts and
-            // again with what its request cost once it completes or fails.
-            // The turn it runs in goes on meanwhile.
             let ownModel = ((json["model"] as? [String: Any])?["id"] as? String).flatMap { $0.isEmpty ? nil : AgentLogParser.native($0) }
             var entries: [AgentLogEntry] = []
             if let usage = openCodeUsage(json, id: id, session: sessionID, date: date,
@@ -227,8 +193,6 @@ struct OpenCodeReader: AgentHarnessReader {
             return entries
 
         case "idle":
-            // OpenCode 2 marks where each turn ended and how, unless it quit
-            // in the middle of one.
             sessionState.writingReplyID = ""
             sessionState.settledAt = nil
             var entries: [AgentLogEntry] = []
@@ -252,17 +216,11 @@ struct OpenCodeReader: AgentHarnessReader {
         }
     }
 
-    /// Keeps a bounded number of message ids a session has settled.
     private func remember(_ id: String, in ids: inout Set<String>) {
         if ids.count > 100 { ids.removeFirst() }
         ids.insert(id)
     }
 
-    /// What an OpenCode reply or compaction used, priced from the list when
-    /// it knows `model`; nil while it holds no usage. A reply is saved
-    /// before its answer arrives, and a shell command run from the prompt,
-    /// the reply that hands work to a subtask and a request that failed or
-    /// was stopped never hold any usage.
     private func openCodeUsage(_ json: [String: Any], id: String, session: String, date: Date,
                                model: String, project: String) -> AgentLogEntry? {
         let tokensDict = json["tokens"] as? [String: Any] ?? [:]
@@ -275,9 +233,6 @@ struct OpenCodeReader: AgentHarnessReader {
         guard tokens.total > 0 || (recordedCost ?? 0) > 0 else { return nil }
         let billable = AgentBillable(tokens: tokens)
         let priced = AgentPricing.cost(billable, model: model)
-        // A model the list does not know costs what OpenCode recorded.
-        // Local and free models record zero, which stays an estimate so
-        // a price the list learns later still applies.
         let cost: Double?
         let isReported: Bool
         if let calculated = priced.cost {

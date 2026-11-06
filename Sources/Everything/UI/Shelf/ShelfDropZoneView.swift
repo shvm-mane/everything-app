@@ -3,18 +3,11 @@
 
 import SwiftUI
 
-/// The shelf docked under the menu bar icon or at the top center of the
-/// screen. It is a single thing in one place:
-/// a small pill when idle, the full shelf card when opened or when a drag needs
-/// a target. It shrinks and grows in place, never a second window and never a
-/// new menu bar icon. Shown and hidden by ShelfService.
 struct DockedShelfView: View {
     @EnvironmentObject private var shelf: ShelfService
     @ObservedObject private var l10n = L10n.shared
 
     var body: some View {
-        // No open/close animation on purpose: the panel resize and the SwiftUI
-        // content swap cannot be kept in step, and half-synced frames lag.
         Group {
             if shelf.dockedExpanded {
                 ShelfView(dismissSystemImage: "chevron.up",
@@ -30,16 +23,12 @@ struct DockedShelfView: View {
     }
 }
 
-/// The collapsed shelf: a discreet capsule with the brand mark, the item count
-/// and a chevron to expand. It is also a drop target, so a file dropped on the
-/// pill lands in the shelf just the same.
 private struct ShelfPill: View {
     @EnvironmentObject private var shelf: ShelfService
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.colorScheme) private var colorScheme
     private var targeted: Bool { shelf.dropTargeted }
     @State private var hovered = false
-
 
     var body: some View {
         HStack(spacing: 7) {
@@ -77,8 +66,6 @@ private struct ShelfPill: View {
 
     }
 
-    /// The Vorssaint mark, quiet, so the pill is unmistakably the app's; it
-    /// flips to a green tick for a beat right after a catch.
     @ViewBuilder
     private var leadingGlyph: some View {
         if shelf.dockedJustCaught {
@@ -93,9 +80,6 @@ private struct ShelfPill: View {
     }
 }
 
-/// The collapsed shelf docked at the top center of the screen: a solid badge
-/// that names the shelf, since there is no menu bar icon above to explain it.
-/// A drop on it lands in the shelf, like on the pill.
 private struct ShelfTopCenterBadge: View {
     @EnvironmentObject private var shelf: ShelfService
     @ObservedObject private var l10n = L10n.shared

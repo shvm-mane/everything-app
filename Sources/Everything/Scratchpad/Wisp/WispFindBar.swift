@@ -2,14 +2,11 @@ import SwiftUI
 import AppKit
 import Carbon.HIToolbox
 
-/// A single-row find bar that floats at the top of the editor. Type to
-/// search; Return / Shift-Return step matches; Esc closes. Deliberately
-/// minimal — no replace, no regex, no case toggle.
 struct FindBar: View {
     let theme: WispTheme
     @Binding var query: String
     let matchCount: Int
-    let currentIndex: Int   // 1-based; 0 when no matches
+    let currentIndex: Int
     let onNext: () -> Void
     let onPrev: () -> Void
     let onClose: () -> Void
@@ -52,10 +49,6 @@ struct FindBar: View {
         )
         .onAppear {
             startListening()
-            // Setting @FocusState directly in onAppear loses the race —
-            // the field isn't in the window's responder chain yet, so the
-            // focus no-ops and the user has to click in. Bumping it to the
-            // next runloop tick lets the field register first.
             DispatchQueue.main.async { focused = true }
         }
         .onDisappear { stopListening() }
@@ -90,10 +83,6 @@ struct FindBar: View {
         .accessibilityLabel(help)
     }
 
-    /// True while the search field itself owns the keyboard. The field
-    /// is edited through the window's shared field editor; the
-    /// scratchpad's own text view is not a field editor, which is what
-    /// separates the two.
     private static func fieldHasFocus() -> Bool {
         guard let responder = NSApp.keyWindow?.firstResponder as? NSTextView else {
             return false
@@ -101,15 +90,8 @@ struct FindBar: View {
         return responder.isFieldEditor
     }
 
-    /// Local key monitor so Esc / Return / Shift-Return work while the
-    /// text field holds focus (the field would otherwise swallow Esc as
-    /// "cancel editing" and Return as a no-op). Returning nil consumes
-    /// the event so no newline is inserted.
     private func startListening() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Only claim keys while the search field has focus. Click
-            // back into the note with the bar still open and Return has
-            // to do what it always does — start a new line.
             guard Self.fieldHasFocus() else { return event }
             switch Int(event.keyCode) {
             case kVK_Escape:

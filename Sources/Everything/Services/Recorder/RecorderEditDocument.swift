@@ -4,26 +4,14 @@
 import CoreGraphics
 import Foundation
 
-/// Everything the editor can change about a recording, as one value.
-///
-/// It is a value type on purpose: undo keeps a stack of these, which costs
-/// bytes, where the screenshot editor's undo keeps whole images. Nothing here
-/// touches the master, so any edit can be taken back at any point, including
-/// after the file has already been exported once.
 struct RecorderEditDocument: Codable, Equatable {
-    /// Kept part of the recording, in seconds. An end of zero means "to the
-    /// end", so a document written before the recording's duration was known
-    /// still opens showing everything.
     var trimStart: Double
     var trimEnd: Double
     var quality: String
-    /// Export only: editing, cuts and overlays stay on their original clock.
     var exportSpeed: Double
     var keepsSystemAudio: Bool
     var gifSize: String
     var gifFrameRate: Int
-    /// The background behind the recording, as the same JSON the screenshot
-    /// tool writes, so a look saved in one tool is understood by the other.
     var backdrop: String
     var aspect: String
     var showsPointer: Bool
@@ -32,22 +20,12 @@ struct RecorderEditDocument: Codable, Equatable {
     var showsClickRing: Bool
     var zoomEnabled: Bool
     var zoomAmount: Double
-    /// Whether automatic click zooms stay on the clicked field while typing.
     var zoomsOnTyping: Bool
-    /// Stretches thrown away from the middle, in the recording's own time.
     var cuts: [RecorderTimeline.Cut]
-    /// The lean-ins. Filled once from the clicks when a recording is first
-    /// opened, and owned by the person from then on.
     var zoomSegments: [RecorderTimeline.ZoomSegment]
-    /// Set the moment the first set is generated, so opening the recording
-    /// again never regenerates over hand edits, including the edit of
-    /// deleting every zoom.
     var zoomsGenerated: Bool
-    /// Lines of text laid over the recording, in the recording's own time.
     var texts: [RecorderTextOverlay]
-    /// Pictures laid over the recording, in the recording's own time.
     var images: [RecorderImageOverlay]
-    /// Parts of the picture kept unreadable, in the recording's own time.
     var blurs: [RecorderBlurRegion]
     var keepsMicrophone: Bool
     var systemAudioGain: Double
@@ -105,8 +83,6 @@ struct RecorderEditDocument: Codable, Equatable {
         self.microphoneGain = microphoneGain
     }
 
-    /// A document written before these fields existed still opens: every one
-    /// of them falls back to the same value a new recording would get.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         trimStart = try container.decodeIfPresent(Double.self, forKey: .trimStart) ?? 0
@@ -163,21 +139,15 @@ struct RecorderEditDocument: Codable, Equatable {
         RecorderExportTiming(speed: exportSpeed)
     }
 
-    /// Separate from the editor's duration so seeking and undo retain their
-    /// source-time meaning. Speed is applied after trimming and cutting.
     func exportDuration(duration: Double) -> Double {
         exportTiming.outputTime(forSourceTime: outputDuration(duration: duration))
     }
 
-    /// The zooms as they will actually be applied: normalized, and empty when
-    /// the person switched the whole effect off.
     func activeZoomSegments(duration: Double) -> [RecorderTimeline.ZoomSegment] {
         guard zoomEnabled else { return [] }
         return RecorderTimeline.normalized(segments: zoomSegments, duration: duration)
     }
 
-    /// Turning automatic zoom back on is an explicit request to recover the
-    /// click-based zooms when the timeline was emptied by mistake.
     func restoringAutomaticZooms(clicks: [RecorderMotion.Click],
                                  typingTimes: [Double] = [],
                                  duration: Double) -> RecorderEditDocument {
@@ -206,9 +176,6 @@ struct RecorderEditDocument: Codable, Equatable {
         RecorderMotion.sanitizedSmoothing(pointerSmoothing)
     }
 
-    /// The three looks the person can land on with one click. Nothing is
-    /// stored about which one is active: a look is a set of values, so
-    /// changing anything afterwards is just changing a value.
     enum Look: String, CaseIterable {
         case raw, clean, studio
     }
@@ -217,9 +184,6 @@ struct RecorderEditDocument: Codable, Equatable {
         var next = self
         switch look {
         case .raw:
-            // The recording exactly as it happened. The pointer is still drawn,
-            // because the capture itself never contains one, but nothing is
-            // smoothed and nothing is added.
             next.backdrop = ""
             next.aspect = RecorderSupport.Aspect.original.rawValue
             next.showsPointer = true
@@ -273,8 +237,6 @@ struct RecorderEditDocument: Codable, Equatable {
         RecorderSupport.sanitizedTrim(start: trimStart, end: trimEnd, duration: duration)
     }
 
-    /// Whether two documents would draw a different picture. Trim and audio
-    /// do not, so dragging a handle never rebuilds the preview pipeline.
     func affectsPicture(_ other: RecorderEditDocument) -> Bool {
         backdrop != other.backdrop
             || aspect != other.aspect
@@ -291,9 +253,6 @@ struct RecorderEditDocument: Codable, Equatable {
             || blurs != other.blurs
     }
 
-    /// Whether the finished video would run differently, which is what forces
-    /// the preview to be rebuilt from a new composition rather than just
-    /// redrawn. Export speed deliberately does not change preview timing.
     func affectsTiming(_ other: RecorderEditDocument) -> Bool {
         cuts != other.cuts || trimStart != other.trimStart || trimEnd != other.trimEnd
     }
@@ -305,8 +264,6 @@ struct RecorderEditDocument: Codable, Equatable {
             || microphoneGain != other.microphoneGain
     }
 
-    /// True once the person has actually changed something worth warning about
-    /// before the window closes.
     func isEdited(duration: Double) -> Bool {
         let trim = trim(duration: duration)
         return trim.start > 0.01 || trim.end < duration - 0.01 || !keepsSystemAudio
@@ -315,8 +272,6 @@ struct RecorderEditDocument: Codable, Equatable {
             || !images.isEmpty || exportTiming.speed != 1
     }
 
-    /// A damaged or hand-edited document can never wedge the editor: every
-    /// field falls back to something usable.
     func sanitized(duration: Double) -> RecorderEditDocument {
         var document = self
         let trim = trim(duration: duration)
@@ -354,8 +309,6 @@ struct RecorderEditDocument: Codable, Equatable {
     }
 }
 
-/// A bounded conversion between the edited timeline and the exported clock.
-/// The source clock here is after cuts, not the original recording's clock.
 struct RecorderExportTiming {
     static let speedRange = 0.25...4.0
     static let presets: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]
@@ -376,8 +329,6 @@ struct RecorderExportTiming {
     }
 }
 
-/// A named visual starting point, including reusable pictures. Cuts, captions
-/// and sound stay with the recording.
 struct RecorderEditPreset: Codable, Equatable, Identifiable {
     let id: UUID
     var name: String
@@ -389,7 +340,6 @@ struct RecorderEditPreset: Codable, Equatable, Identifiable {
     let showsClickRing: Bool
     let zoomEnabled: Bool
     let zoomAmount: Double
-    /// Absent in older presets, which leave the recording's pictures alone.
     var images: [RecorderImageOverlay]?
 
     init(id: UUID = UUID(), name: String, document: RecorderEditDocument) {

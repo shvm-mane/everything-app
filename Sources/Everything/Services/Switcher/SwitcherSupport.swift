@@ -12,10 +12,6 @@ struct SwitcherScrollNavigation {
     private var lastGesturePhaseTimestamp: CGEventTimestamp?
     private var wasMouseWheel: Bool?
 
-    /// `direction` is Scroll Direction where it applies under the pointer.
-    /// Its tap turns the wheel around only after this one has consumed it,
-    /// so a mouse wheel is turned here to follow the way everything else
-    /// scrolls, as it did when that tap ran first.
     mutating func selectionDelta(for input: CGEvent, direction: ScrollDirectionPreferences? = nil) -> Int {
         guard input.getIntegerValueField(.eventSourceUserData) != ScrollWheelSupport.syntheticTag else {
             return 0
@@ -41,7 +37,6 @@ struct SwitcherScrollNavigation {
         if traits.scrollPhase != 0 || traits.momentumPhase != 0 {
             lastGesturePhaseTimestamp = event.timestamp
         }
-        // Wheel fractions survive pauses; only touch gestures have an idle timeout.
         if wasMouseWheel != isMouseWheel || phase == .began
             || (!isMouseWheel && lastTimestamp.map({ event.timestamp &- $0 > 250_000_000 }) == true) {
             accumulated = 0
@@ -71,7 +66,6 @@ struct SwitcherScrollNavigation {
         accumulated += delta
         let step = isMouseWheel ? 1 : Self.gestureStep
         guard abs(accumulated) >= step else { return 0 }
-        // Each sample advances at most one item, without acceleration or momentum.
         accumulated = isMouseWheel ? accumulated.truncatingRemainder(dividingBy: step) : 0
         return delta < 0 ? 1 : -1
     }
@@ -90,16 +84,11 @@ struct SwitcherActivationPlan: Equatable {
     let restoreSourceWhenTargetMinimizes: Bool
 }
 
-/// How the owning app is brought forward. App-level activation can raise
-/// sibling windows even without activateAllWindows, so a plan
-/// scoped to one window asks the window server to front that window alone.
 enum SwitcherAppActivationRoute: Equatable {
     case exactWindow(CGWindowID)
     case wholeApp
 }
 
-/// Shared by the bounded focus passes on the main thread. Once a pass sees
-/// a newer user action, the remaining passes cannot reclaim the old target.
 final class SwitcherWindowFocusRetryState {
     let targetStartedMinimized: Bool
     let knownWindowIDs: Set<CGWindowID>
@@ -108,8 +97,6 @@ final class SwitcherWindowFocusRetryState {
 
     init(targetWindowID: CGWindowID, targetStartedMinimized: Bool, knownWindowIDs: Set<CGWindowID>) {
         self.targetStartedMinimized = targetStartedMinimized
-        // The selected target is already known even if the server's snapshot
-        // missed it. An entirely unavailable snapshot still stays unavailable.
         self.knownWindowIDs = knownWindowIDs.isEmpty ? [] : knownWindowIDs.union([targetWindowID])
         self.targetWasObservedRestored = !targetStartedMinimized
     }
@@ -164,21 +151,18 @@ struct SwitcherSearchRecord: Equatable {
     let appName: String
 }
 
-/// What a letter typed with the panel open does. Anything else goes to search.
 enum SwitcherLetterAction: Equatable {
     case closeWindow
     case quitApp
     case pinSearch
 }
 
-/// The normal layout, only the frontmost app's windows, or individual windows across apps.
 enum SwitcherSessionScope: Equatable {
     case allApps
     case frontmostApp
     case allWindows
 }
 
-/// How a key arriving before the asynchronous window list is ready is owned.
 enum SwitcherPendingKeyDecision: Equatable {
     case handleActiveSession
     case routeShortcut
@@ -186,35 +170,22 @@ enum SwitcherPendingKeyDecision: Equatable {
     case cancelAndSwallow
 }
 
-/// WindowServer identifiers for the app and window switcher actions. Read
-/// them from the table, not from memory: 28 is "save picture of screen as a
-/// file", and mapping the reverse window key there once let a switcher
-/// shortcut on the 3 key switch the macOS screenshot key off.
 enum SwitcherNativeSymbolicHotKey: Int32, CaseIterable, Hashable {
     case commandTab = 1
     case commandShiftTab = 2
     case nextWindow = 27
     case previousWindow = 220
 
-    /// The ids the switcher ever asks the WindowServer about.
     static let ids = Set(allCases.map(\.rawValue))
 }
 
-/// Which running apps earn an entry of their own when they have no window the
-/// switcher can show. The switcher lists windows, so an app that closed all of
-/// them disappears from it while the system switcher still offers it.
 enum SwitcherWindowlessApps: String, CaseIterable, Equatable {
-    /// Windows only.
     case off
-    /// The desktop app alone, which is always running and often has no window.
     case finder
-    /// Every running app, the way the system switcher lists them.
     case all
 
     static let fallback = SwitcherWindowlessApps.finder
 
-    /// Preferences are stored as plain strings, so an unknown or missing value
-    /// resolves to the behavior the app shipped with instead of nothing.
     static func mode(storedValue: String?,
                      takeOverSystemShortcuts: Bool) -> SwitcherWindowlessApps {
         if takeOverSystemShortcuts { return .all }
@@ -224,29 +195,18 @@ enum SwitcherWindowlessApps: String, CaseIterable, Equatable {
         return mode
     }
 
-    /// The value that carries the old on/off preference over unchanged: the
-    /// desktop app kept its entry, anything else stayed windows only.
     static func migrated(showsWindowlessFinder: Bool) -> SwitcherWindowlessApps {
         showsWindowlessFinder ? .finder : .off
     }
 }
 
-/// Which display the switcher panel opens on. The pointer's screen is what
-/// the app always did; the other two are the choices people arrive expecting
-/// from the switchers they used before, and the menu bar one is the only way
-/// to keep the panel on a fixed display when the pointer roams.
 enum SwitcherScreenPlacement: String, CaseIterable, Equatable {
-    /// The screen under the mouse pointer.
     case pointer
-    /// The screen with the menu bar, the primary display in Displays settings.
     case menuBar
-    /// The screen showing the window that was in front when the session began.
     case activeWindow
 
     static let fallback = SwitcherScreenPlacement.pointer
 
-    /// Preferences are stored as plain strings, so an unknown or missing value
-    /// resolves to the behavior the app shipped with instead of nothing.
     static func placement(storedValue: String?) -> SwitcherScreenPlacement {
         guard let storedValue, let placement = SwitcherScreenPlacement(rawValue: storedValue) else {
             return fallback
@@ -255,8 +215,6 @@ enum SwitcherScreenPlacement: String, CaseIterable, Equatable {
     }
 }
 
-/// A per-app override for the switcher's regular window and windowless-app
-/// choices. Apps without an override keep following `SwitcherWindowlessApps`.
 enum SwitcherAppRule: String, CaseIterable, Equatable {
     case showWithoutWindows
     case windowsOnly
@@ -287,8 +245,6 @@ enum SwitcherAppRule: String, CaseIterable, Equatable {
     }
 }
 
-/// A running app considered for an entry of its own, with the identity the
-/// choice above is decided on.
 struct SwitcherAppCandidate: Equatable {
     let pid: pid_t
     let bundleIdentifier: String?
@@ -304,33 +260,18 @@ struct SwitcherAppGroup: Identifiable, Equatable {
     var windowCount: Int { itemIDs.count }
 }
 
-/// What one App Switcher grid card is made of.
-///
-/// The card scales with the preview size; its chrome does not, because the
-/// chrome is two lines of text that are the same at every size. The thumbnail
-/// takes whatever is left, derived from the parts rather than from one number
-/// standing in for them — the number it used to be had drifted 16pt past what
-/// it stood for, and the card spent the difference on nothing.
 enum SwitcherGridCard {
     static var width: CGFloat { 288 * PreviewSizing.switcherScale }
     static var height: CGFloat { 214 * PreviewSizing.switcherScale }
     static let padding: CGFloat = 10
     static let titleSpacing: CGFloat = 7
-    /// One 13pt line over one 10.5pt line, 2pt apart, descenders included.
     static let titleHeight: CGFloat = 31
     static var thumbnailWidth: CGFloat { width - padding * 2 }
     static var thumbnailHeight: CGFloat { height - padding * 2 - titleSpacing - titleHeight }
-    /// The title band sits inside the thumbnail's width so a long name stops
-    /// short of the card's rounded corners.
     static var titleWidth: CGFloat { thumbnailWidth - 8 }
-    /// Stands in for a thumbnail that has not arrived, so it has to stay
-    /// inside the thumbnail at every preview size (#793 gave it the scale;
-    /// naming it is what lets a test hold it to the thumbnail it sits in).
     static var fallbackIconSize: CGFloat { 80 * PreviewSizing.switcherScale }
 }
 
-/// The search chip sits above the first card, including in the transparent
-/// icon-row panel. Reserve only the space not already provided by its padding.
 enum SwitcherSearchLayout {
     static let chipHeight: CGFloat = 28
     static let edgeInset: CGFloat = 12
@@ -351,17 +292,12 @@ struct SwitcherIconRowLayout: Equatable {
     let simpleTitleSurfaceWidth: CGFloat
     let panelSize: CGSize
     let showsShortcutHints: Bool
-    /// Icons per row and how many rows there are. One row unless the user
-    /// capped the columns and there are more icons than the cap; a wrapped
-    /// row never pages sideways, it scrolls down past `visibleRows`.
     let columns: Int
     let rows: Int
     let visibleRows: Int
 
     var isWrapped: Bool { rows > 1 }
 
-    /// The rows the icon surface shows at once, stacked without gaps: each
-    /// row already carries its own vertical margins.
     var iconAreaHeight: CGFloat { Self.iconAreaHeight(visibleRows: visibleRows) }
 
     static func iconAreaHeight(visibleRows: Int) -> CGFloat { CGFloat(max(1, visibleRows)) * rowHeight }
@@ -374,8 +310,6 @@ struct SwitcherIconRowLayout: Equatable {
     static let iconTileVerticalPadding: CGFloat = 5
     static let iconTileVerticalMargin: CGFloat = 3
     static var iconLabelWidth: CGFloat { max(selectedIconSize + 12, 86 * scale) }
-    /// Text and padding stay legible instead of shrinking with preview size, so
-    /// the row follows the tile's real height and never clips its selection.
     static var rowHeight: CGFloat {
         selectedIconSize + iconTileSpacing + iconTitleHeight
             + 2 * (iconTileVerticalPadding + iconTileVerticalMargin)
@@ -402,24 +336,15 @@ struct SwitcherIconRowLayout: Equatable {
     static let simpleTitleSpacing: CGFloat = 6
     static let simpleTitleScrollPadding: CGFloat = 1
 
-    /// The width `cardCount` preview cards lay out to, including the spacing
-    /// the row puts between them. The preview viewport is sized from this and
-    /// decides whether it has anything to scroll from it, so the two can never
-    /// disagree about what fits.
     static func naturalPreviewWidth(cardCount: Int) -> CGFloat {
         let count = max(0, cardCount)
         return CGFloat(count) * previewCardWidth + CGFloat(max(0, count - 1)) * spacing
     }
 
-    /// Whether every preview card is on screen at once, so the scroll view has
-    /// nothing to scroll to.
     func previewFitsWithoutScrolling(cardCount: Int) -> Bool {
         Self.naturalPreviewWidth(cardCount: cardCount) <= previewContentWidth
     }
 
-    /// The widest row the panel has to hold. Panel sizing and the rows
-    /// themselves both measure against this one value, so a row can never come
-    /// out wider than the window drawing it and get clipped (issues #710, #730).
     func contentWidth(simpleMode: Bool, windowRow: Bool) -> CGFloat {
         let hintWidth = showsShortcutHints ? Self.hintBarWidth : 0
         guard simpleMode else {
@@ -430,8 +355,6 @@ struct SwitcherIconRowLayout: Equatable {
                    hintWidth)
     }
 
-    /// App-only mode keeps the same icon row and shortcut preference, but
-    /// removes the entire preview area so no blank space remains where captures were.
     var simplePanelSize: CGSize {
         CGSize(width: contentWidth(simpleMode: true, windowRow: false) + Self.padding * 2,
                height: Self.simpleTitleHeight + Self.simpleTitleGap
@@ -439,8 +362,6 @@ struct SwitcherIconRowLayout: Equatable {
                         + Self.padding * 2)
     }
 
-    /// A flat window row names every entry under its icon, so it needs no
-    /// separate title strip above the row.
     var simpleWindowPanelSize: CGSize {
         CGSize(width: contentWidth(simpleMode: true, windowRow: true) + Self.padding * 2,
                height: iconAreaHeight + shortcutHintHeight + Self.padding * 2)
@@ -478,7 +399,6 @@ struct SwitcherIconRowLayout: Equatable {
         let maxAppContentWidth = max(tileWidth, maxContentWidth - rowHorizontalPadding * 2)
         let fitByWidth = max(1, Int((maxAppContentWidth + spacing) / (tileWidth + spacing)))
         let cap = SwitcherSupport.cappedColumnCount(fitByWidth: fitByWidth, userMax: userMax)
-        // Only a user cap wraps: Auto keeps the single row that pages sideways.
         let wraps = userMax != nil && appCount > cap
         let columns = wraps ? cap : appCount
         let rows = wraps ? (appCount + columns - 1) / columns : 1
@@ -488,10 +408,6 @@ struct SwitcherIconRowLayout: Equatable {
         let maxPreviewContentWidth = max(previewCardWidth, maxContentWidth - previewPanelPadding * 2)
         let appRowWidth = min(naturalAppRowWidth, maxAppContentWidth)
         let appRowSurfaceWidth = min(appRowWidth + rowHorizontalPadding * 2, maxContentWidth)
-        // Reserve room for a pair whenever any app has multiple windows. Use
-        // the whole list so selecting another app never moves the icon row.
-        // A focused-app session has no other apps to keep stationary; let
-        // its windows fill the available display before scrolling.
         let reservedCardCount = sessionScope == .frontmostApp
             ? max(windowCount, maximumWindowCount)
             : min(2, max(windowCount, maximumWindowCount))
@@ -509,13 +425,9 @@ struct SwitcherIconRowLayout: Equatable {
         let contentWidth = min(max(appRowSurfaceWidth,
                                    previewCeiling + previewPanelPadding * 2,
                                    hintWidth), maxContentWidth)
-        // Wrapped rows scroll down instead of paging sideways, so every icon
-        // counts as visible: that keeps the edge-hover paging switched off.
         let visibleIconCount = wraps ? appCount : min(appCount, fitByWidth)
         let width = contentWidth + padding * 2
         let shortcutHintHeight = showsShortcutHints ? hintGap + hintHeight : 0
-        // Rows beyond what the screen holds scroll. Budget for the taller of
-        // the two things above the icons, so either mode fits.
         let aboveIcons = max(previewHeight + previewGap, simpleTitleHeight + simpleTitleGap)
         let rowBudget = screenVisibleFrame.height * 0.85 - aboveIcons - shortcutHintHeight - padding * 2
             - searchTopInset
@@ -551,18 +463,12 @@ struct SwitcherShortcutHints: Equatable {
 }
 
 enum SwitcherSupport {
-    /// Nobody sees a thumbnail while the displays sleep, the screen is locked
-    /// or another account is on screen, and capturing then only risks the
-    /// stall described on the capture queue (issue #1863).
     static func screenIsInView(session: [String: Any]?, displaysAsleep: Bool) -> Bool {
         SessionActivitySupport.isOnConsole(session)
             && !KeepAwakeAutomationSupport.isScreenLocked(sessionDictionary: session)
             && !displaysAsleep
     }
 
-    /// How long the shortcut must be held before the panel appears. A quick
-    /// press can still switch directly without flashing the panel, while zero
-    /// gives users who prefer immediate visual feedback an instant surface.
     static let defaultAppearanceDelayMilliseconds = 100
     static let appearanceDelayMillisecondsRange: ClosedRange<Int> = 0 ... 500
 
@@ -575,12 +481,8 @@ enum SwitcherSupport {
         TimeInterval(sanitizedAppearanceDelay(milliseconds: milliseconds)) / 1000
     }
 
-    /// The most items a switcher row may hold before wrapping. Ultrawide
-    /// displays fit so many per row that the panel spans the whole screen;
-    /// a cap keeps it compact and wraps the rest onto more rows.
     static let maxColumnsRange: ClosedRange<Int> = 2 ... 10
 
-    /// Nil means Auto: as many as the screen fits, the behavior before the cap.
     static func sanitizedMaxColumns(_ value: Int) -> Int? {
         guard value > 0 else { return nil }
         return min(max(value, maxColumnsRange.lowerBound), maxColumnsRange.upperBound)
@@ -590,25 +492,16 @@ enum SwitcherSupport {
         sanitizedMaxColumns(UserDefaults.standard.integer(forKey: DefaultsKey.switcherMaxColumns))
     }
 
-    /// The screen still wins: a cap wider than what fits never overflows it.
     static func cappedColumnCount(fitByWidth: Int, userMax: Int?) -> Int {
         max(1, min(fitByWidth, userMax ?? fitByWidth))
     }
 
-    /// Columns for a card grid. Auto balances the rows the screen width
-    /// requires; a cap only ever narrows that, so 3 still gives 3 + 1 for four
-    /// windows but a cap of 8 never spreads six windows wider than Auto's
-    /// 3 + 3. The panel is never wider with a cap than without one.
     static func wrappingColumnCount(itemCount: Int, fitByWidth: Int, userMax: Int?) -> Int {
         let auto = gridColumnCount(itemCount: itemCount, maxColumns: fitByWidth)
         guard let userMax else { return auto }
         return max(1, min(auto, userMax))
     }
 
-    /// How wide a window's name is in the font a card draws it in. Measured
-    /// against the font rather than a layout pass, so a card can decide whether
-    /// to scroll the name before the band has ever been on screen -- and a test
-    /// can ask the same question without one.
     static func titleWidth(_ title: String,
                            fontSize: CGFloat = 13,
                            weight: NSFont.Weight = .regular) -> CGFloat {
@@ -625,35 +518,18 @@ enum SwitcherSupport {
         return titleWidth(title, fontSize: fontSize, weight: weight) > width
     }
 
-    /// Grid resolution used to classify window captures.
     static let captureAlphaGridSize = 8
 
-    /// How long the pointer must stay on the last visible icon before the
-    /// overflow row reveals the next one. Long enough that crossing the
-    /// edge does not start a scroll, short enough that a parked pointer
-    /// does not feel stuck.
     static let iconRowEdgeHoverInterval: TimeInterval = 0.24
 
-    /// Cadence for later one-icon steps while the pointer stays parked.
-    /// Kept just above the slide so the next icon appears as soon as the
-    /// previous one has settled.
     static let iconRowEdgeHoverRepeatInterval: TimeInterval = 0.20
 
-    /// Duration of the one-icon slide. Slightly slower than the previous
-    /// 0.15s center jump so the newly revealed icon can still be aimed at.
     static let iconRowEdgeHoverAnimationDuration: TimeInterval = 0.18
 
     static func firstValuesByPID<Value>(_ pairs: [(pid_t, Value)]) -> [pid_t: Value] {
         Dictionary(pairs, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The running apps the window walk can map windows to. Entries with a
-    /// non-positive pid are dropped: the workspace list reports some apps
-    /// (Xcode's Device Hub) as -1 while the process owning their windows is
-    /// absent from it, so such an entry has no windows, no icon and nothing to
-    /// activate (issue #2960). A window owner missing from the list is looked up
-    /// by pid instead, and only a regular app is admitted so helper processes
-    /// stay out.
     static func usableApps<App>(_ apps: [App],
                                 windowOwnerPIDs: [pid_t],
                                 pid: (App) -> pid_t,
@@ -678,8 +554,6 @@ enum SwitcherSupport {
         !simpleMode
     }
 
-    /// The simple switcher follows the existing one-entry-per-app choice.
-    /// With grouping off or a window-scoped session, its row represents windows directly.
     static func usesWindowRow(simpleMode: Bool,
                               mergeWindowsByApp: Bool,
                               sessionScope: SwitcherSessionScope) -> Bool {
@@ -691,17 +565,12 @@ enum SwitcherSupport {
         iconRowLayout && !windowRow
     }
 
-    /// The grouped simple row still needs every backing window for its title
-    /// chips and window shortcut, while its visible app cap remains grouped.
     static func preservesGroupedWindowsDuringEnumeration(allApps: Bool,
                                                          mergeWindowsByApp: Bool,
                                                          simpleMode: Bool) -> Bool {
         allApps && mergeWindowsByApp && simpleMode
     }
 
-    /// Expands only the app representatives that survived the grouped cap.
-    /// Keeping each representative first preserves the legacy app order and
-    /// activation target; its remaining windows follow in MRU order.
     static func expandGroupedWindows(orderedWindows: [SwitcherItem],
                                      representatives: [SwitcherItem]) -> [SwitcherItem] {
         let windowsByPID = Dictionary(grouping: orderedWindows, by: \.pid)
@@ -712,13 +581,6 @@ enum SwitcherSupport {
         }
     }
 
-    /// A program that is not an app, such as the Java a game runs on, is
-    /// listed by its path (issue #3033) and matched the way the mouse
-    /// exceptions and Window Layout match it, by that path as well as by its
-    /// bundle identifier. A JVM that AWT registers reports the identifier of
-    /// Java's launcher, the same for every program that runtime runs, so only
-    /// the path tells the runtime that was picked apart. The path is read only
-    /// while the list names one.
     static func shouldPausePreviewCapture(frontmostBundleIdentifier: String?,
                                           frontmostExecutablePath: @autoclosure () -> String? = nil,
                                           excludedBundleIdentifiers: [String]) -> Bool {
@@ -735,13 +597,6 @@ enum SwitcherSupport {
         dockPreviewEnabled || (switcherEnabled && capturesPreviews(simpleMode: simpleMode))
     }
 
-    /// Resolves the foreground surface a session is measured against: the
-    /// window the user is looking at right now. It can legitimately not exist
-    /// (the app in front was left with no windows, or all of them are
-    /// minimized or parked on another Space), and nil says exactly that
-    /// instead of mistaking an older off-screen window for the source. The
-    /// session opens either way; `initialSelectionPosition` handles the
-    /// sourceless case.
     static func sessionSourceItem(frontmostPID: pid_t?,
                                   focusedWindowID: CGWindowID?,
                                   items: [SwitcherItem]) -> SwitcherItem? {
@@ -756,8 +611,6 @@ enum SwitcherSupport {
             ?? candidates.first(where: { $0.windowID == nil })
     }
 
-    /// Fresh focus can lead the independent use history. Promote only a source
-    /// that survived the visibility rules; a source on another display stays out.
     static func orderedForSession(_ items: [SwitcherItem], currentID: String?) -> [SwitcherItem] {
         guard let currentID, let index = items.firstIndex(where: { $0.id == currentID }) else { return items }
         var ordered = items
@@ -765,9 +618,6 @@ enum SwitcherSupport {
         return ordered
     }
 
-    /// A focused-window Accessibility query is useful unless exactly one
-    /// visible window already identifies the session source. With no visible
-    /// windows, AX can still identify a minimized source window.
     static func needsFocusedWindowLookup(frontmostPID: pid_t,
                                          items: [SwitcherItem]) -> Bool {
         let appPID = appPID(forFrontmost: frontmostPID, items: items)
@@ -776,14 +626,10 @@ enum SwitcherSupport {
         }.prefix(2).count != 1
     }
 
-    /// The regular app behind the process holding the keyboard. Multi-process
-    /// apps render their windows in an embedded helper, so the front process
-    /// is not always the one the entries are filed under.
     static func appPID(forFrontmost frontmostPID: pid_t, items: [SwitcherItem]) -> pid_t {
         items.first(where: { $0.windowOwnerPID == frontmostPID })?.pid ?? frontmostPID
     }
 
-    /// Keeps only the windows belonging to the app that owns the keyboard.
     static func frontmostAppWindows(allItems: [SwitcherItem], frontmostPID: pid_t) -> [SwitcherItem] {
         let appPID = appPID(forFrontmost: frontmostPID, items: allItems)
         return allItems.filter { $0.pid == appPID }
@@ -798,8 +644,6 @@ enum SwitcherSupport {
         }
     }
 
-    /// Existing shortcuts win a conflicting imported preference. The new shortcut
-    /// is absent until enabled, so it cannot claim Option-Tab during an upgrade.
     static func shortcutMatch(event: CGEvent,
                                appsShortcut: GlobalShortcut,
                                windowShortcut: GlobalShortcut,
@@ -824,8 +668,6 @@ enum SwitcherSupport {
         return nil
     }
 
-    /// Where a window-scoped session starts. The foreground window sits first,
-    /// so index 1 is the next window to switch to; a lone window stays at 0.
     static func initialWindowScopedSelectionIndex(itemCount: Int,
                                                   hasForegroundItem: Bool,
                                                   reversed: Bool) -> Int {
@@ -835,21 +677,12 @@ enum SwitcherSupport {
         return itemCount > 1 ? 1 : 0
     }
 
-    /// Shift means backward only for a physical-key match. Some keyboard
-    /// layouts need Shift merely to type the shortcut's displayed character.
     static func windowNavigationDelta(positionalMatch: Bool,
                                       shiftIsNavigationModifier: Bool,
                                       shiftHeld: Bool) -> Int {
         positionalMatch && shiftIsNavigationModifier && shiftHeld ? -1 : 1
     }
 
-    /// Whether a process looks like a compatibility layer hosting a program
-    /// built for another platform. Those processes own real on-screen windows
-    /// but run from a bare loader executable with no bundle identity: either
-    /// the loader's own name, or a per-app "winetemp-" copy that bottle
-    /// managers create so the process carries the hosted program's name and
-    /// icon. They need special handling in the switcher because their windows
-    /// expose no standard Accessibility subrole (issue #274).
     static func isCompatibilityLayerApp(bundleIdentifier: String?,
                                         executablePath: String?,
                                         localizedName: String?) -> Bool {
@@ -864,20 +697,12 @@ enum SwitcherSupport {
         return localizedName.hasPrefix("wine")
     }
 
-    /// Wine forwards a press to a game that captures the mouse even when the
-    /// point is outside the window. A lone activation press can therefore
-    /// become a held game button. Match the loader even when its launcher
-    /// supplies a bundle identity; that identity only matters to enumeration.
     static func usesActivationClick(executablePath: String?, localizedName: String?) -> Bool {
         !isCompatibilityLayerApp(bundleIdentifier: nil,
                                  executablePath: executablePath,
                                  localizedName: localizedName)
     }
 
-    /// Some professional media apps expose their main surface as a floating
-    /// or undescribed Accessibility window instead of a standard macOS window.
-    /// Match bundle prefixes case-insensitively because releases vary between
-    /// lowercase, uppercase and versioned bundle identifiers.
     static func isSupportedMediaFloatingWindow(bundleIdentifier: String?, subrole: String?) -> Bool {
         guard let subrole, subrole == "AXFloatingWindow" || subrole == "AXUnknown",
               let bundleIdentifier else { return false }
@@ -889,31 +714,6 @@ enum SwitcherSupport {
             || lower.hasPrefix("com.adobe.characteranimator")
     }
 
-    /// Whether a window whose Accessibility subrole is not a standard one is
-    /// still a switch target.
-    ///
-    /// `AXUnknown` is the absence of a description, not a description of a
-    /// utility surface: apps that draw their own title bar ship borderless
-    /// windows, and macOS reports those as an undescribed `AXWindow`. The
-    /// window server tells those apart from overlays for us — an ordinary
-    /// window sits at the normal window level, while a HUD or panel floats
-    /// above it — so a normal-level undescribed window is a real window
-    /// whoever shipped it (issues #215, #512). Compatibility-hosted windows
-    /// keep their own exception for the surfaces that resolve to no window
-    /// server id at all (issue #274), and a screen-sized surface stays
-    /// switchable so full-screen playback on another desktop is not lost.
-    ///
-    /// Every subrole the app did describe is left alone: a dialog, a sheet or
-    /// a floating panel is filtered as before unless it fills the screen.
-    /// The one exception is a normal-level `AXDialog` that can be minimized.
-    /// AppKit gives that subrole to every window of a hidden app, and a window
-    /// that still carries it after the app is shown again (reported on macOS 26,
-    /// issue #2279) would otherwise drop out of the list. Alerts and panels read
-    /// `AXDialog` too but have no working minimize button, unless the app made
-    /// the panel miniaturizable; such a panel is listed like a window.
-    ///
-    /// A surface the app asked the window server to keep out of window cycling
-    /// stays out of the switcher however it describes itself.
     static func isSwitchableNonstandardWindow(role: String?,
                                               subrole: String?,
                                               fillsScreen: Bool,
@@ -931,35 +731,11 @@ enum SwitcherSupport {
         return fillsScreen && subrole == "AXFloatingWindow"
     }
 
-    /// Picks the entries that survive the visible cap, by index into `appPIDs`
-    /// (the owning app of each entry, in the order the switcher will show them).
-    ///
-    /// The cap counts entries, not applications, so taking the first `limit` of
-    /// them let a single app with many windows push whole other applications
-    /// off the end: the switcher then looked like those apps were not running
-    /// at all, and the only way to bring one back was to raise it by other
-    /// means so its window rose in the use order. Issue #172 fixed the half of
-    /// this that truncated before the use order was applied; this is the other
-    /// half.
-    ///
-    /// Every app now gets its most recently used entry first, in app order, and
-    /// only the slots left over are filled with further entries. With more apps
-    /// than slots the apps compete with each other instead of one app's windows
-    /// crowding the rest out.
-    ///
-    /// The incoming order is preserved: index 0 is the window the user is
-    /// looking at and index 1 the toggle target, so the survivors must not be
-    /// resorted into app groups.
     static func visibleSelectionIndices(appPIDs: [pid_t], limit: Int) -> [Int] {
         guard limit > 0 else { return [] }
         guard appPIDs.count > limit else { return Array(appPIDs.indices) }
         var chosen = Set<Int>()
         var representedApps = Set<pid_t>()
-        // The window in front and the one before it lead the use order, and a
-        // quick flick of the shortcut goes straight from the first to the
-        // second. They stay whatever else a full list has to give up, as they
-        // did under the plain leading slice, even when both belong to one app
-        // and every other slot is needed for an app of its own.
         for index in appPIDs.indices.prefix(min(2, limit)) {
             chosen.insert(index)
             representedApps.insert(appPIDs[index])
@@ -976,11 +752,6 @@ enum SwitcherSupport {
         return chosen.sorted()
     }
 
-    /// The entries a session keeps once its list is capped, by index into
-    /// `items`. A session scoped to the front app's windows shows that app
-    /// alone, so it caps that app's own list: other apps must not take places
-    /// in a list that never shows them. `frontmostPID` is the process that
-    /// owns the keyboard, resolved to its app the same way the session does.
     static func visibleSelectionIndices(items: [SwitcherItem],
                                         limit: Int,
                                         frontmostPID: pid_t?) -> [Int] {
@@ -991,7 +762,6 @@ enum SwitcherSupport {
         return Array(items.indices.filter { items[$0].pid == appPID }.prefix(max(0, limit)))
     }
 
-    /// Finds the regular app that contains an accessory helper bundle.
     static func embeddedHostPID(helperBundlePath: String,
                                 regularBundlePaths: [pid_t: String]) -> pid_t? {
         let helperPath = URL(fileURLWithPath: helperBundlePath).standardizedFileURL.path
@@ -1004,10 +774,6 @@ enum SwitcherSupport {
             .key
     }
 
-    /// Picks the processes queried through Accessibility when the switcher
-    /// opens. Every embedded helper stays eligible because Accessibility can be
-    /// the only source for its fullscreen window on another desktop; the
-    /// enumerator overlaps these remote queries so slow helpers do not stack.
     static func accessibilityPIDs(regularAppPIDs: Set<pid_t>,
                                   embeddedHostPIDs: [pid_t: pid_t],
                                   ownPID: pid_t,
@@ -1021,15 +787,6 @@ enum SwitcherSupport {
         return regularAppPIDs.union(embeddedHostPIDs.keys).subtracting([ownPID])
     }
 
-    /// Picks the running apps that earn an entry of their own because the
-    /// window list has nothing for them.
-    ///
-    /// Only a total absence counts. An app whose windows exist but were left
-    /// out on purpose keeps its absence: showing the app anyway would undo the
-    /// choice the user just made, which is what the current-desktop option
-    /// (issue #337) would suffer from otherwise. Order follows the candidate
-    /// list, so the caller keeps ranking these entries the same way it ranks
-    /// windows.
     static func windowlessAppPIDs(mode: SwitcherWindowlessApps,
                                   candidates: [SwitcherAppCandidate],
                                   pidsWithWindows: Set<pid_t>,
@@ -1060,13 +817,6 @@ enum SwitcherSupport {
         }
     }
 
-    /// The display showing most of a window, as an index into `displayBounds`.
-    /// Both rectangles share the window server's coordinate space (top-left
-    /// origin), which is what `kCGWindowBounds` and `CGDisplayBounds` report,
-    /// so no flipping is needed. A window straddling two displays belongs to
-    /// the one holding the larger part. A window touching no display, or an
-    /// entry with no frame at all (an app without windows), yields nil so the
-    /// caller can fall back to another screen instead of guessing.
     static func displayIndex(showingMostOf windowFrame: CGRect, displayBounds: [CGRect]) -> Int? {
         guard !windowFrame.isNull, !windowFrame.isEmpty else { return nil }
         var best: (index: Int, area: CGFloat)?
@@ -1080,12 +830,6 @@ enum SwitcherSupport {
         return best?.index
     }
 
-    /// Collapses every window of an app into a single entry, so an app shows once
-    /// in the switcher instead of once per window (or tab). Keeps one
-    /// representative per app, preferring the on-screen, front window so its title
-    /// and thumbnail are the one you would expect when switching to that app.
-    /// `isOnHiddenSpace` answers only in current-desktop mode: a window from
-    /// another desktop then represents its app only when no window is here.
     static func groupWindowsByApp(_ windows: [SwitcherItem],
                                   isOnHiddenSpace: (SwitcherItem) -> Bool = { _ in false }) -> [SwitcherItem] {
         var indexByPid: [pid_t: Int] = [:]
@@ -1097,8 +841,6 @@ enum SwitcherSupport {
                     if keptIsElsewhere { grouped[index] = window }
                     continue
                 }
-                // Another window of the same app: prefer an on-screen window as
-                // the representative when the one we kept is off-screen.
                 if (window.isOnScreen && !grouped[index].isOnScreen)
                     || (window.isFullscreen && !grouped[index].isFullscreen) {
                     grouped[index] = window
@@ -1111,8 +853,6 @@ enum SwitcherSupport {
         return grouped
     }
 
-    /// Windows belong to the display containing most of their frame.
-    /// Windowless apps and off-display windows have no current display.
     static func itemsOnDisplay(_ items: [SwitcherItem],
                                displayBounds: [CGRect],
                                targetIndex: Int) -> [SwitcherItem] {
@@ -1131,23 +871,12 @@ enum SwitcherSupport {
         return appRules[bundleIdentifier] == .hidden
     }
 
-    /// When Accessibility does not match a hidden app's WindowServer surface,
-    /// its Space assignment distinguishes a real window from a leftover. A
-    /// window the app had already closed keeps its Space too, and used to
-    /// come back with the app's hidden badge (issues #512 and #2628), so a
-    /// surface the window server did not hide along with the app is not
-    /// confirmed. `isHiddenWithApp` is nil when the window server cannot say.
     static func isConfirmedHiddenAppWindow(appIsHidden: Bool,
                                            windowSpaces: [UInt64],
                                            isHiddenWithApp: Bool?) -> Bool {
         appIsHidden && !windowSpaces.isEmpty && isHiddenWithApp != false
     }
 
-    /// Whether a window's title has to be looked up through its remote
-    /// Accessibility element. Only a window parked on a hidden Space needs
-    /// it: the window server titles windows only with Screen Recording, and
-    /// the app's Accessibility list leaves out windows on hidden Spaces, so
-    /// such a window otherwise shows just its app's name.
     static func looksUpHiddenSpaceTitle(windowServerTitle: String,
                                         isDescribedByAccessibility: Bool,
                                         accessibilityGranted: Bool,
@@ -1155,33 +884,17 @@ enum SwitcherSupport {
         windowServerTitle.isEmpty && !isDescribedByAccessibility && accessibilityGranted && isOnHiddenSpace
     }
 
-    /// A partial Accessibility list cannot veto windows on another desktop.
-    /// Still reject unmatched visible surfaces and helpers excluded from cycling.
     static func keepsUnmatchedWindow(isOnHiddenSpace: Bool,
                                      isConfirmedHiddenAppWindow: Bool,
                                      isExcludedFromWindowCycle: Bool,
                                      isOrderedIn: Bool?,
                                      allowsUnverifiedHiddenSpace: Bool) -> Bool {
         guard !isExcludedFromWindowCycle else { return false }
-        // Hiding an app orders its windows out without closing them.
         if isConfirmedHiddenAppWindow { return true }
         guard isOnHiddenSpace else { return false }
-        // Preserve the earlier empty-Accessibility and fullscreen exceptions:
-        // ordering out can also mean minimized, not closed. Only broaden that
-        // fallback when the native query positively witnesses a live window.
         return allowsUnverifiedHiddenSpace || isOrderedIn == true
     }
 
-    /// Whether a WindowServer surface whose owner never answered Accessibility
-    /// is a stale leftover instead of a real window (issue #807). The ghost
-    /// veto normally comes from the Accessibility cross-check, but a busy or
-    /// dying process answers with nothing, which used to let its closed
-    /// windows keep appearing in the switcher. The window server itself tells
-    /// the two apart: a real window off screen is still parked on at least one
-    /// Space, while a leftover belongs to none. Anything on screen stays — a
-    /// visible surface is real by definition — and when the Space queries are
-    /// unavailable there is no evidence either way, so the surface keeps the
-    /// pre-existing treatment.
     static func unwitnessedSurfaceIsLeftover(isOnScreen: Bool,
                                              canResolveSpaces: Bool,
                                              windowSpacesCount: Int) -> Bool {
@@ -1189,20 +902,13 @@ enum SwitcherSupport {
         return windowSpacesCount == 0
     }
 
-    /// Whether a failed Accessibility read means the app never answered, as
-    /// opposed to answering that the attribute has no value. The per-window
-    /// messaging timeout reports itself as `cannotComplete`.
     static func isUnansweredAccessibilityRead(_ error: AXError) -> Bool {
         error == .cannotComplete
     }
 
-    /// What an app's Accessibility answer says about one of its surfaces.
     enum AccessibilityWitness: Equatable {
-        /// The app described the window as user facing.
         case described
-        /// The app answered and the window did not qualify.
         case rejected
-        /// The app listed the window but its reads timed out.
         case unanswered
     }
 
@@ -1211,18 +917,6 @@ enum SwitcherSupport {
         return isUnanswered ? .unanswered : .rejected
     }
 
-    /// Whether a window server surface stays in the list after the
-    /// Accessibility cross-check. `witness` is nil when the owner gave no
-    /// answer at all. Its siblings keep their own verdicts, so a rejected
-    /// helper cannot slip back in beside a window that timed out.
-    ///
-    /// A timed-out window gets the leftover check, and it also stays out when
-    /// the window server keeps it out of window cycling. That flag comes from
-    /// the window server by window id, so a busy app cannot withhold it. When
-    /// a whole app is busy, its hidden helpers time out along with its
-    /// workspace, and without the flag they would come back as blank entries.
-    /// An owner that never answered keeps the leftover check alone, which
-    /// compatibility-hosted apps rely on.
     static func keepsSurface(witness: AccessibilityWitness?,
                              keepsUnmatched: () -> Bool,
                              isExcludedFromWindowCycle: () -> Bool,
@@ -1235,13 +929,6 @@ enum SwitcherSupport {
         }
     }
 
-    /// Whether an app's Accessibility answer shows it has no window to switch
-    /// to, so it can get an app-only entry.
-    ///
-    /// A window that timed out may still be real, so it blocks the entry,
-    /// unless the window server keeps it out of window cycling. A busy app
-    /// whose only listed windows are such hidden helpers keeps its entry. When
-    /// some timed-out window has no window server id, nothing rules it out.
     static func accessibilityAnswerShowsNoWindow(describedWindowCount: Int,
                                                  unansweredIDs: Set<CGWindowID>,
                                                  everyWindowUnanswered: Bool,
@@ -1251,23 +938,12 @@ enum SwitcherSupport {
             && unansweredIDs.allSatisfy(isExcludedFromWindowCycle)
     }
 
-    /// How far to trust an app that described no window as user facing.
     enum EmptyAccessibilityAnswer: Equatable {
-        /// Every window has its own verdict. Rejected windows stay out.
         case perWindow
-        /// A timed-out window has no window server id, so no surface can be
-        /// told apart from it. Every surface counts as timed out.
         case everyWindowUnanswered
-        /// Accessibility cannot describe the app's windows at all.
         case noAnswer
     }
 
-    /// A busy editor can list its windows and then time out on the role and
-    /// subrole reads that follow. Its answer still rejects the windows it did
-    /// describe, but only when every timed-out window resolves to a window
-    /// server id that can be singled out. Compatibility-hosted apps keep their
-    /// own exception, because Accessibility cannot describe their windows at
-    /// all.
     static func emptyAccessibilityAnswer(acceptsUndescribedSubroles: Bool,
                                          unansweredWindowCount: Int,
                                          resolvedUnansweredIDCount: Int) -> EmptyAccessibilityAnswer {
@@ -1275,7 +951,6 @@ enum SwitcherSupport {
         return resolvedUnansweredIDCount == unansweredWindowCount ? .perWindow : .everyWindowUnanswered
     }
 
-    /// Downsamples a capture into a small alpha grid for classification.
     static func alphaGrid(of image: CGImage, gridSize: Int = captureAlphaGridSize) -> [Double]? {
         guard gridSize > 0 else { return nil }
         let bytesPerPixel = 4
@@ -1297,12 +972,6 @@ enum SwitcherSupport {
         return (0..<(gridSize * gridSize)).map { Double(data[$0 * bytesPerPixel + 3]) / 255.0 }
     }
 
-    /// Whether a window capture looks like Stage Manager's strip rendering
-    /// instead of real window content. Parked windows are captured as a sheared
-    /// snapshot whose bounding box leaves fully transparent wedges in at least
-    /// two corner/edge probes of the downsampled grid; a real window capture is
-    /// opaque edge to edge (rounded corners only shave sub-cell slivers at this
-    /// resolution, alpha stays well above the threshold).
     static func captureLooksTransformed(alphaGrid: [Double],
                                         gridSize: Int = captureAlphaGridSize) -> Bool {
         guard gridSize >= 4, alphaGrid.count == gridSize * gridSize else { return false }
@@ -1316,20 +985,8 @@ enum SwitcherSupport {
         return transparent >= 2
     }
 
-    /// How far the two axes of a capture may disagree before it counts as a
-    /// slice of a window instead of the whole window.
     static let captureCoverageTolerance = 0.08
 
-    /// Whether a capture holds the whole window or only the part of it that
-    /// was inside a display. The window server clips a window capture to the
-    /// visible region, so a window hanging over a screen edge comes back as a
-    /// thin band of real content while still reporting its full size. Measured
-    /// with a 620 by 452 point window: fully visible it captures 2.00 by 2.00
-    /// pixels per point, hanging over the bottom edge 2.00 by 0.32, hanging
-    /// past the side edge 0.19 by 2.00. Comparing the two axes catches that
-    /// without caring about the display scale, so a plain screen and a Retina
-    /// screen both score the same. A window with nothing to measure passes,
-    /// because there is no evidence either way.
     static func captureCoversWindow(imageWidth: Int,
                                     imageHeight: Int,
                                     windowSize: CGSize,
@@ -1343,10 +1000,6 @@ enum SwitcherSupport {
         return max(horizontal, vertical) / min(horizontal, vertical) <= 1 + tolerance
     }
 
-    /// Corners of the opaque quadrilateral in a capture, in top-left-origin
-    /// pixel coordinates. Stage Manager's strip artwork is the real window
-    /// content under a mild perspective transform; these corners feed the
-    /// perspective correction that recovers an upright preview.
     struct CaptureQuadCorners: Equatable {
         var topLeft: CGPoint
         var topRight: CGPoint
@@ -1354,9 +1007,6 @@ enum SwitcherSupport {
         var bottomLeft: CGPoint
     }
 
-    /// Finds the extreme opaque pixels of a capture's alpha channel (one byte
-    /// per pixel, rows from the top). Returns nil when the opaque region is too
-    /// small or degenerate to be window content.
     static func opaqueQuadCorners(alpha: [UInt8],
                                   width: Int,
                                   height: Int,
@@ -1389,8 +1039,6 @@ enum SwitcherSupport {
                                   bottomLeft: CGPoint(x: bottomLeft.x, y: bottomLeft.y))
     }
 
-    /// Least-recently-used cache entries beyond `limit`, never counting ids the
-    /// caller is actively refreshing as victims.
     static func staleCacheVictims(ids: Set<CGWindowID>,
                                   active: Set<CGWindowID>,
                                   lastTouched: [CGWindowID: TimeInterval],
@@ -1403,10 +1051,6 @@ enum SwitcherSupport {
             .map { $0 }
     }
 
-    /// Least-recently-used entries to evict until the cache's total bytes fit
-    /// the budget, never counting ids the caller is actively refreshing. Big
-    /// thumbnails (large windows on Retina screens) would otherwise let a
-    /// count-limited cache hold far more memory than intended.
     static func cacheByteBudgetVictims(sizes: [CGWindowID: Int],
                                        active: Set<CGWindowID>,
                                        lastTouched: [CGWindowID: TimeInterval],
@@ -1430,7 +1074,6 @@ enum SwitcherSupport {
         shiftIsNavigationModifier && isShiftHeld && !wasShiftHeld
     }
 
-    /// Keeps the overflow icon row from scrolling past either end.
     static func clampedIconRowFirstVisibleIndex(itemCount: Int,
                                                 visibleCount: Int,
                                                 firstVisibleIndex: Int) -> Int {
@@ -1439,8 +1082,6 @@ enum SwitcherSupport {
         return min(max(0, firstVisibleIndex), itemCount - visible)
     }
 
-    /// Slides the visible window just far enough for `selectedIndex` to stay
-    /// on screen. Centering would yank several icons past the pointer at once.
     static func iconRowFirstVisibleIndex(revealing selectedIndex: Int,
                                          itemCount: Int,
                                          visibleCount: Int,
@@ -1457,8 +1098,6 @@ enum SwitcherSupport {
         return first
     }
 
-    /// Hovering a middle icon must not move the row. Only the last visible
-    /// icon on a side, and only while more icons wait beyond it, may step.
     static func iconRowEdgeHoverDelta(hoveredIndex: Int,
                                       firstVisibleIndex: Int,
                                       visibleCount: Int,
@@ -1475,8 +1114,6 @@ enum SwitcherSupport {
         return nil
     }
 
-    /// After an edge-hover step, highlight the newly revealed icon so the
-    /// pointer is still sitting on the last visible app of that side.
     static func iconRowIndexAfterEdgeHoverStep(firstVisibleIndex: Int,
                                                visibleCount: Int,
                                                itemCount: Int,
@@ -1490,9 +1127,6 @@ enum SwitcherSupport {
         return min(itemCount - 1, first + min(visible, itemCount) - 1)
     }
 
-    /// A Tab this close behind a Shift-press step is the same physical chord
-    /// and must not step again; later Tabs during the Shift hold keep walking
-    /// the list (issue #784).
     static let shiftBackChordWindow: TimeInterval = 0.35
 
     static func selectedPreviewPlacement(appCount rawAppCount: Int,
@@ -1518,7 +1152,6 @@ enum SwitcherSupport {
         if appCount > visibleIconCount {
             selectedCenterInRow = rowLeading + appRowContentWidth / 2
         } else {
-            // A wrapped row puts the selection under its column, not its index.
             let column = rawColumns.map { selectedAppIndex % max(1, $0) } ?? selectedAppIndex
             selectedCenterInRow = rowLeading + SwitcherIconRowLayout.appTileWidth / 2
                 + CGFloat(column) * (SwitcherIconRowLayout.appTileWidth + SwitcherIconRowLayout.spacing)
@@ -1535,9 +1168,6 @@ enum SwitcherSupport {
                                      windows: windowShortcut.displayString)
     }
 
-    /// Current-desktop mode still lists fullscreen windows from other desktops.
-    /// One of them represents its app only when the app has no window here,
-    /// so picking the app never moves the user to another desktop.
     static func appGroups(items: [SwitcherItem], currentSpaceOnly: Bool = false) -> [SwitcherAppGroup] {
         var seen: Set<pid_t> = []
         var groups: [SwitcherAppGroup] = []
@@ -1568,15 +1198,6 @@ enum SwitcherSupport {
         return dividers
     }
 
-    /// Where a session starts. `pids` is the list in display order, one entry
-    /// per position the shortcut steps through: one per window in the grid,
-    /// one per app in the icon row.
-    ///
-    /// The foreground window always sits first, so the selection starts one
-    /// step past it and a single press already switches. When there is no
-    /// foreground window the list holds nothing the user is looking at, except
-    /// windows the front app left minimized or on another Space; those are
-    /// skipped for the same reason, so one press still lands somewhere else.
     static func initialSelectionPosition(pids: [pid_t],
                                          hasForegroundEntry: Bool,
                                          frontmostPID: pid_t?,
@@ -1589,9 +1210,6 @@ enum SwitcherSupport {
         return pids.count > 1 ? 1 : 0
     }
 
-    /// Column count for a wrapping card grid: keep the same number of rows
-    /// the screen already requires, but do not stretch to a full first row
-    /// when the leftover items would sit almost empty on the next one.
     static func gridColumnCount(itemCount: Int, maxColumns: Int) -> Int {
         let count = max(itemCount, 1)
         let packed = min(count, max(maxColumns, 1))
@@ -1599,9 +1217,6 @@ enum SwitcherSupport {
         return min(packed, (count + rows - 1) / rows)
     }
 
-    /// Moves between rows without wrapping. When the row below is shorter,
-    /// Down lands on that row's last item instead of leaving the selection in
-    /// place because the same column is missing.
     static func gridSelectionIndex(after selectedIndex: Int,
                                    itemCount: Int,
                                    columns: Int,
@@ -1620,9 +1235,6 @@ enum SwitcherSupport {
         return min(current + safeColumns, itemCount - 1)
     }
 
-    /// ↑/↓ on a wrapped icon row steps a row of icons, not of windows: an app
-    /// row lands on the target app's entry, its window here in current-desktop
-    /// mode. Nil keeps the selection.
     static func iconRowSelectionIndex(after selectedIndex: Int,
                                       items: [SwitcherItem],
                                       windowRow: Bool,
@@ -1642,9 +1254,6 @@ enum SwitcherSupport {
         return windowRow ? target : groups[target].representativeIndex
     }
 
-    /// The tile a wrapped icon row scrolls to: the selected window in a window
-    /// row, the selected window's app in an app row. The tiles carry the same
-    /// identities, so this is what reveals the selection.
     static func iconRowScrollID(items: [SwitcherItem],
                                 selectedIndex: Int,
                                 windowRow: Bool) -> AnyHashable? {
@@ -1653,8 +1262,6 @@ enum SwitcherSupport {
         return windowRow ? AnyHashable(selected.id) : AnyHashable(selected.pid)
     }
 
-    /// With wrapping off (key held on autorepeat, like the system switcher)
-    /// the selection stops at either end instead of cycling around.
     static func nextAppSelectionIndex(items: [SwitcherItem],
                                       selectedIndex: Int,
                                       delta: Int,
@@ -1728,12 +1335,6 @@ enum SwitcherSupport {
             || frontmostCanBeSystemPromotion
     }
 
-    /// The three Accessibility-backed inputs are autoclosures because the
-    /// minimize restore fires this on every pulse of a dense timer and most
-    /// pulses stop at the frontmost checks below. Taking them as values let a
-    /// caller pay a `kAXWindows` copy and two AX reads per pulse for an answer
-    /// the cheap comparisons had already given; taking them as closures means
-    /// a caller cannot pay that cost early even by accident.
     static func shouldRestoreSourceAfterTargetMinimizeIntent(targetPID: pid_t,
                                                              sourcePID: pid_t?,
                                                              frontmostPID: pid_t?,
@@ -1769,8 +1370,6 @@ enum SwitcherSupport {
         return true
     }
 
-    /// Window identities, not a list of focusable windows: keeping every layer
-    /// prevents an existing dialog or auxiliary surface from appearing new.
     static func focusRetryWindowIDs(in windows: [[String: Any]], ownerPID: pid_t) -> Set<CGWindowID> {
         Set(windows.compactMap { info -> CGWindowID? in
             guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == ownerPID else { return nil }
@@ -1778,10 +1377,6 @@ enum SwitcherSupport {
         })
     }
 
-    /// Source app for the delayed focus guards only. A session source wins;
-    /// otherwise the app a caller saw in front when the activation began keeps
-    /// the handoff retry settling, without reclaiming focus after a later
-    /// unrelated activation. The target and this process are never a handoff.
     static func focusRetrySourcePID(sessionSourcePID: pid_t?,
                                     handoffSourcePID: pid_t?,
                                     targetPID: pid_t,
@@ -1808,13 +1403,6 @@ enum SwitcherSupport {
                 || (targetStartedMinimized && !targetWasObservedRestored)
         else { return false }
         let initialFrontmostPID = frontmostPID()
-        // A hop travels across desktops, and the system fronts whatever sits
-        // on top of each one it passes. Which app is in front while that runs
-        // says nothing about where the user wants to be, so hop passes opt out
-        // of this check and use the app's own focus below. Ordinary retries
-        // must never reclaim a window after an unrelated app is frontmost.
-        // The source app is allowed while the handoff is settling, because
-        // the target may still need its delayed pass.
         let waitingForInitialMinimizedRestore = targetStartedMinimized
             && targetIsMinimized
             && (sourcePID == nil || initialFrontmostPID == sourcePID)
@@ -1826,24 +1414,15 @@ enum SwitcherSupport {
            !waitingForInitialMinimizedRestore {
             return false
         }
-        // Z-order cannot identify keyboard focus: a new transparent helper
-        // may sit above a real window. Only query Accessibility when this app
-        // is active and the cheap window-server list contains something new.
-        // An unavailable focus reading preserves the previous retry behavior.
         guard ignoresForeground || initialFrontmostPID == targetPID,
               !knownWindowIDs.isEmpty,
               !targetAppWindowIDs().isSubset(of: knownWindowIDs) else { return true }
         let focusedWindowID = targetAppFocusedWindowID()
-        // Accessibility can wait on the other process. Do not act on the old
-        // foreground observation if the user left the app during that wait.
         if !ignoresForeground, frontmostPID() != targetPID { return false }
         guard let focusedWindowID else { return true }
         return knownWindowIDs.contains(focusedWindowID)
     }
 
-    /// Async results belong only to the still-pending shortcut press. A key
-    /// release may turn that pending start into an immediate commit, while a
-    /// teardown or a newer press clears/replaces the generation entirely.
     static func isCurrentSessionStart(generation: UInt64,
                                       pendingGeneration: UInt64?) -> Bool {
         pendingGeneration == generation
@@ -1858,8 +1437,6 @@ enum SwitcherSupport {
         return commitWhenReady ? .cancelAndSwallow : .swallow
     }
 
-    /// The explicit takeover setting is the authority to change WindowServer's
-    /// shared symbolic-hotkey state. Shortcut matching alone is never enough.
     static func nativeHotkeysToSuppress(takeOverSystemShortcuts: Bool,
                                         appsShortcut: GlobalShortcut,
                                         windowShortcut: GlobalShortcut,
@@ -1873,16 +1450,6 @@ enum SwitcherSupport {
         })
     }
 
-    /// The raw ids the switcher wants switched off, resolved against the live
-    /// table: the shared take-over speaks WindowServer ids, and reading the
-    /// shortcut of each id from the table is what keeps a remapped key — or a
-    /// neighbour such as the screenshot key — from being taken over by guess.
-    ///
-    /// Secure Event Input hides every key from event taps, the switcher's
-    /// included, while macOS still answers its own switcher keys (measured on
-    /// 27.2: a session tap saw no key while another process held it). Asking
-    /// for nothing then keeps ⌘Tab working instead of leaving it dead until
-    /// the app holding it lets go.
     static func nativeHotkeyIDs(takeOverSystemShortcuts: Bool,
                                 secureInputEnabled: Bool,
                                 appsShortcut: GlobalShortcut,
@@ -1902,9 +1469,6 @@ enum SwitcherSupport {
                                            nativeShortcuts: nativeShortcuts).map(\.rawValue))
     }
 
-    /// Mirrors the event tap's `allowingExtraShift` match: Shift reverses a
-    /// shortcut that does not already require it, and WindowServer registers
-    /// the forward and reverse directions as separate symbolic hotkeys.
     private static func switcherShortcut(_ shortcut: GlobalShortcut,
                                          owns nativeShortcut: GlobalShortcut) -> Bool {
         guard shortcut.keyCode == nativeShortcut.keyCode else { return false }
@@ -1980,10 +1544,6 @@ enum SwitcherSupport {
                                   shouldEndSession: false)
     }
 
-    /// Which entry a release should raise while windows are already closing:
-    /// the highlight lands where the grid settles once they are gone, so
-    /// letting go right after closing one never raises it again. With nothing
-    /// left to raise, the release only dismisses the panel.
     static func commitTargetID(itemIDs: [String],
                                selectedIndex: Int,
                                closingItemIDs: Set<String>) -> String? {
@@ -1996,18 +1556,12 @@ enum SwitcherSupport {
         return remaining[clampedSelection(position, count: remaining.count)]
     }
 
-    /// Whether a click ends the session. The panel floats above everything and
-    /// never takes the keyboard from the app in front, so clicking another
-    /// window is what most people try when they want it gone, and a session
-    /// opened with no key held down has no release coming to close it either
-    /// (issue #384). Anything on the panel still belongs to the panel.
     static func shouldDismissForClick(panelIsVisible: Bool,
                                       panelFrame: CGRect,
                                       location: CGPoint) -> Bool {
         panelIsVisible && !panelFrame.contains(location)
     }
 
-    /// Whether a mouse click is a middle click on a hovered switcher card.
     static func isMiddleClickInsidePanel(eventType: CGEventType,
                                          buttonNumber: Int64,
                                          panelIsVisible: Bool,
@@ -2021,7 +1575,6 @@ enum SwitcherSupport {
             && itemIsHovered
     }
 
-    /// A release is swallowed only when its matching press closed a card.
     static func shouldSwallowMiddleMouseUp(eventType: CGEventType,
                                            buttonNumber: Int64,
                                            swallowedMouseDown: Bool) -> Bool {
@@ -2030,19 +1583,6 @@ enum SwitcherSupport {
             && swallowedMouseDown
     }
 
-    /// The letters the panel acts on: W closes the highlighted window, Q quits
-    /// its app, and, when `pinSearchEnabled`, S pins the search field open so
-    /// it no longer needs the session's modifier held to stay on screen — that
-    /// modifier is what turns some keys into special characters instead of
-    /// plain letters, e.g. ⌥S types "ß". S is opt-in: existing users who type it as
-    /// the first letter of a search keep filtering by "s" until they turn the
-    /// preference on. A keyboard answers by the letter it types, so all three
-    /// keys stay where they are printed even on layouts that move them
-    /// (measured: French and Italian put W elsewhere, Turkish moves both).
-    /// Layouts that type no Latin letter at all, like Cyrillic and Greek, go
-    /// by the key's position instead, which is exactly where macOS resolves
-    /// their command shortcuts (measured: with Command held both translate
-    /// that key to "w").
     static func letterAction(typedCharacter: String?, keyCode: Int64, pinSearchEnabled: Bool) -> SwitcherLetterAction? {
         guard let letter = latinLetter(in: typedCharacter) else {
             switch keyCode {
@@ -2057,12 +1597,6 @@ enum SwitcherSupport {
         case "q": return .quitApp
         case "s" where pinSearchEnabled: return .pinSearch
         default:
-            // ⌥ turns S into "ß", and adding Caps Lock on top turns it into
-            // "Í" instead — a real, differently-accented letter that folds to
-            // an unrelated "i" rather than failing to fold at all, so the S
-            // case above never sees it. Fall back to the key position only when
-            // the original typed character is non-ASCII, to avoid triggering on
-            // remapped Latin layouts where the US-S key types another ASCII letter.
             if pinSearchEnabled,
                keyCode == USKeyPosition.s,
                let typed = typedCharacter,
@@ -2073,21 +1607,13 @@ enum SwitcherSupport {
         }
     }
 
-    /// Key positions on the US keyboard, the fallback for layouts with no
-    /// Latin letters of their own.
     private enum USKeyPosition {
         static let q: Int64 = 12
         static let w: Int64 = 13
         static let s: Int64 = 1
     }
 
-    /// The plain letter a keystroke typed, when it typed one. Accents fold
-    /// away, so a letter of a Latin alphabet is never mistaken for one of the
-    /// keys above.
     private static func latinLetter(in text: String?) -> Character? {
-        // No locale: in Turkish a dotted I folds to a dotless one, which is
-        // not ASCII, so the guard below would throw the keystroke away and
-        // that letter would simply stop searching.
         guard let folded = text?.folding(options: [.diacriticInsensitive, .caseInsensitive],
                                          locale: nil),
               folded.count == 1,

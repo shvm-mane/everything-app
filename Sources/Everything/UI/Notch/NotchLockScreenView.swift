@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// What the lock screen may show, settled when it appears: preferences cannot
-/// change while the Mac is locked, so the views never read them again.
 final class NotchLockScreenModel: ObservableObject {
     struct Gates: Equatable {
         var music = false
@@ -17,8 +15,6 @@ final class NotchLockScreenModel: ObservableObject {
     }
 
     @Published var gates = Gates()
-    /// Kept for the whole time the Mac stays locked, across the display
-    /// sleeping and waking, and cleared once it unlocks.
     @Published var playedWhileLocked = false
     @Published var padlockOpen = false
 
@@ -29,18 +25,11 @@ final class NotchLockScreenModel: ObservableObject {
     }
 }
 
-/// The island at rest with a padlock beside the camera, and the music's bars
-/// on the other side while a song plays. The padlock closes as the Mac locks
-/// and opens as it unlocks, before the island returns underneath.
 struct NotchLockScreenIsland: View {
     @ObservedObject var model: NotchLockScreenModel
     let size: CGSize
     let cameraWidth: CGFloat
-    /// The music strip's own geometry: the padlock takes the cover's place and
-    /// the bars keep theirs, so locking changes what shows, not where.
     let geometry: NotchGeometry
-    /// The window on whole points around the island, and the island's top
-    /// left corner inside it; the rest of the window stays clear.
     var window: CGSize? = nil
     var origin: CGPoint = .zero
     @ObservedObject private var music = NotchMusicService.shared
@@ -81,11 +70,6 @@ struct NotchLockScreenIsland: View {
     }
 }
 
-/// The player's own Liquid Glass, clear so the wallpaper still reads through
-/// it and bends at its edges, and smoked just enough for white type over any
-/// photo: the glass the island itself takes when it is set to glass. Before
-/// macOS 26 the frosted panel of the app's floating surfaces stands in, and
-/// Reduce Transparency makes it solid.
 private struct NotchLockScreenGlass: ViewModifier {
     let cornerRadius: CGFloat
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -126,8 +110,6 @@ private struct NotchLockScreenGlass: ViewModifier {
     }
 }
 
-/// The frosted material has to round its own layer: SwiftUI clips what it
-/// draws, not a material blurring what lies behind the window.
 private struct NotchLockScreenMaterial: NSViewRepresentable {
     let cornerRadius: CGFloat
 
@@ -147,17 +129,12 @@ private struct NotchLockScreenMaterial: NSViewRepresentable {
     }
 }
 
-/// The song in the middle of the lock screen, on one pane of Liquid Glass:
-/// the cover, its title, a timeline that seeks and the player's own buttons.
-/// A smaller display takes a smaller cover, then lays it beside the title.
 struct NotchLockScreenPlayer: View {
     @ObservedObject var model: NotchLockScreenModel
     let size: CGSize
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// What a tap on play or pause asked for, shown at once as the island's
-    /// own player shows it, until the player says so.
     @State private var requestedPlaying: Bool?
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }
     private var accent: Color { music.artworkTint?.color ?? .white }
@@ -176,13 +153,10 @@ struct NotchLockScreenPlayer: View {
         }
         .frame(width: size.width, height: size.height)
         .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: shown)
-        // A second tap before the player answers asks for the state after it,
-        // so only the player reaching what was asked ends the early word.
         .onChange(of: music.playback?.isPlaying) {
             if music.playback?.isPlaying == requestedPlaying { requestedPlaying = nil }
         }
         .onChange(of: music.playback?.track) { requestedPlaying = nil }
-        // A player that never answers leaves the button as it was.
         .task(id: requestedPlaying) {
             guard requestedPlaying != nil else { return }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -211,8 +185,6 @@ struct NotchLockScreenPlayer: View {
         .pane()
     }
 
-    /// A short display lays the cover beside the title, as the island's own
-    /// player does.
     private func compact(_ playback: NotchPlayback) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -241,8 +213,6 @@ struct NotchLockScreenPlayer: View {
             .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: playback.isPlaying)
     }
 
-    /// The player's own buttons, never a permission prompt: a request made
-    /// here would open behind the lock screen, where no one can answer it.
     private func transport(_ playback: NotchPlayback) -> some View {
         HStack(spacing: 46) {
             if !music.lacksTrackSkipping(.previous) {
@@ -261,8 +231,6 @@ struct NotchLockScreenPlayer: View {
                         playback: NotchPlayback) -> some View {
         Button {
             let playing = requestedPlaying ?? playback.isPlaying
-            // Only a player the island writes to directly answers fast enough
-            // to show its word early. A slower path waits for the player.
             if music.send(command, context: playback.commandContext), command == .toggle,
                playback.canSendCommandsDirectly { requestedPlaying = !playing }
         } label: {
@@ -281,7 +249,6 @@ struct NotchLockScreenPlayer: View {
 }
 
 private extension View {
-    /// The player's pane, as wide as the timeline needs and no wider.
     func pane() -> some View {
         foregroundStyle(.white)
             .multilineTextAlignment(.center)
@@ -293,9 +260,6 @@ private extension View {
     }
 }
 
-/// The activities as one line under the clock, where a phone keeps the
-/// widgets of its lock screen: a mark and a reading each, with no card. A
-/// line too long for the display gives up its last activities first.
 struct NotchLockScreenActivities: View {
     @ObservedObject var model: NotchLockScreenModel
     let size: CGSize
@@ -386,8 +350,6 @@ struct NotchLockScreenActivities: View {
             let reading = NotchAgentSupport.stripReading(usage.snapshot, readout: NotchAgentReadout(rawValue: readout) ?? .elapsed,
                                                          display: NotchAgentLimitDisplay(rawValue: display) ?? .remaining,
                                                          focus: NotchAgentLimitFocus(rawValue: focus) ?? .mostUsed, now: date)
-            // The agents and their reading only: a project's name stays off
-            // a screen anyone can walk up to.
             HStack(spacing: 7) {
                 HStack(spacing: 1) {
                     ForEach(working) { NotchAgentGlyph(provider: $0, size: 13) }
@@ -399,7 +361,6 @@ struct NotchLockScreenActivities: View {
                                 + FeatureStrings.notchLockScreen(l10n.language).working)
             .accessibilityValue(reading)
         case .downloads:
-            // Progress without the file's name, which stays off the lock screen.
             let fraction = downloads.items.first(where: { $0.active && !$0.completed })?.fraction
             HStack(spacing: 7) {
                 Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
@@ -415,8 +376,6 @@ struct NotchLockScreenActivities: View {
 }
 
 private extension View {
-    /// White type over any wallpaper, the way the lock screen's own clock
-    /// stays readable over a bright photo.
     func legibleOnWallpaper() -> some View {
         shadow(color: .black.opacity(0.3), radius: 8, y: 1)
     }

@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// Pure rules behind the quick toggles: the AppleScript sources, the Finder
-/// preference parsing and the eject filter, kept free of AppKit so the unit
-/// harness pins them down.
 enum QuickTogglesSupport {
     static let finderDomain = "com.apple.finder"
     static let showAllFilesKey = "AppleShowAllFiles"
@@ -14,7 +11,6 @@ enum QuickTogglesSupport {
     static let emptyTrashSource = "tell application \"Finder\" to empty trash"
     static let quitFinderSource = "tell application \"Finder\" to quit"
 
-    /// Apple Event consent errors: not permitted, or the prompt was dismissed.
     static let permissionErrorNumbers: Set<Int> = [-1743, -1744]
 
     static func isPermissionError(_ errorNumber: Int?) -> Bool {
@@ -22,8 +18,6 @@ enum QuickTogglesSupport {
         return permissionErrorNumbers.contains(errorNumber)
     }
 
-    /// Finder preferences reach us as real booleans, numbers or the legacy
-    /// "YES"/"TRUE"/"1" strings; anything unreadable means the given default.
     static func finderFlag(_ value: Any?, default defaultValue: Bool) -> Bool {
         switch value {
         case let flag as Bool:
@@ -41,15 +35,6 @@ enum QuickTogglesSupport {
         }
     }
 
-    /// Which mounted volumes "Eject all disks" offers. The system flags
-    /// describe two different things: the bus tells whether the drive is
-    /// external, while removable and ejectable describe media that leaves the
-    /// drive, like a card or a disc. An external drive with fixed media, which
-    /// is what most desk drives are, answers no to both, so asking for
-    /// removable media hid them all. The bus decides, and media that comes out
-    /// of an internal reader still counts. Network shares, the volume the Mac
-    /// booted from, internal fixed drives and drives in the user's exclusion list
-    /// never qualify.
     static func shouldOfferEject(isInternal: Bool,
                                  isRemovable: Bool,
                                  isEjectable: Bool,
@@ -69,11 +54,6 @@ enum QuickTogglesSupport {
                            excludedVolumes: excludedVolumes)
     }
 
-    /// Whether a volume matches any entry in the user's exclusion list by
-    /// name (case-insensitive), volume UUID, full mount path or mount directory name.
-    /// None of the four forms is optional to pass: an entry the user typed is
-    /// honoured or ignored depending on which identifiers the caller happened
-    /// to hand over, so a caller that has none says so with an explicit nil.
     static func isExcluded(volumeName: String?,
                            volumeUUID: String?,
                            mountPath: String?,
@@ -103,27 +83,18 @@ enum QuickTogglesSupport {
 
     // MARK: - Quit all apps
 
-    /// Vorssaint's own identifiers, including the local signing variant. Quitting
-    /// ourselves mid-sweep would leave the remaining apps running with no way
-    /// to finish the pass from here.
     static let vorssaintBundleIdentifiers = [
         "com.vorssaint.utils",
         "com.vorssaint.utils.dev",
     ]
 
-    /// `NSApplication.ActivationPolicy.regular.rawValue`. Kept as an Int so this
-    /// file stays free of AppKit for the unit harness.
     static let regularActivationPolicy = 0
 
-    /// Kept apps always start with Auto Quit's locked pair, Finder and Phone.
-    /// Vorssaint is never stored: the quit rules leave it alone by themselves.
     static func sanitizedQuitAllExceptions(_ bundleIDs: [String]) -> [String] {
         Defaults.sanitizedBundleIdentifierList(Defaults.mandatoryAutoQuitExceptionBundleIDs + bundleIDs)
             .filter { !vorssaintBundleIdentifiers.contains($0) }
     }
 
-    /// Whether a running app should receive a soft quit. Only regular GUI apps
-    /// with a bundle id, still alive, and outside the exception set qualify.
     static func shouldQuitApp(bundleIdentifier: String?,
                               activationPolicyRawValue: Int,
                               isTerminated: Bool,
@@ -135,9 +106,6 @@ enum QuickTogglesSupport {
         return !exceptions.contains(bundleIdentifier)
     }
 
-    /// Whether the Quit apps window lists a running app. Finder relaunches
-    /// itself and Vorssaint owns the window, so neither gets a row; other
-    /// exceptions are listed (marked kept) so they can still be quit by hand.
     static func listsApp(bundleIdentifier: String?,
                          activationPolicyRawValue: Int,
                          isTerminated: Bool) -> Bool {
@@ -147,8 +115,6 @@ enum QuickTogglesSupport {
         return !isTerminated && activationPolicyRawValue == regularActivationPolicy
     }
 
-    /// The process ids a batch quit sends `terminate()` to. Keeping the
-    /// frontmost app only removes that one process; every exception still holds.
     static func batchQuitTargets(_ apps: [QuitAppsCandidate],
                                  exceptions: Set<String>,
                                  keepingPID: Int32?) -> [Int32] {
@@ -164,8 +130,6 @@ enum QuickTogglesSupport {
 
 }
 
-/// One running app as Quit apps sees it, reduced to the facts the targeting
-/// rules read so they stay free of AppKit.
 struct QuitAppsCandidate: Equatable {
     let pid: Int32
     let bundleIdentifier: String?
@@ -173,37 +137,29 @@ struct QuitAppsCandidate: Equatable {
     let isTerminated: Bool
 }
 
-/// What Return does in the Quit apps window, chosen by how it was opened.
 enum QuitAppsScope: Equatable {
     case all
     case allExceptFront
 }
 
-/// The Quit apps window's buttons, in on-screen order.
 enum QuitAppsButton: Equatable {
     case cancel, allExceptFront, all
 }
 
-/// The one highlight the window has: an app row (by process id) or a button.
-/// Return confirms whatever it is on.
 enum QuitAppsFocus: Equatable {
     case row(Int32)
     case button(QuitAppsButton)
 }
 
-/// Arrow keys, plus `next` and `previous` for Tab and Shift-Tab.
 enum QuitAppsMove: Equatable {
     case up, down, left, right, next, previous
 }
 
 extension QuickTogglesSupport {
-    /// Cancel is always there; a batch button only when it would do something.
     static func quitAppsButtons(offersExceptFront: Bool, canQuitAll: Bool) -> [QuitAppsButton] {
         [.cancel] + (offersExceptFront ? [.allExceptFront] : []) + (canQuitAll ? [.all] : [])
     }
 
-    /// Where the highlight rests when the window opens: the button for the way
-    /// it was opened, or Cancel when that button is not offered.
     static func restingQuitAppsButton(scope: QuitAppsScope?,
                                       buttons: [QuitAppsButton]) -> QuitAppsButton {
         let wanted: QuitAppsButton?
@@ -216,9 +172,6 @@ extension QuickTogglesSupport {
         return .cancel
     }
 
-    /// Rows sit above the buttons: Down from the last row lands on the resting
-    /// button and Up from any button lands on the last row. Arrows stop at the
-    /// ends of the button bar; Tab wraps around it.
     static func movedQuitAppsFocus(_ focus: QuitAppsFocus,
                                    _ move: QuitAppsMove,
                                    rows: [Int32],
@@ -246,8 +199,6 @@ extension QuickTogglesSupport {
         }
     }
 
-    /// Keeps the highlight in place when an app quits or launches: a vanished
-    /// row hands it to whichever row now sits where it was.
     static func quitAppsFocusAfterListChange(_ focus: QuitAppsFocus,
                                              previousRows: [Int32],
                                              rows: [Int32],
@@ -264,8 +215,6 @@ extension QuickTogglesSupport {
         }
     }
 
-    /// Type to jump, as in a Finder list: the first row whose name starts with
-    /// what was typed, ignoring case and accents.
     static func quitAppsRow(matching prefix: String,
                             in rows: [(pid: Int32, name: String)]) -> Int32? {
         guard !prefix.isEmpty else { return nil }

@@ -24,9 +24,6 @@ enum ClipboardHistoryWrite {
     case files([NSURL])
     case rich(NSAttributedString, plain: String)
 
-    /// Expiry stops subsequent writes. Once cleared, always read the final
-    /// change count so history can exclude our mutation, even after timeout.
-    /// A call in progress cannot be cancelled or a partial write undone.
     func write(to pasteboard: any ClipboardHistoryPasteboard,
                isExpired: () -> Bool) -> ClipboardHistoryWriteResult? {
         guard !isExpired() else { return nil }

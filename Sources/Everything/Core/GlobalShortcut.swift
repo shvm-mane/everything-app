@@ -110,10 +110,6 @@ struct GlobalShortcut: Equatable, Hashable {
         guard requiringModifier ? isValid : hasPrintableKey else { return nil }
     }
 
-    /// Delete on its own means "take the shortcut off" while a shortcut field
-    /// is listening, which is how every shortcut field on this system behaves.
-    /// Held together with Control, Option or Command it is an ordinary key and
-    /// records like any other.
     static func clearsShortcut(keyCode: Int64, modifiers: GlobalShortcutModifiers) -> Bool {
         guard keyCode == Int64(kVK_Delete) || keyCode == Int64(kVK_ForwardDelete)
         else { return false }
@@ -128,7 +124,6 @@ struct GlobalShortcut: Equatable, Hashable {
                                                 modifiers: [.command])
     static let switcherWindowDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_Grave),
                                                       modifiers: [.command])
-    // Opt-in only: the existing app and current-app window shortcuts keep their behavior.
     static let switcherAllWindowsDefault = GlobalShortcut(keyCode: Int64(kVK_Tab),
                                                           modifiers: [.option])
     static let clipboardDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_V),
@@ -179,12 +174,8 @@ struct GlobalShortcut: Equatable, Hashable {
                                                                modifiers: [.control, .option, .command])
     static let windowDirectionalDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                          modifiers: [.control, .option])
-    // The key beside the modifiers, so one left hand presses it, on the
-    // free control-option-command layer.
     static let pointerNextDisplayDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_Z),
                                                           modifiers: [.control, .option, .command])
-    // Quick tools. Paste plain follows the universal "Paste and Match Style"
-    // combination; the others use the free ⌃⌥⌘ letters.
     static let pastePlainDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_V),
                                                   modifiers: [.shift, .option, .command])
     static let finderRenameDefault = GlobalShortcut(keyCode: Int64(kVK_F2), modifiers: [])
@@ -194,57 +185,36 @@ struct GlobalShortcut: Equatable, Hashable {
                                                  modifiers: [.control, .option, .command])
     static let micMuteDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_M),
                                                modifiers: [.control, .option, .command])
-    // Fallback for Quit all apps (issue #855). The shortcut stays off until the
-    // user turns it on and records a combination; nothing is stolen by default.
     static let quitAllDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_Q),
                                                            modifiers: [.control, .option, .command])
-    // O for "others", beside Quit all on the same layer.
     static let quitAllExceptFrontDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_O),
                                                               modifiers: [.control, .option, .command])
-    // W for webcam, on the same free control-option-command layer.
     static let cameraPreviewDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_W),
                                                      modifiers: [.control, .option, .command])
-    // V for Vorssaint: the quick launcher's own combination.
     static let quickLauncherDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_V),
                                                      modifiers: [.control, .command])
-    // Default screenshot shortcut on the available control-option-command layer.
     static let screenshotDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_4),
                                                   modifiers: [.control, .option, .command])
-    // Full screen sits beside the selector's 4 and the recorder's 5.
     static let screenshotFullScreenDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_3),
                                                             modifiers: [.control, .option, .command])
     static let screenshotUploadDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_U),
                                                         modifiers: [.control, .option, .command])
-    // E opens the latest capture in the editor, beside the capture shortcut.
     static let screenshotLastCaptureDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_E),
                                                              modifiers: [.control, .option, .command])
-    // H opens capture history, on the same free control-option-command layer.
     static let recentCapturesDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_H),
                                                       modifiers: [.control, .option, .command])
-    // P opens a copied image in the editor, beside the other screenshot tools.
     static let screenshotClipboardDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_P),
                                                            modifiers: [.control, .option, .command])
-    // Space for the wheel, on the same free control-option-command layer.
     static let radialMenuDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                   modifiers: [.control, .option, .command])
-    // EVERYTHING: option-space, as Wisp had it.
     static let scratchpadDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                   modifiers: [.option])
-    // I for island, on the same free control-option-command layer.
     static let notchDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_I),
                                              modifiers: [.control, .option, .command])
-    // L for library (S already belongs to the sound output switcher), on the
-    // same free control-option-command layer.
     static let snippetLibraryDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_L),
                                                       modifiers: [.control, .option, .command])
-    // Option-Space, the combination mature launchers settled on: one thumb
-    // and one finger, mirroring the system search's Command-Space without
-    // fighting it for the key. Registered as a hotkey it never types the
-    // narrow space some layouts put on that combination.
     static let commandBarDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                   modifiers: [.option])
-    // Next to the screenshot's 4, on the same free control-option-command
-    // layer, matching how the system numbers its own capture keys.
     static let screenRecorderDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_5),
                                                       modifiers: [.control, .option, .command])
 
@@ -260,10 +230,6 @@ struct GlobalShortcut: Equatable, Hashable {
         "\(modifiers.storageTokens.joined(separator: "+")):\(keyCode)"
     }
 
-    /// The range a virtual key code can occupy. A stored shortcut is just
-    /// text, and it can arrive edited by hand or through an imported settings
-    /// file, so the number is checked before anything converts it into the
-    /// narrower types the system APIs take.
     static let keyCodeRange: ClosedRange<Int64> = 0...0xFFFF
 
     var hasUsableKeyCode: Bool { Self.keyCodeRange.contains(keyCode) }
@@ -286,7 +252,6 @@ struct GlobalShortcut: Equatable, Hashable {
         modifiers.keyCaps + [keyLabel ?? "Key \(keyCode)"]
     }
 
-    /// The shorter way to press a shortcut matching the configured Super key.
     func superKeyAlternative(sourceLabel: String,
                              superKeyModifiers: GlobalShortcutModifiers) -> String? {
         guard superKeyModifiers.hasPrimaryModifier,
@@ -303,14 +268,6 @@ struct GlobalShortcut: Equatable, Hashable {
         modifiers.carbonFlags
     }
 
-    /// Every flag a real press of this combination carries, for the places
-    /// that have to synthesize one. The modifiers alone are not enough: the
-    /// arrows, the F keys and the navigation block reach the system with the
-    /// function flag on, the arrows and the keypad with the numeric pad flag
-    /// on, and a synthesized press missing them matches no system-wide
-    /// shortcut at all, even though the app in front still receives the key
-    /// (issue #401, measured here: a shortcut on Control-Command-Right never
-    /// fires without the function flag and always fires with it).
     var syntheticEventFlags: CGEventFlags {
         var flags = modifiers.cgFlags
         if Self.functionKeys.contains(keyCode) { flags.insert(.maskSecondaryFn) }
@@ -318,8 +275,6 @@ struct GlobalShortcut: Equatable, Hashable {
         return flags
     }
 
-    /// The function key group as this system defines it: the F row, the
-    /// navigation block and the arrows.
     private static let functionKeys: Set<Int64> = Set(([
         kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
         kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20,
@@ -327,15 +282,11 @@ struct GlobalShortcut: Equatable, Hashable {
         kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow,
     ] as [Int]).map(Int64.init))
 
-    /// Function-row keys are safe without modifiers: unlike a bare letter,
-    /// taking one never makes ordinary typing impossible. This also lets F2
-    /// serve as Finder's familiar Rename key.
     private static let standaloneFunctionKeys: Set<Int64> = Set(([
         kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
         kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20,
     ] as [Int]).map(Int64.init))
 
-    /// The keypad, plus the arrows, which this system counts as part of it.
     private static let numericPadKeys: Set<Int64> = Set(([
         kVK_ANSI_Keypad0, kVK_ANSI_Keypad1, kVK_ANSI_Keypad2, kVK_ANSI_Keypad3, kVK_ANSI_Keypad4,
         kVK_ANSI_Keypad5, kVK_ANSI_Keypad6, kVK_ANSI_Keypad7, kVK_ANSI_Keypad8, kVK_ANSI_Keypad9,
@@ -344,18 +295,10 @@ struct GlobalShortcut: Equatable, Hashable {
         kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow,
     ] as [Int]).map(Int64.init))
 
-    /// Paste as plain text ultimately posts the standard paste command. When
-    /// that same command is its configured global shortcut, the registration
-    /// must be released briefly or it catches the synthesized paste again.
     var isStandardPasteCommand: Bool {
         keyCode == Int64(kVK_ANSI_V) && modifiers == [.command]
     }
 
-    /// `tolerating` lists modifiers that may be held beyond the shortcut's own
-    /// without breaking the match. The switcher session passes its opening
-    /// shortcut's modifiers here: they are necessarily still down while the
-    /// panel is up, so a window shortcut like ⌥Tab must match even though ⌘ is
-    /// held for the session (issue #187).
     func matches(event: CGEvent,
                  allowingExtraShift: Bool = false,
                  tolerating extra: GlobalShortcutModifiers = []) -> Bool {
@@ -367,20 +310,9 @@ struct GlobalShortcut: Equatable, Hashable {
         keyCode == self.keyCode && actual == modifiers
     }
 
-    /// Layout-tolerant match: true when the pressed key would type the same
-    /// character this shortcut displays. Key codes are positions on a US
-    /// keyboard, so a default like ⌘` lands on a different position for ABNT2
-    /// or German layouts, sometimes behind Shift or Option; the user goes by
-    /// the character shown in Settings, not by the invisible ANSI position
-    /// (issue #187). The character comes from the event itself, the same
-    /// signal the switcher's search uses, so dead keys resolve identically.
     func matchesByCharacter(event: CGEvent,
                             tolerating extra: GlobalShortcutModifiers = []) -> Bool {
         let actual = GlobalShortcutModifiers(cgFlags: event.flags)
-        // The shortcut's own modifiers must be down; Shift or Option on top is
-        // tolerated because many layouts need them to produce the character,
-        // and the caller may tolerate more (a session's held modifiers). Asked
-        // before the label, since this runs for every key the tap sees.
         guard actual.intersection(modifiers) == modifiers,
               actual.subtracting(modifiers).subtracting([.shift, .option])
                   .subtracting(extra).isEmpty
@@ -433,10 +365,6 @@ struct GlobalShortcut: Equatable, Hashable {
         case kVK_RightArrow: return "→"
         case kVK_UpArrow: return "↑"
         case kVK_DownArrow: return "↓"
-        // Editing and navigation keys. They print as the caps the keyboard
-        // itself carries, the same way the arrows above do: spelling them out
-        // ("Page Down") would overflow the shortcut field on a full keyboard
-        // combination, and these caps are what every menu on this system shows.
         case kVK_Delete: return "⌫"
         case kVK_ForwardDelete: return "⌦"
         case kVK_Home: return "↖"
@@ -456,8 +384,6 @@ struct GlobalShortcut: Equatable, Hashable {
         case kVK_F10: return "F10"
         case kVK_F11: return "F11"
         case kVK_F12: return "F12"
-        // The upper function keys exist on full and external keyboards and are
-        // rarely claimed by anything else, which makes them good shortcuts.
         case kVK_F13: return "F13"
         case kVK_F14: return "F14"
         case kVK_F15: return "F15"
@@ -529,30 +455,6 @@ struct GlobalShortcut: Equatable, Hashable {
         }
     }
 
-    /// The character the current keyboard layout prints for a key, uppercased,
-    /// so keys the static table does not know (ISO and JIS extras) still get a
-    /// real cap. Returns nil for anything unprintable, keeping those invalid.
-    ///
-    /// `usesCommand` picks which of the layout's two tables to read, because a
-    /// keycap is a promise about a whole combination, not about the key alone.
-    /// macOS resolves a Command combination through the layout's Command
-    /// table, and the two tables disagree on every layout that types a
-    /// non-Latin script: on Russian and on Greek the key at keycode 12 types
-    /// something else bare and still answers Command-Q, Simplified Pinyin's
-    /// semicolon key types a full-width semicolon bare and a plain one under
-    /// Command, and DVORAK-QWERTYCMD exists for nothing but this difference.
-    /// Reading the bare table for a Command shortcut prints a cap the user
-    /// cannot press. Combinations without Command keep the bare table, which
-    /// is what they actually fire on.
-    ///
-    /// `usesShift` reads the shifted table instead: what the key types with
-    /// Shift held, which is how AZERTY reaches its digits. Caps never show
-    /// it, since a shortcut prints the bare cap beside ⇧, so only callers
-    /// asking what a press produced pass it.
-    ///
-    /// Answered from the cache: deriving a label asks Text Input Services,
-    /// which traps the process off the main thread, and the Switcher's tap
-    /// asks for one on every key from its own (issue #578).
     static func layoutKeyLabel(for keyCode: Int64, usesCommand: Bool,
                                usesShift: Bool = false, capsLockOn: Bool = false) -> String? {
         let cacheKey = LayoutLabelKey(keyCode: keyCode, usesCommand: usesCommand,
@@ -581,8 +483,6 @@ struct GlobalShortcut: Equatable, Hashable {
     private static var keyboardLayoutObserver: AnyObject?
     static let keyboardLayoutDidChange = Notification.Name("VorssaintShortcutKeyboardLayoutDidChange")
 
-    /// Starts observing system keyboard layout changes so the keycap cache stays
-    /// current across layout switches. Safe to call multiple times.
     static func startObservingKeyboardLayout() {
         refreshLayoutLabels()
         guard keyboardLayoutObserver == nil else { return }
@@ -593,8 +493,6 @@ struct GlobalShortcut: Equatable, Hashable {
         ) { _ in refreshLayoutLabels() }
     }
 
-    /// Fills the cache before the Switcher's tap starts, after layout changes,
-    /// or when simulating a specific keyboard layout in tests.
     static func refreshLayoutLabels(layoutData: Data? = currentLayoutData()) {
         defer { NotificationCenter.default.post(name: keyboardLayoutDidChange, object: nil) }
         guard let layoutData else {
@@ -634,14 +532,6 @@ struct GlobalShortcut: Equatable, Hashable {
                                      capsLockOn: capsLockOn)
     }
 
-    /// The layout the keycaps are read from. An input method answers the
-    /// current-layout call with the companion layout it types through, and
-    /// Pinyin's turns ; , . [ ] \ ` into ；，。【】、· — what the method produces,
-    /// not what the keyboard says, and it moves with the method rather than
-    /// with the hardware. The ASCII capable layout under a method is the
-    /// physical keyboard, so the caps stay put. A plain layout is still asked
-    /// directly, which keeps AZERTY, QWERTZ and the non-Latin layouts showing
-    /// their own keys (issue #1047).
     private static func currentLayoutData() -> Data? {
         guard Thread.isMainThread else { return nil }
         let source = inputMethodIsActive
@@ -668,8 +558,6 @@ struct GlobalShortcut: Equatable, Hashable {
         var deadKeyState: UInt32 = 0
         var chars = [UniChar](repeating: 0, count: 4)
         var length = 0
-        // UCKeyTranslate wants the modifier state already shifted down out of
-        // the Carbon event's high byte.
         let modifierState = (usesCommand ? UInt32((cmdKey >> 8) & 0xFF) : 0)
             | (usesShift ? UInt32((shiftKey >> 8) & 0xFF) : 0)
             | (capsLockOn ? UInt32((alphaLock >> 8) & 0xFF) : 0)
@@ -691,9 +579,6 @@ struct GlobalShortcut: Equatable, Hashable {
     }
 }
 
-/// The sentence under a listening shortcut field. Built in one place so every
-/// shortcut surface says the same thing, and so it only promises that Delete
-/// clears where Delete can actually take the shortcut off.
 enum ShortcutRecordingCaption {
     static func text(_ strings: Strings, canClear: Bool) -> String {
         let parts = canClear
@@ -820,8 +705,6 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         GlobalShortcut.saved(for: storageKey, fallback: defaultShortcut)
     }
 
-    /// The switcher's event tap can handle its native combinations without
-    /// changing the system takeover setting. Other system actions stay reserved.
     var permittedSystemShortcutIDs: Set<Int32> {
         switch self {
         case .switcher:
@@ -898,17 +781,11 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
             : activeRoles(isOn: isOn, isAvailable: isAvailable)
         return candidates.first { candidate in
             guard candidate != role else { return false }
-            // The radial menu's role key only seeds the first wheel. Every
-            // wheel registers its own combination, so those are the ones taken.
             if candidate == .radialMenu { return radialMenuShortcuts().contains(shortcut) }
             return candidate.savedShortcut == shortcut
         }
     }
 
-    /// The defaults keys that must ALL be true for this role's shortcut to be
-    /// registered. Some shortcuts gate on their own toggle, some follow the
-    /// feature switch, and the clipboard needs both the feature and its
-    /// shortcut toggle.
     var requiredEnableKeys: [String] {
         switch self {
         case .keepAwake: return [DefaultsKey.hotkeyEnabled]
@@ -948,9 +825,6 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         }
     }
 
-    /// The hub feature behind each shortcut; a feature switched off in the
-    /// hub takes its shortcut off the overview page (the hotkey itself is
-    /// already dead through the service's own availability guard).
     var feature: AppFeature {
         switch self {
         case .keepAwake: return .keepAwake
@@ -981,9 +855,6 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         }
     }
 
-    /// Keyboard-backlight shortcuts belong with keyboard controls in the
-    /// editor, while their implementation remains part of the brightness
-    /// service and follows that feature's availability.
     var group: FeatureGroup {
         switch self {
         case .keyboardBrightnessDecrease, .keyboardBrightnessIncrease: return .mouseKeyboard
@@ -991,12 +862,6 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         }
     }
 
-    /// Whether a claim ever reaches `SystemShortcutTakeover` for this key, and
-    /// so whether the recorder may offer to take a macOS shortcut over. The
-    /// switcher suppresses its keys through its own take-over toggle rather
-    /// than a claim, and the radial menu's role key is only a migration seed —
-    /// the live shortcuts are the per-profile ones. A row that cannot keep the
-    /// promise refuses the combination instead of making it.
     var supportsTakeOver: Bool {
         switch self {
         case .switcher, .switcherWindow, .switcherAllWindows, .radialMenu: return false
@@ -1008,8 +873,6 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         self == .keyboardBrightnessDecrease || self == .keyboardBrightnessIncrease
     }
 
-    /// Capture roles normally follow their own tool. Shared capture history
-    /// stays available while either kind of capture that fills it is installed.
     var availabilityFeatures: [AppFeature] {
         switch self {
         case .recentCaptures: return [.screenshot, .screenRecorder]
@@ -1021,23 +884,13 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         availabilityFeatures.contains(where: isAvailable)
     }
 
-    /// The features whose own shortcuts have to go quiet while the user is
-    /// recording a new one, or the combination being typed fires the feature
-    /// instead of landing in the field. Derived from the roles, so a shortcut
-    /// added later is covered the day its role is added. Re-registering is a
-    /// plain `FeatureRuntime.sync` of this same list.
     static var featuresToSilenceWhileRecording: [AppFeature] {
         var seen: Set<AppFeature> = []
         var features = allCases.compactMap { seen.insert($0.feature).inserted ? $0.feature : nil }
-        // Window layout keeps one shortcut per action instead of a role, so it
-        // is the one holder of global keys the list above cannot reach.
         if seen.insert(.windowLayout).inserted { features.append(.windowLayout) }
         return features
     }
 
-    /// Roles whose shortcut is live given a defaults reader, for the keyboard
-    /// shortcuts overview page. Injected readers so the harness can test the
-    /// gating without touching real defaults.
     static func activeRoles(isOn: (String) -> Bool,
                             isAvailable: (AppFeature) -> Bool = { _ in true }) -> [GlobalShortcutRole] {
         allCases.filter { role in
@@ -1045,28 +898,19 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         }
     }
 
-    /// Every shortcut belonging to an installed feature, including choices
-    /// that are currently switched off but can still be edited and kept for
-    /// later on the central shortcuts page.
     static func availableRoles(isAvailable: (AppFeature) -> Bool = { $0.isAvailable })
         -> [GlobalShortcutRole] {
         allCases.filter { $0.isAvailable(using: isAvailable) }
     }
 
-    /// The features whose shortcuts share one Screen capture group on the
-    /// central shortcuts page.
     static let captureFeatures: [AppFeature] =
         [.screenshot, .screenRecorder, .screenOCR, .colorPicker]
 
-    /// Chooser tools first, in chooser order, then shared history and screenshot extras.
     static let captureDisplayOrder: [GlobalShortcutRole] = [
         .screenshot, .screenRecorder, .screenOCR, .colorPicker,
         .recentCaptures, .screenshotFullScreen, .screenshotLastCapture, .screenshotClipboard, .screenshotUpload,
     ]
 
-    /// The given roles narrowed to the capture group, in display order. The
-    /// order list only sorts, so an unlisted role lands at the end instead of
-    /// vanishing.
     static func captureRoles(in roles: [GlobalShortcutRole]) -> [GlobalShortcutRole] {
         roles.filter { captureFeatures.contains($0.feature) }
             .enumerated()
@@ -1078,29 +922,12 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
     }
 }
 
-/// macOS answers its own shortcuts before an application hotkey ever sees the
-/// key, and it does not consume it, so a combination shared with the system
-/// fires both: the system screenshot picker opens and the app's own capture
-/// starts behind it. The system list is the only one that can be inspected —
-/// hotkeys other applications register are not published anywhere — so this
-/// catches the collisions it can and leaves the rest to the registration
-/// failure the shortcut rows already report.
 extension GlobalShortcut {
-    /// The customised half of the system's shortcut list, as System Settings
-    /// writes it. Only the fallback reads it; the live table is the authority.
-    /// Read fresh every time: it can change while a shortcut field is open.
     static var systemSymbolicHotKeys: [String: Any]? {
         UserDefaults(suiteName: "com.apple.symbolichotkeys")?
             .dictionary(forKey: "AppleSymbolicHotKeys")
     }
 
-    /// The WindowServer's live table is the authority: the preferences plist
-    /// only lists entries the user has customised, so a factory key such as
-    /// ⌘⇧4 is missing from it and used to pass here while macOS still answered
-    /// it. The plist is the fallback when the private calls are unavailable,
-    /// and also when they answer with an empty table: an empty read says
-    /// nothing about what macOS answers, and treating it as all clear would
-    /// quietly revive the bug this check exists to catch.
     var conflictsWithSystemShortcut: Bool {
         conflictsWithSystemShortcut(for: nil)
     }
@@ -1112,9 +939,6 @@ extension GlobalShortcut {
                                          role: role)
     }
 
-    /// The decision behind `conflictsWithSystemShortcut`, with both sources
-    /// injected so it can be tested without touching the WindowServer. The
-    /// plist is read only when the live table is missing or empty.
     static func conflictsWithSystemShortcut(_ shortcut: GlobalShortcut,
                                             liveEntries: [LiveSystemShortcut]?,
                                             symbolicHotKeys: @autoclosure () -> [String: Any]?,
@@ -1130,9 +954,6 @@ extension GlobalShortcut {
         })
     }
 
-    /// Whether an enabled live entry uses exactly this combination. Rows with
-    /// no key assigned never reach the snapshot, and a disabled row is not in
-    /// anyone's way.
     static func matchesLiveSystemShortcut(_ shortcut: GlobalShortcut,
                                           entries: [LiveSystemShortcut]) -> Bool {
         guard shortcut.keyCode != Self.noKeyCode else { return false }
@@ -1142,11 +963,6 @@ extension GlobalShortcut {
         }
     }
 
-    /// Whether an enabled system shortcut uses exactly this combination. Entries
-    /// store `[character, key code, modifier mask]`, with the mask in
-    /// `NSEvent.ModifierFlags` bits, and a disabled entry is not in anyone's
-    /// way. Anything that does not parse is ignored rather than guessed at: a
-    /// wrong match would refuse a combination the user can legitimately take.
     static func matchesSystemShortcut(_ shortcut: GlobalShortcut,
                                       symbolicHotKeys: [String: Any]?) -> Bool {
         guard let symbolicHotKeys else { return false }
@@ -1166,12 +982,9 @@ extension GlobalShortcut {
         }
     }
 
-    /// The placeholder a system entry carries when it has no key assigned.
     private static let noKeyCode: Int64 = 0xFFFF
 }
 
-/// Opt-in recording for held chords. A key press disqualifies the current
-/// chord, so releasing modifiers after an invalid key cannot save a new trigger.
 struct ModifierShortcutRecording {
     private var candidate: GlobalShortcutModifiers = []
     private var waitingForRelease = false
@@ -1194,8 +1007,6 @@ struct ModifierShortcutRecording {
             return captured.isEmpty ? nil : captured
         }
         guard !waitingForRelease else { return nil }
-        // Remember a chord that was actually held, never the union of keys
-        // pressed at different times. Keep it while its keys are released.
         if modifiers.rawValue.nonzeroBitCount > candidate.rawValue.nonzeroBitCount {
             candidate = modifiers
         }

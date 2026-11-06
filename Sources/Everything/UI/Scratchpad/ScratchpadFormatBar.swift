@@ -4,15 +4,9 @@
 import AppKit
 import SwiftUI
 
-/// The formatting row, written once for both pads. The floating pad and the
-/// island draw their controls differently and nothing else about the row
-/// differs, so the appearance is a parameter and the row itself is shared:
-/// a mark added here shows up in both, labelled and ordered the same way.
 struct ScratchpadFormatBar: View {
     enum Style {
-        /// A window, on the system's own material.
         case pad
-        /// The island, white on dark chrome.
         case island
 
         var buttonSize: CGFloat { self == .pad ? 26 : 28 }
@@ -21,8 +15,6 @@ struct ScratchpadFormatBar: View {
     }
 
     let style: Style
-    /// The island edits through its own text view; the floating pad lets the
-    /// service find the one belonging to its panel.
     var editor: NSTextView?
 
     @ObservedObject private var service = ScratchpadService.shared
@@ -43,8 +35,6 @@ struct ScratchpadFormatBar: View {
     private func markButton(_ mark: ScratchpadMark) -> some View {
         Button { service.apply(mark, through: editor) } label: {
             Group {
-                // A letter where one says the thing better than any glyph: every
-                // symbol for a heading reads as font size instead.
                 if let glyph = mark.glyph {
                     Text(verbatim: glyph).font(.system(size: 13, weight: .semibold))
                 } else {

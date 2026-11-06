@@ -34,8 +34,6 @@ struct NotchLyrics: Equatable {
     let plain: String
     let instrumental: Bool
 
-    /// Highlighting changes only at lyric boundaries. Rebuild this schedule
-    /// when playback or the user's offset changes, with no clock while paused.
     func changeDates(for playback: NotchPlayback, offset: Double, from now: Date) -> [Date] {
         var dates = [now]
         guard playback.isPlaying, playback.hasPosition, playback.rate.isFinite, playback.rate > 0,
@@ -47,13 +45,8 @@ struct NotchLyrics: Equatable {
             let time = playback.sampledAt.timeIntervalSinceReferenceDate
                 + (target - playback.elapsed) / playback.rate
             guard time.isFinite else { continue }
-            // Round toward the new verse: inverse rate/date arithmetic must
-            // not leave the highlight just before its boundary until the next verse.
             dates.append(Date(timeIntervalSinceReferenceDate: max(now.timeIntervalSinceReferenceDate, time).nextUp))
         }
-        // SwiftUI can omit the last entry of a finite explicit timeline.
-        // Leave a terminal entry beyond playback so the final verse is delivered,
-        // without recurring wakeups or any scheduled work while paused.
         if dates.count > 1 { dates.append(.distantFuture) }
         return dates
     }
@@ -71,8 +64,6 @@ struct NotchLyrics: Equatable {
     }
 }
 
-/// At most one recording's lyrics and adjustment remain in memory. Hiding the
-/// view does not alter this cache; a different or absent playback clears it.
 struct NotchLyricsMemory {
     private(set) var track: NotchMusicIdentity?
     private(set) var lyrics: NotchLyrics?
@@ -101,8 +92,6 @@ struct NotchLyricsMemory {
     mutating func clear() { self = Self() }
 }
 
-/// A server-side lookup failure may still have working search results. Network
-/// failures and client/rate-limit responses must not fan out into more requests.
 enum NotchLyricsDownloadResult {
     case payload(Data), missing, serviceUnavailable, failed
     var data: Data? { if case let .payload(data) = self { return data }; return nil }
@@ -132,10 +121,6 @@ enum NotchLyricsSupport {
               album.isEmpty || album.utf8.count <= 1024,
               track.duration.isFinite, (1...3600).contains(track.duration) else { return nil }
         var url = URLComponents(string: "https://lrclib.net/api/get")!
-        // The release only separates two recordings of one song, and a player
-        // that reports none has nothing to send: the request leaves the field
-        // out rather than naming a release the service has no record of. A
-        // reported album stays inside the same byte bound as the other fields.
         var items = [URLQueryItem(name: "track_name", value: track.title),
                      URLQueryItem(name: "artist_name", value: track.artist)]
         if !album.isEmpty { items.append(URLQueryItem(name: "album_name", value: album)) }
@@ -160,9 +145,6 @@ enum NotchLyricsSupport {
                            instrumental: instrumental)
     }
 
-    /// /get can return canonical punctuation and credit separators even for an
-    /// exact query. Accept those cosmetic differences without relaxing its album
-    /// or recording-length constraints.
     static func decodeCatalogMatch(_ data: Data, for track: NotchMusicIdentity) -> NotchLyrics? {
         guard data.count <= maximumBytes,
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -179,8 +161,6 @@ enum NotchLyricsSupport {
         return decode(canonical, for: track)
     }
 
-    // Search replies contain up to twenty complete lyric records, rather than
-    // the single record returned by /get. Bound both the envelope and each entry.
     static let maximumSearchBytes = 1024 * 1024
 
     struct Candidate {
@@ -191,9 +171,6 @@ enum NotchLyricsSupport {
         let stableKey: String
     }
 
-    /// Keep the player's exact credits first. Fallbacks name the primary artist
-    /// and normalize punctuation/Latin accents and Russian е/ё for catalog search.
-    /// Never remove recording qualifiers (live, remix, acoustic, etc.).
     static func searchURLs(for track: NotchMusicIdentity) -> [URL] {
         guard lookupURL(for: track) != nil else { return [] }
         let primary = artistNames(track.artist).first ?? track.artist
@@ -228,8 +205,6 @@ enum NotchLyricsSupport {
                   abs(duration - track.duration) <= durationTolerance,
                   let encoded = try? JSONSerialization.data(withJSONObject: object),
                   encoded.count <= maximumBytes else { return nil }
-            // Reuse the bounded parser and payload validation only after recording
-            // matching. The strict /get decoder remains unchanged.
             let plain = (object["plainLyrics"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let instrumental = object["instrumental"] as? Bool == true
             let lines = catalogLines(object["syncedLyrics"] as? String ?? "", duration: track.duration)
@@ -246,8 +221,6 @@ enum NotchLyricsSupport {
         }
     }
 
-    /// A known artist/title with the wrong recording length cannot be repaired
-    /// by renaming the artist. Avoid metadata requests in that case.
     static func containsCatalogRecording(_ data: Data, for track: NotchMusicIdentity) -> Bool {
         guard data.count <= maximumSearchBytes,
               let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], objects.count <= 20 else { return false }
@@ -260,16 +233,12 @@ enum NotchLyricsSupport {
         }
     }
 
-    /// Incorrect catalog durations can accompany a full-length LRC. Keep its
-    /// plain text instead of presenting a truncated timeline as synchronized.
     private static func catalogLines(_ source: String, duration: Double) -> [NotchLyricLine] {
         let lines = parse(source, duration: max(duration, 604_800))
         guard (lines.last?.time ?? 0) <= duration + 2 else { return [] }
         return lines.filter { $0.time <= duration }
     }
 
-    /// All candidates already passed recording checks. Resolve ties consistently
-    /// rather than hiding available lyrics or depending on API response order.
     static func bestLyrics(in candidates: [Candidate]) -> NotchLyrics? {
         candidates.sorted {
             if $0.score != $1.score { return $0.score > $1.score }
@@ -279,8 +248,6 @@ enum NotchLyricsSupport {
         }.first?.lyrics
     }
 
-    /// Featured credits are artist metadata, and Original Mix is the default
-    /// version. Preserve all other title qualifiers for candidate validation.
     private static func catalogTitle(_ title: String) -> String {
         title.replacingOccurrences(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]+[\)\]]"#,
                                    with: "", options: [.regularExpression, .caseInsensitive])
@@ -311,8 +278,6 @@ enum NotchLyricsSupport {
 
     private static func titleKey(_ title: String) -> String { key(catalogTitle(title)) }
 
-    /// One broader query, only after precise searches have no eligible result.
-    /// Query text may omit qualifiers; candidate validation still retains them.
     static func prefersDiscovery(for track: NotchMusicIdentity) -> Bool {
         catalogTitle(track.title) != track.title
     }
@@ -323,8 +288,6 @@ enum NotchLyricsSupport {
         let base = catalogTitle(track.title).replacingOccurrences(
             of: #"\s*[\(\[][^\)\]]*(?:mix|edit|version|live|acoustic|instrumental|karaoke)[^\)\]]*[\)\]]"#,
             with: "", options: [.regularExpression, .caseInsensitive]).trimmingCharacters(in: .whitespacesAndNewlines)
-        // An artist-only full-text query can discover word-boundary variants
-        // without a language-specific word splitter or song-name mapping.
         var url = URLComponents(string: "https://lrclib.net/api/search")!
         url.queryItems = base == track.title ? [URLQueryItem(name: "q", value: primary)]
             : [URLQueryItem(name: "track_name", value: base), URLQueryItem(name: "artist_name", value: primary)]
@@ -332,7 +295,6 @@ enum NotchLyricsSupport {
     }
 
     private static func folded(_ text: String) -> String {
-        // Fold Latin accents without turning Cyrillic й into и.
         let latin = text.precomposedStringWithCanonicalMapping.map { character -> String in
             let value = String(character)
             return character.unicodeScalars.allSatisfy { $0.value < 0x0250 }
@@ -361,8 +323,6 @@ enum NotchLyricsSupport {
         }.filter { !$0.isEmpty }
     }
 
-    /// Catalog credits may omit contributors or reorder known names, but
-    /// matching one performer does not establish an unrelated collaboration.
     private static func searchCreditsMatch(_ artist: String, _ track: NotchMusicIdentity,
                                            aliases: Set<String> = []) -> Bool {
         guard let primary = artistNames(track.artist).first else { return false }
@@ -382,8 +342,6 @@ enum NotchLyricsSupport {
                     "acoustic", "акустика", "instrumental", "karaoke"].filter { words.contains($0) })
     }
 
-    /// Apple Music names singles and EPs "Title - Single" and "Title - EP",
-    /// while LRCLIB stores the release title alone. Other qualifiers still count.
     static func catalogAlbum(_ album: String) -> String {
         let trimmed = album.trimmingCharacters(in: .whitespacesAndNewlines)
         for suffix in [" - Single", " - EP"] {
@@ -394,11 +352,6 @@ enum NotchLyricsSupport {
         return trimmed
     }
 
-    /// A player that reports no album cannot disagree about one: the request
-    /// leaves the field out and the service answers with the first record it
-    /// holds for that title, artist and length, so the reply names a release
-    /// the track never mentioned. A release both sides do carry still has to
-    /// be the same one.
     private static func albumMatches(_ value: String?, _ expected: String) -> Bool {
         guard !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
         return equal(value.map(catalogAlbum), catalogAlbum(expected))
@@ -433,10 +386,7 @@ enum NotchLyricsSupport {
                 text = text[text.index(after: end)...]
             }
             let words = text.trimmingCharacters(in: .whitespaces)
-            // Repeated time tags expand one input string into many displayed
-            // verses. Bound that expansion before storing or joining any copies.
             let bytesPerEntry = words.utf8.count + (words.isEmpty ? 0 : 1)
-            // Empty timed lines end the preceding verse during an instrumental passage.
             for time in times {
                 guard entries.count < maximumLines,
                       bytesPerEntry <= maximumBytes - expandedBytes else { return [] }
@@ -505,8 +455,6 @@ extension NotchLyricsSupport {
         return url.url
     }
 
-    /// Exact name/alias membership identifies candidates; search scores alone
-    /// cannot establish identity. Reject truncated or overly broad results.
     static func artistIdentities(_ data: Data, for track: NotchMusicIdentity, allowTruncated: Bool = false) -> [ArtistIdentity] {
         guard data.count <= maximumBytes, let primary = artistNames(track.artist).first, !key(primary).isEmpty,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -574,8 +522,6 @@ extension NotchLyricsSupport {
         return url.url
     }
 
-    /// An ambiguous short artist name needs an independently matching album
-    /// credited to exactly one of its identities. Never choose by API order.
     static func artistIdentity(_ data: Data, for track: NotchMusicIdentity, candidates: [ArtistIdentity]) -> ArtistIdentity? {
         guard data.count <= maximumBytes,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

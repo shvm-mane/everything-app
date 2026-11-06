@@ -4,7 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// Enabled level controls receive the wheel before an enclosing horizontal strip.
 protocol SliderScrollTarget: AnyObject {
     var acceptsSliderScroll: Bool { get }
 }
@@ -22,15 +21,12 @@ extension SliderScroll {
                       timestamp: event.timestamp, current: current, range: range)
     }
 
-    /// A scroll the bar does not take goes on to the list around it.
     static func pass(_ event: NSEvent, from view: NSView) {
         if let scroll = view.enclosingScrollView { scroll.scrollWheel(with: event) }
         else { view.nextResponder?.scrollWheel(with: event) }
     }
 }
 
-/// Laid over a SwiftUI slider, it takes only scroll events; clicks and drags
-/// reach the slider underneath.
 struct SliderScrollArea: NSViewRepresentable {
     @Binding var value: Double
     let range: ClosedRange<Double>

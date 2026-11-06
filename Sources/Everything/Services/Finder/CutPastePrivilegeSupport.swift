@@ -4,8 +4,6 @@
 import Foundation
 
 enum CutPastePrivilegeSupport {
-    /// Cancellation can follow a partial move. Only retain items that have not
-    /// landed; lack of permission to inspect a source is not proof it moved.
     static func reconcile(_ urls: [URL], into directory: URL, canceled: Bool,
                           fm: FileManager) -> (moved: Int, failed: Int, stillCut: [URL]) {
         let remaining = urls.filter { source in

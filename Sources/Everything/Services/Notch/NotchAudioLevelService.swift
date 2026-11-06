@@ -7,15 +7,9 @@ import Combine
 import CoreAudio
 import Foundation
 
-/// Reads the current player's audio output and turns it into seven levels
-/// for the island's bars. Off unless chosen, and running only while that
-/// player is playing: the tap follows the player's process, listens to
-/// nothing else, keeps a fraction of a second of samples in memory and never
-/// stores or sends audio.
 final class NotchAudioLevelService: ObservableObject {
     static let shared = NotchAudioLevelService()
 
-    /// Band levels from 0 to 1 while a player is being read, nil otherwise.
     @Published private(set) var levels: [Double]?
 
     private var enabled = false
@@ -57,19 +51,13 @@ final class NotchAudioLevelService: ObservableObject {
     private func playbackChanged(_ playback: NotchPlayback?) {
         guard enabled, let playback, playback.isPlaying,
               let pid = playback.track.appPID, pid > 0 else {
-            // Pausing or stopping arms the next play to read again.
             silence.rearm()
             scheduleStop()
             return
         }
-        // A reader that has not heard sound may already be reporting silence
-        // from the pause. Give the resumed play a fresh chance, and a new
-        // reader identity, while keeping audible readers through short pauses.
         let resumeBeforeSound = stopWork != nil && levels == nil
         stopWork?.cancel(); stopWork = nil
         guard readerPID != pid || resumeBeforeSound else { return }
-        // Release the previous player before deciding about this one, or its
-        // reader would keep the bars on somebody else's levels.
         stop()
         let identity = NotchMusicIdentity(playback)
         guard silence.reads(identity) else { return }
@@ -78,8 +66,6 @@ final class NotchAudioLevelService: ObservableObject {
     }
 
     private func read(_ pid: pid_t, on identity: NotchMusicIdentity) {
-        // A stopped reader can finish a slow device call after its replacement
-        // has started for the same player. Only this reading may publish.
         let id = UUID()
         readerID = id
         let created = NotchAudioLevelReader(pid: pid, onLevels: { [weak self] next in
@@ -107,14 +93,8 @@ final class NotchAudioLevelService: ObservableObject {
         created.start()
     }
 
-    /// The player moved its sound to another process. The bars go back to
-    /// their usual motion while a new tap is built, and the wait for sound
-    /// starts over, since the new process may be the silent kind.
     private func restart(_ pid: pid_t, on identity: NotchMusicIdentity) {
         guard enabled, readerPID == pid else { return }
-        // Paused, the player may have just let go of its audio: reading again
-        // now would only hear silence and write this track off before the next
-        // play, which starts a fresh reader on its own.
         let pausing = stopWork != nil
         stop()
         guard !pausing else { return }
@@ -124,22 +104,15 @@ final class NotchAudioLevelService: ObservableObject {
 
     private func giveUp(_ pid: pid_t, on identity: NotchMusicIdentity) {
         guard readerPID == pid else { return }
-        // Paused, the tap hears the player letting go of its audio, and the
-        // pause already armed the next play; only a play that stayed silent
-        // is written off.
         if stopWork == nil { silence.giveUp(on: identity) }
         stop()
     }
 
-    /// No tap could be created, or the one there lost its device for good.
-    /// Nothing is marked, so the next change is free to try again.
     private func release(_ pid: pid_t) {
         guard readerPID == pid else { return }
         stop()
     }
 
-    /// A pause keeps the bars for a moment, so a skipped track does not
-    /// blink the meter off and on; a real stop then releases the tap.
     private func scheduleStop() {
         guard reader != nil || levels != nil, stopWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
@@ -156,31 +129,16 @@ final class NotchAudioLevelService: ObservableObject {
     }
 }
 
-/// Names a reader's Core Audio listener registrations.
-///
-/// The registrations use the plain callback and a client pointer, the way
-/// the mixer does. Handing a closure back to be removed never matches the
-/// one that was registered: the call answers that it worked and the listener
-/// stays, so every reader would leave its listeners behind and they would go
-/// on firing for the rest of the session.
-///
-/// That pointer is a number to look up here, never the reader's own address.
-/// A reader lives for one play, and a notification can still be on its way
-/// from a HAL thread when the last one goes away; the entry holds the reader
-/// until it has given its listeners back, and a forgotten number simply
-/// finds nothing.
 private enum NotchAudioLevelListeners {
     private static let lock = NSLock()
     private static var readers: [UInt: NotchAudioLevelReader] = [:]
     private static var counter: UInt = 0
 
-    /// A client pointer no other reader holds. Never dereferenced.
     static func reserve() -> UnsafeMutableRawPointer {
         lock.lock()
         defer { lock.unlock() }
         counter &+= 1
         if counter == 0 { counter = 1 }
-        // A counter that never reaches zero always makes a usable value.
         return UnsafeMutableRawPointer(bitPattern: counter).unsafelyUnwrapped
     }
 
@@ -204,13 +162,6 @@ private enum NotchAudioLevelListeners {
     }
 }
 
-/// The player's process taps, read through a private aggregate device on the
-/// default output, the same shape the recorder uses, feeding a ring of mono
-/// samples that a timer analyses off the audio thread.
-///
-/// Every Core Audio call runs on this object's own queue. Creating a tap or
-/// starting a device can block for as long as a Bluetooth or USB device takes
-/// to reconnect, and the island must never wait on that.
 private final class NotchAudioLevelReader {
     private let queue = DispatchQueue(label: "com.vorssaint.notch-audio-levels", qos: .utility)
     private static let teardownQueue = DispatchQueue(label: "com.vorssaint.notch-audio-levels.teardown", qos: .utility)
@@ -233,11 +184,8 @@ private final class NotchAudioLevelReader {
     private var hostDeviceUID: String?
     private var sampleRate: Double = 0
     private var tapped: [AudioObjectID] = []
-    /// What the tap's mixdown took from the player's sound, given back before
-    /// the analysis. See `followLevel`.
     private var levelCompensation: Float = 1
     private var levelWatch: LevelCompensationWatch?
-    /// Names this reader's listener registrations. See `NotchAudioLevelListeners`.
     private let listenerClient = NotchAudioLevelListeners.reserve()
     private var deviceListening = false
     private var processListening = false
@@ -259,8 +207,6 @@ private final class NotchAudioLevelReader {
         Self.destroy(aggregateID: aggregateID, ioProc: ioProc, tapID: tapID)
     }
 
-    /// Builds and starts on the reader's queue. A failure is reported through
-    /// `onUnavailable` rather than returned, since the caller is not waiting.
     func start() {
         queue.async { [self] in
             guard !stopped else { return }
@@ -305,16 +251,9 @@ private final class NotchAudioLevelReader {
         return true
     }
 
-    /// The mixdown divides what the player plays on an output with more than
-    /// two channels by that output's channel pairs (FB13479345, see
-    /// `MixerRoutingSupport.tapLevelCompensation`), so the bars moved less
-    /// with a TV or an audio interface as the output. The analysis gives that
-    /// level back, and the watch follows the player to another output.
     private func followLevel(of objects: [AudioObjectID]) {
         let watch = LevelCompensationWatch.started(objects: objects) { [weak self] value in
             self?.queue.async { [weak self] in
-                // A watch already replaced can still answer for the processes
-                // of an older tap.
                 guard let self, !self.stopped, self.tapped == objects else { return }
                 self.levelCompensation = value
             }
@@ -328,11 +267,6 @@ private final class NotchAudioLevelReader {
         levelWatch = nil
     }
 
-    /// Everything: the levels device holds only the tap. With the speakers
-    /// inside it as well, it kept their output running for as long as music
-    /// played, and macOS left the sound on the speakers when headphones were
-    /// plugged in. A system that cannot clock a tap on its own still gets the
-    /// old device, with the default output inside it.
     private func buildPipeline() -> Bool {
         buildPipeline(includingOutput: false) || buildPipeline(includingOutput: true)
     }
@@ -356,8 +290,6 @@ private final class NotchAudioLevelReader {
         var aggregateID = AudioObjectID(0)
         guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID) == noErr,
               aggregateID != 0 else { return false }
-        // Everything: larger buffers, so the tap wakes the app about half as
-        // often. The bars step 30 times a second; ~21 ms of buffer is unseen.
         var frames: UInt32 = 1024
         var bufferAddress = Self.address(kAudioDevicePropertyBufferFrameSize)
         _ = AudioObjectSetPropertyData(aggregateID, &bufferAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
@@ -366,14 +298,10 @@ private final class NotchAudioLevelReader {
             Self.destroy(aggregateID: aggregateID, ioProc: nil, tapID: 0)
             return false
         }
-        // The audio thread touches only these captured values, never this
-        // object, matching the mixer's realtime discipline.
         let ring = self.ring
         let channels = tapChannels
         var ioProc: AudioDeviceIOProcID?
         let created = AudioDeviceCreateIOProcIDWithBlock(&ioProc, aggregateID, nil) { _, input, _, output, _ in
-            // The device beneath the aggregate would otherwise play whatever
-            // this memory last held.
             if includingOutput { MixerRender.silence(UnsafeMutableAudioBufferListPointer(output)) }
             let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
             guard let index = MixerRender.tapBufferIndex(in: inputBuffers, tapChannels: channels) else { return }
@@ -411,8 +339,6 @@ private final class NotchAudioLevelReader {
         Self.destroy(aggregateID: aggregateID, ioProc: ioProc, tapID: 0)
     }
 
-    /// Gives everything back for good, optionally saying why. The tap goes
-    /// too, and this reader builds no other: the service makes the next one.
     private func release(reporting callback: (() -> Void)?) {
         stopped = true
         stopAnalysis()
@@ -436,23 +362,15 @@ private final class NotchAudioLevelReader {
         let tapID = self.tapID
         self.tapID = 0
         Self.destroy(aggregateID: 0, ioProc: nil, tapID: tapID)
-        // The last reference to this reader may be the registry's, so the
-        // caller's own strong capture is what keeps it alive to here.
         NotchAudioLevelListeners.forget(listenerClient)
         callback?()
     }
 
-    /// Headphones that come and go, or a device that changes its rate for a
-    /// call, would otherwise leave the bars still while the music plays on.
-    /// Only a real change rebuilds, so the notifications a rebuild raises
-    /// settle instead of looping.
     private func rebuildIfDeviceChanged() {
         guard !stopped, aggregateID != 0 else { return }
         guard Self.hostDeviceUID() != hostDeviceUID
                 || Self.nominalSampleRate(of: aggregateID) != sampleRate else { return }
         teardownPipeline()
-        // The ring keeps what it has heard, so a device change does not
-        // restart the silence countdown on a player already known to sound.
         if !buildPipeline() { release(reporting: onUnavailable) }
     }
 
@@ -478,12 +396,6 @@ private final class NotchAudioLevelReader {
         }
     }
 
-    /// A browser makes its sound in a helper process that it opens and shuts
-    /// as tabs come and go. One that leaves takes the tap's ears with it;
-    /// one that arrives is a part of the player the tap cannot hear, such as
-    /// a tab that starts playing a moment after the tap was built. Either
-    /// way the tap has to be made again from the player's processes as they
-    /// are now, and `TapChange` says what that costs the bars.
     private func tappedProcessesChanged() {
         processCheck = nil
         guard !stopped, !tapped.isEmpty else { return }
@@ -496,9 +408,6 @@ private final class NotchAudioLevelReader {
         }
     }
 
-    /// Builds the tap again around the player's processes as they are now,
-    /// keeping the ring: the processes already heard never stopped, so the
-    /// bars carry on and the wait for sound is not started over.
     private func rebuildTap() {
         teardownPipeline()
         let previous = tapID
@@ -508,8 +417,6 @@ private final class NotchAudioLevelReader {
         if !buildTap() || !buildPipeline() { release(reporting: onProcessesLeft) }
     }
 
-    /// One app launching stirs the whole process list. The player's own
-    /// processes are read once the burst has settled, not on each of them.
     private func scheduleProcessCheck() {
         guard !stopped, !tapped.isEmpty else { return }
         processCheck?.cancel()
@@ -520,10 +427,6 @@ private final class NotchAudioLevelReader {
 
     // MARK: - Listeners
 
-    /// The default output device and the aggregate's sample rate ask the
-    /// same question: is the tap still reading the device the music comes
-    /// out of. Both notifications arrive on a HAL thread, so each one hops
-    /// to the reader's queue before touching anything.
     private static let deviceCallback: AudioObjectPropertyListenerProc = { _, _, _, client in
         NotchAudioLevelListeners.reader(for: client)?.deviceChanged()
         return noErr
@@ -560,9 +463,6 @@ private final class NotchAudioLevelReader {
 
     private func analyse() {
         guard !stopped, let analyzer else { return }
-        // Levels are reported only once sound has arrived, so the bars keep
-        // their usual motion while the tap warms up, and give this play up
-        // when the tap only ever delivers silence.
         guard ring.hasHeard(gain: levelCompensation) else {
             if NotchAudioLevelSupport.fallsBack(heard: false, elapsed: ProcessInfo.processInfo.systemUptime - startedAt) {
                 release(reporting: onSilence)
@@ -609,9 +509,6 @@ private final class NotchAudioLevelReader {
         }
     }
 
-    /// Every audio process the player is responsible for. Some browsers make
-    /// their sound in a helper process, so a tap on the app's own pid alone
-    /// would never hear them; the mixer gathers its rows the same way.
     @available(macOS 14.4, *)
     private static func processObjects(for pid: pid_t) -> [AudioObjectID] {
         var objects: [AudioObjectID] = []
@@ -622,8 +519,6 @@ private final class NotchAudioLevelReader {
             else { continue }
             objects.append(object)
         }
-        // A player that holds no audio connection yet still has a process
-        // object of its own, which starts sounding when it does.
         if objects.isEmpty, let direct = processObject(for: pid) { objects.append(direct) }
         return objects
     }
@@ -657,8 +552,6 @@ private final class NotchAudioLevelReader {
     }
 }
 
-/// Mono samples from the audio thread, most recent last. The audio thread
-/// skips a buffer rather than wait when the analysis thread is reading.
 private final class NotchAudioRing {
     private let lock = NSLock()
     private var samples: [Float]
@@ -668,10 +561,6 @@ private final class NotchAudioRing {
     private var heard = false
     private let capacity: Int
 
-    /// Whether any sample so far, turned up by `gain`, carried sound rather
-    /// than digital silence. The gain is what the tap's mixdown took, so a
-    /// quiet player on a wide output is not written off as silent. Once
-    /// heard, a lower correction must not undo that proof of sound.
     func hasHeard(gain: Float) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -704,8 +593,6 @@ private final class NotchAudioRing {
         peak = max(peak, loudest)
     }
 
-    /// The most recent `output.count` samples, oldest first. False until
-    /// that many have arrived.
     func latest(into output: inout [Float]) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -720,7 +607,6 @@ private final class NotchAudioRing {
     }
 }
 
-/// A windowed discrete Fourier transform of one block of samples.
 private final class NotchAudioAnalyzer {
     let size = 1024
     let bands: [Range<Int>]
@@ -747,9 +633,6 @@ private final class NotchAudioAnalyzer {
 
     deinit { vDSP_DFT_DestroySetup(setup) }
 
-    /// Magnitudes of the first `size / 2` bins relative to full scale.
-    /// Every vDSP call takes explicit buffer pointers: the implicit array
-    /// conversions read fine on the newest compiler and not on Swift 6.0.
     func magnitudes(of samples: [Float]) -> [Float] {
         guard samples.count == size else { return magnitudes }
         let length = vDSP_Length(size)

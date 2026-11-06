@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// Lets a folder scan publish only while its gallery is open and it is the
-/// latest scan. The scan reads this from a worker queue while the UI changes
-/// visibility on the main thread.
 final class WallpaperGalleryLifecycle {
     private let lock = NSLock()
     private var viewers = Set<UUID>()
@@ -15,7 +12,6 @@ final class WallpaperGalleryLifecycle {
 
     func begin(_ viewer: UUID) { lock.withLock { _ = viewers.insert(viewer) } }
 
-    /// A closing panel cancels work only when no other gallery is still open.
     @discardableResult
     func end(_ viewer: UUID) -> Bool {
         lock.withLock {
@@ -45,7 +41,6 @@ final class WallpaperGalleryLifecycle {
     }
 }
 
-/// Catalog / filter / store-patch helpers. No AppKit (test harness).
 enum WallpaperSupport {
     enum Source: String, Equatable {
         case apple
@@ -84,7 +79,6 @@ enum WallpaperSupport {
         url.deletingPathExtension().lastPathComponent
     }
 
-    // top-level stills + .madesktop → thumbnail HEIC
     static func enumerateAppleEntries(
         at root: URL = appleDesktopPicturesURL,
         fileManager: FileManager = .default
@@ -129,7 +123,6 @@ enum WallpaperSupport {
         let plistThumbnail = madesktopThumbnailPath(at: url).map { URL(fileURLWithPath: $0) }
 
         let imageURL: URL?
-        // full-size still only; .thumbnails / thumbnailPath are preview-sized
         if fileManager.fileExists(atPath: wallpaperAsset.path) {
             imageURL = wallpaperAsset
         } else {
@@ -178,7 +171,6 @@ enum WallpaperSupport {
         for case let url as URL in enumerator {
             guard shouldContinue() else { return [] }
             let values = try? url.resourceValues(forKeys: keys)
-            // don't walk into .app / Photos Library / other bundles
             if values?.isSymbolicLink == true || values?.isPackage == true {
                 enumerator.skipDescendants()
                 continue
@@ -233,7 +225,6 @@ enum WallpaperSupport {
         return (itemCount + pageSize - 1) / pageSize
     }
 
-    // 1-based, clamped
     static func clampedPage(_ page: Int, itemCount: Int, pageSize: Int = pageSize) -> Int {
         let pages = pageCount(itemCount: itemCount, pageSize: pageSize)
         guard pages > 0 else { return 1 }
@@ -265,7 +256,6 @@ enum WallpaperSupport {
 
     // MARK: - WallpaperAgent store
 
-    // Choice.Configuration bplist
     static func imageFileConfigurationData(for imageURL: URL) -> Data? {
         let payload: [String: Any] = [
             "type": "imageFile",
@@ -276,7 +266,6 @@ enum WallpaperSupport {
                                                    options: 0)
     }
 
-    // Fill Screen = Crop in EncodedOptionValues
     static func fillScreenOptionValuesData() -> Data? {
         let payload: [String: Any] = [
             "values": [
@@ -290,8 +279,6 @@ enum WallpaperSupport {
                                                    options: 0)
     }
 
-    // stamp the still into every wallpaper slot (AllSpaces / Displays / Spaces).
-    // unknown layouts return false so AppKit current-space apply stays the fallback.
     @discardableResult
     static func patchStoreRoot(_ root: inout [String: Any],
                                imageURL: URL,
@@ -300,7 +287,6 @@ enum WallpaperSupport {
               let options = fillScreenOptionValuesData()
         else { return false }
 
-        // Sonoma+ store always has this container; inventing it rewrites unsupported shapes
         guard var allSpaces = root["AllSpacesAndDisplays"] as? [String: Any] else { return false }
 
         let slot: [String: Any] = [
@@ -364,14 +350,6 @@ enum WallpaperSupport {
         return true
     }
 
-    // System Settings stills (Sonoma+) write Type=linked + Linked on
-    // AllSpacesAndDisplays and SystemDefault, with Content.Choices Provider
-    // com.apple.wallpaper.choice.image and an imageFile Configuration blob.
-    // Captured from a store that only System Settings wrote (no Vorssaint bak).
-    // Index.plist has no screen saver keys; that choice lives outside this store,
-    // so replacing Linked does not rewrite a screen saver slot here.
-    // Desktop is the older individual/idle slot. Key off Type so a leftover
-    // Linked key on an individual container cannot steal the Desktop slot.
     @discardableResult
     static func patchWallpaperSlot(_ container: inout [String: Any],
                                    slot: [String: Any]) -> Bool {
@@ -391,7 +369,6 @@ enum WallpaperSupport {
             return true
         }
 
-        // idle (and similar) without a slot yet — Desktop path, refuse if Linked is present
         if type != nil {
             if container["Linked"] is [String: Any] { return false }
             container["Desktop"] = slot

@@ -4,14 +4,7 @@
 import AVFoundation
 import CoreGraphics
 
-/// Writes the finished file: reads the master, applies the edit and encodes.
-///
-/// Deliberately AVAssetReader into AVAssetWriter rather than an export
-/// session: it is the only route that gives real control over the encoder
-/// settings and the output size, and it keeps peak memory flat, because the
-/// pixel buffer pool recycles instead of growing with the length of the clip.
 final class RecorderExporter {
-
     final class ShareArtifact {
         let fileURL: URL
 
@@ -38,8 +31,6 @@ final class RecorderExporter {
         case cancelled
     }
 
-    /// Flipped from the main thread and read from the writer queues, so a
-    /// cancel lands within a frame instead of at the end of the file.
     private let cancelled = Cancellation()
 
     func cancel() {
@@ -69,10 +60,6 @@ final class RecorderExporter {
         guard sourceSize.width > 0, sourceSize.height > 0 else { return .noVideo }
         let frameRate = Int(((try? await videoTrack.load(.nominalFrameRate)) ?? 60).rounded())
 
-        // The file is written beside the destination and only takes its place
-        // once it is whole. Save as can be pointed at a recording that already
-        // exists, and a cancel or a failure halfway through must leave that
-        // recording where it is instead of taking it down with the attempt.
         let staged = RecorderSupport.stagingURL(for: destination)
         defer { try? FileManager.default.removeItem(at: staged) }
         let failure: Failure?
@@ -97,8 +84,6 @@ final class RecorderExporter {
                                       progress: progress)
         }
         if let failure { return failure }
-        // Finalizing the video or GIF can finish after a cancellation arrives.
-        // The destination must still be kept until that last chance to cancel.
         guard !cancelled.isCancelled else { return .cancelled }
         guard RecorderSupport.commitExport(from: staged, to: destination) else {
             return .writeFailed
@@ -106,9 +91,6 @@ final class RecorderExporter {
         return nil
     }
 
-    /// Produces the only artifact the sharing service accepts. There is no
-    /// file picker or generic URL entry point: this file can only come from a
-    /// take owned by the recorder and the current edit document.
     func exportForSharing(take: RecorderTakeStore.Take,
                           document: RecorderEditDocument,
                           progress: @escaping (Double) -> Void) async
@@ -189,8 +171,6 @@ final class RecorderExporter {
                              progress: @escaping (Double) -> Void) async -> Failure? {
         let duration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
         let track = RecorderPointerTrack.decoded(try? Data(contentsOf: pointerURL))
-        // The trim and the cuts become one continuous asset first, so the
-        // reader never has to know that a piece was taken out of the middle.
         let ranges = document.keptRanges(duration: duration)
         let keepsAnyAudio = document.keepsSystemAudio || document.keepsMicrophone
         guard let result = await RecorderComposition.build(from: asset,
@@ -230,9 +210,6 @@ final class RecorderExporter {
             outputScale = document.resolvedQuality.outputScale
         }
 
-        // The export preset is folded into the canvas the composer draws, so
-        // the background is rendered at the size it ships at instead of being
-        // resampled afterwards.
         let plan = RecorderComposer.makePlan(document: document,
                                              track: track,
                                              sourceSize: sourceSize,
@@ -282,8 +259,6 @@ final class RecorderExporter {
             output.audioMix = RecorderComposition.audioMix(trackIDs: result.audioTrackIDs,
                                                            document: document)
             if document.exportTiming.speed != 1 {
-                // Decode scaled audio edits at their new duration while
-                // preserving speech pitch, rather than relabeling PCM times.
                 output.audioTimePitchAlgorithm = .spectral
             }
             output.alwaysCopiesSampleData = false
@@ -350,9 +325,6 @@ final class RecorderExporter {
                     videoOutput.copyNextSampleBuffer()
                 } onAppended: {
                     let done = counter.increment()
-                    // Weighted so the bar never parks at almost-done while the
-                    // sound is still being written. It reaches one when the
-                    // file is closed, and not before.
                     frameProgress.report(min(0.9, Double(done) / Double(expectedFrames) * 0.9))
                 }
             }
@@ -390,8 +362,6 @@ final class RecorderExporter {
         return nil
     }
 
-    /// One input drained on its own queue, the way AVFoundation asks: append
-    /// while it says it is ready, return when it is not, and let it call back.
     private static func pump(input: AVAssetWriterInput,
                              label: String,
                              cancelled: Cancellation,
@@ -400,7 +370,6 @@ final class RecorderExporter {
         let queue = DispatchQueue(label: "com.vorssaint." + label, qos: .userInitiated)
         await withCheckedContinuation { continuation in
             let finished = OnceFlag()
-            // AVFoundation invokes this callback only on the serial queue above.
             nonisolated(unsafe) let serializedInput = input
             input.requestMediaDataWhenReady(on: queue) {
                 while serializedInput.isReadyForMoreMediaData {
@@ -544,9 +513,6 @@ final class RecorderExporter {
 
     // MARK: - GIF
 
-    /// Sample the edited timeline and encode it chunk by chunk into a
-    /// disk-backed GIF. Decoded frames never exceed one chunk and the encoded
-    /// file is not held in memory, however long the recording gets.
     private func exportGIF(asset: AVURLAsset,
                            videoTrack: AVAssetTrack,
                            pointerURL: URL,
@@ -556,10 +522,6 @@ final class RecorderExporter {
                            progress: @escaping (Double) -> Void) async -> Failure? {
         let fps = document.resolvedGIFFrameRate
         let duration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
-        // The GIF is the same finished video, sampled: the trim and the cuts
-        // become one continuous asset first, exactly as the video export does,
-        // so a piece taken out of the middle is genuinely absent here too and
-        // the composer is asked for frames on the clock it draws in.
         let ranges = document.keptRanges(duration: duration)
         guard let result = await RecorderComposition.build(from: asset,
                                                            ranges: ranges,
@@ -572,8 +534,6 @@ final class RecorderExporter {
         let frameCount = RecorderSupport.gifFrameCount(duration: outputDuration, fps: fps)
         guard frameCount > 0 else { return .noVideo }
 
-        // Rendered through the same composer as the video, so a background and
-        // a smoothed pointer are in it too.
         let frameRate = Int(((try? await videoTrack.load(.nominalFrameRate)) ?? 60).rounded())
         let track = RecorderPointerTrack.decoded(try? Data(contentsOf: pointerURL))
         let plan = RecorderComposer.makePlan(document: document,
@@ -610,11 +570,6 @@ final class RecorderExporter {
         let frameProgress = ProgressThrottle(progress)
         do {
             let writer = try RecorderGIFWriter(url: workspace.fileURL, fps: fps)
-            // A frame that does not decode, as in a damaged stretch of an
-            // imported movie, repeats the one before it, and frames before
-            // the first that decodes take that one, so the animation keeps
-            // its length. Only a timeline without a single frame fails, and
-            // then the existing destination stays.
             var previous: CGImage?
             var missing = 0
             for index in 0..<frameCount {
@@ -636,9 +591,6 @@ final class RecorderExporter {
             if cancelled.isCancelled { return .cancelled }
             try writer.finish()
             if cancelled.isCancelled { return .cancelled }
-            // Copy the completed file to the destination volume before the
-            // entry point's atomic replacement. Both scratch and this staged
-            // sibling are removed on error or cancellation.
             try FileManager.default.copyItem(at: workspace.fileURL, to: destination)
         } catch {
             return .writeFailed
@@ -648,7 +600,6 @@ final class RecorderExporter {
     }
 }
 
-/// Small thread-safe helpers the export queues share.
 private final class Cancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
@@ -678,9 +629,6 @@ private final class FrameCounter: @unchecked Sendable {
     }
 }
 
-/// Passes progress on at most ten times a second, and only once it has
-/// moved by half a percent. Frames are appended far faster than that, and
-/// every report redraws the editor on the main thread (#3075).
 private final class ProgressThrottle: @unchecked Sendable {
     private static let interval: TimeInterval = 0.1
     private static let step = 0.005
@@ -707,8 +655,6 @@ private final class ProgressThrottle: @unchecked Sendable {
     }
 }
 
-/// Guards the single resume of a continuation: the ready callback can fire
-/// again after the last buffer, and resuming twice is a crash.
 private final class OnceFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var used = false

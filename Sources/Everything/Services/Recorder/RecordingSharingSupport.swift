@@ -47,7 +47,6 @@ enum RecordingSharingSupport {
 
     static let productionEndpoint = URL(string: "https://screenshots.vorssaint.com")!
     static let developerBundleIdentifier = "com.vorssaint.utils.dev"
-    /// Leaves transport headroom below the public 100 MB request ceiling.
     static let maximumUploadBytes = 96_000_000
     static let targetUploadBytes = 90_000_000
     static let maximumEdge: CGFloat = 1_920

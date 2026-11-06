@@ -5,9 +5,6 @@ import AVFoundation
 import AppKit
 import ScreenCaptureKit
 
-/// Why a recording could not start, or why one ended on its own. Kept
-/// separate from the system error so the surfaces have one small thing to
-/// switch over instead of a numeric table.
 enum RecorderFailure: Equatable {
     case permissionDenied
     case noContent
@@ -17,20 +14,13 @@ enum RecorderFailure: Equatable {
 }
 
 protocol RecorderCaptureEngineDelegate: AnyObject {
-    /// Called on the engine's own serial queue, never on the main thread.
     func captureEngine(_ engine: RecorderCaptureEngine,
                        didOutput sampleBuffer: CMSampleBuffer,
                        of kind: RecorderCaptureEngine.Kind)
-    /// The stream ended without being asked to. Delivered on the main thread.
     func captureEngine(_ engine: RecorderCaptureEngine, didStopWith failure: RecorderFailure)
 }
 
-/// Owns the ScreenCaptureKit stream and nothing else: it acquires pixels and
-/// system audio and maps their timestamps to the host clock. No compositing happens here,
-/// because everything the editor can change has to stay changeable after the
-/// recording ends.
 final class RecorderCaptureEngine: NSObject {
-
     enum Kind {
         case video
         case systemAudio
@@ -45,15 +35,12 @@ final class RecorderCaptureEngine: NSObject {
     private var lifecycle = RecorderCaptureLifecycle()
     private var stream: SCStream?
 
-    /// True while pixels are being delivered. Read from the main thread.
     var isRunning: Bool {
         lifecycleLock.withLock { lifecycle.isRunning }
     }
 
     // MARK: - Lifecycle
 
-    /// Builds the filter and starts the stream. Existing ordinary Vorssaint
-    /// windows remain recordable, while new app chrome stays excluded.
     func start(region: RecorderSupport.Region,
                frameRate: Int,
                capturesSystemAudio: Bool,
@@ -73,9 +60,6 @@ final class RecorderCaptureEngine: NSObject {
         }
         guard !isCancelled() else { return .streamFailed }
 
-        // Keep the call and optional binding as separate type-checking targets.
-        // Older Swift compilers otherwise crash in their constraint walker when
-        // this expression sits inside the larger async start routine.
         let preparedFilter: SCContentFilter? = Self.filter(
             for: region,
             in: content,
@@ -89,19 +73,11 @@ final class RecorderCaptureEngine: NSObject {
                                                     timescale: CMTimeScale(frameRate))
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.colorSpaceName = CGColorSpace.sRGB
-        // An independent window keeps the output dimensions chosen when the
-        // recording starts. Scaling it into that output makes later window
-        // resizes follow the recording instead of leaving an empty frame.
         configuration.scalesToFit = region.windowID != nil
         configuration.preservesAspectRatio = true
         configuration.captureResolution = .best
-        // The pointer is drawn by us afterwards, from the track the sampler
-        // keeps, so it can be smoothed and pressed. Leaving the system one in
-        // the frame would put two pointers in the video.
         configuration.showsCursor = false
         configuration.shouldBeOpaque = true
-        // Shadows belong to the desktop, not to the thing being recorded, and
-        // they would be baked into the frame the background is drawn behind.
         configuration.ignoreShadowsDisplay = true
         configuration.ignoreShadowsSingleWindow = true
         if region.windowID == nil {
@@ -111,7 +87,6 @@ final class RecorderCaptureEngine: NSObject {
             configuration.capturesAudio = true
             configuration.sampleRate = 48_000
             configuration.channelCount = 2
-            // A HUD of ours making a sound has no business in the recording.
             configuration.excludesCurrentProcessAudio = true
         }
 
@@ -160,8 +135,6 @@ final class RecorderCaptureEngine: NSObject {
         return nil
     }
 
-    /// Stops the stream and waits for it, so the writer can finish knowing no
-    /// further buffer is on its way.
     func stop() async {
         let stream = lifecycleLock.withLock { () -> SCStream? in
             lifecycle.stop()
@@ -170,9 +143,6 @@ final class RecorderCaptureEngine: NSObject {
             return stream
         }
         if let stream { try? await stream.stopCapture() }
-        // A callback may already have passed its lifecycle check. Draining its
-        // serial queue makes it enqueue into the writer before the session's
-        // own writer barrier and finalization.
         queue.sync {}
     }
 
@@ -207,8 +177,6 @@ final class RecorderCaptureEngine: NSObject {
                                exceptingWindows: ordinaryWindows)
     }
 
-    /// The recorded area inside the display, in points with a top-left origin,
-    /// which is the space ScreenCaptureKit reads `sourceRect` in.
     private static func sourceRect(for region: RecorderSupport.Region) -> CGRect {
         let scale = region.scale > 0 ? region.scale : 1
         return CGRect(x: region.pixelRect.origin.x / scale,
@@ -235,9 +203,6 @@ final class RecorderCaptureEngine: NSObject {
     }
 }
 
-/// Captures the default microphone only while a recording asks for it. Its
-/// sample timestamps are converted onto the recording's host clock before the
-/// writer sees them, so system sound, voice and picture keep one timeline.
 final class RecorderMicrophoneCapture: NSObject,
                                        AVCaptureAudioDataOutputSampleBufferDelegate,
                                        @unchecked Sendable {
@@ -280,9 +245,6 @@ final class RecorderMicrophoneCapture: NSObject,
         else { return false }
 
         let output = AVCaptureAudioDataOutput()
-        // USB microphones can expose integer PCM while the audio system runs
-        // in Float32. Request one representation before handing samples off,
-        // leaving the device's sample rate and channel layout intact.
         output.audioSettings = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVLinearPCMBitDepthKey: 32,
@@ -341,10 +303,6 @@ extension RecorderCaptureEngine: SCStreamOutput {
         delegate?.captureEngine(self, didOutput: synchronized, of: kind)
     }
 
-    /// A screen buffer only counts when the display actually changed and the
-    /// buffer really carries an image. Appending an idle or blank frame would
-    /// fault the writer, and the recording is written at a variable rate on
-    /// purpose, so a still screen costs nothing.
     private static func carriesPixels(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else { return false }
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(

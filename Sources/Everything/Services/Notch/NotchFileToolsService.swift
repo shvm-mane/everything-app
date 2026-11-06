@@ -47,7 +47,6 @@ final class NotchFileToolsService: ObservableObject {
         guard offersMediaDrop,
               !pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil) else { return nil }
         let inputs = ShelfService.shared.fileURLs(from: pasteboard)
-        // Mixed payloads stay in the shelf, where every companion is preserved.
         guard inputs.count >= (pasteboard.pasteboardItems?.count ?? 0) else { return nil }
         guard let tool = NotchFileToolsSupport.optimizationTool(for: inputs) else { return nil }
         return (tool, inputs)
@@ -81,9 +80,6 @@ final class NotchFileToolsService: ObservableObject {
         }
     }
 
-    /// A real stop, including application termination, must not depend on the
-    /// saved switches. Killing the owned child now also works when there will
-    /// be no future run-loop turn to deliver a delayed cancellation fallback.
     func stop() {
         if isRunning { wasCancelled = true }
         generation = UUID()

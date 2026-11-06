@@ -4,9 +4,6 @@
 import AppKit
 import Foundation
 
-/// Scans only the top level of Downloads, surfaces files that macOS itself
-/// attributes to WhatsApp, and moves reviewed/eligible items to the Trash.
-/// It never reads file contents or reaches into WhatsApp's container.
 final class WhatsAppDownloadManager: ObservableObject {
     static let shared = WhatsAppDownloadManager()
 
@@ -29,8 +26,6 @@ final class WhatsAppDownloadManager: ObservableObject {
         let category: WhatsAppDownloadCategory
         let managedRoot: URL
         let allowsDescendants: Bool
-        /// Filed away by the organizer: manual review still lists it, the
-        /// automation never touches it.
         let organized: Bool
         let eligibleForRules: Bool
         let eligibleForAutomaticCleanup: Bool
@@ -101,10 +96,6 @@ final class WhatsAppDownloadManager: ObservableObject {
                 for path in WhatsAppDownloadOrganizer.managedDestinationPaths() {
                     let url = URL(fileURLWithPath: path).standardizedFileURL
                     if !WhatsAppDownloadSupport.isDirectChild(url, of: root) {
-                        // Organized files stay reviewable by hand but are
-                        // never trashed automatically: the person filed them
-                        // away to keep them, and the page only promises the
-                        // automation watches the top level of Downloads.
                         locations.append((url, url.deletingLastPathComponent(), false, true))
                     }
                 }
@@ -233,8 +224,6 @@ final class WhatsAppDownloadManager: ObservableObject {
         }
     }
 
-    /// Records a successful scheduled pass that had nothing eligible. This is
-    /// still useful proof that the automation is alive.
     func completeAutomaticWithoutCleaning() {
         recordCleanup(moved: 0, bytes: 0, failed: 0, automatic: true)
         phase = .done(moved: 0, bytes: 0, failed: 0)

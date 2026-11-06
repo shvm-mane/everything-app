@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// A main-thread close invalidates unsent work synchronously. The serial writer
-/// checks this locked lifetime at the moment a write starts, not just when the
-/// UI enqueues it. A write already in progress cannot be recalled from a pipe.
 final class NotchMusicCommandWriter: @unchecked Sendable {
     private let lock = NSLock()
     private let schedule: (@escaping () -> Void) -> Void

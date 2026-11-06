@@ -5,14 +5,10 @@ import AppKit
 import Combine
 import Foundation
 
-/// The Codex account's banked resets for the AI page: read when their card
-/// shows, at most every few minutes, and used only when the person confirms.
 final class AgentCodexResetService: ObservableObject {
     static let shared = AgentCodexResetService()
 
-    /// A use of a reset that ended, told on the card for a moment.
     struct Finished: Equatable {
-        /// Nil when the server never answered.
         let outcome: AgentCodexServer.Outcome?
         let date: Date
     }
@@ -23,21 +19,13 @@ final class AgentCodexResetService: ObservableObject {
     @Published private(set) var redeeming = false
     @Published private(set) var finished: Finished?
 
-    /// A reading this recent still stands; a failed one is tried sooner.
     static let freshness: TimeInterval = 5 * 60
     static let retryAfter: TimeInterval = 60
-    /// Long enough for any reply still on its way; after it, a fresh reading
-    /// tells whether an unanswered use happened.
     static let retryWindow: TimeInterval = 10 * 60
 
     private let queue = DispatchQueue(label: "com.vorssaint.codex-resets", qos: .userInitiated)
     private var attempted = Date.distantPast
-    /// A Terminal window's PATH, asked of the login shell only when the
-    /// person looks again for a Codex that was not found: that runs their
-    /// shell's startup files.
     private var shellPath: String?
-    /// One use of a reset, kept until the server answers it, so trying the
-    /// same use again after a lost reply never spends a second one.
     private struct Attempt {
         let key: String
         let credit: String?
@@ -48,7 +36,6 @@ final class AgentCodexResetService: ObservableObject {
     private init() {}
 
     func refreshIfStale(now: Date = Date()) {
-        // Only the person can sign Codex in or update it, so those wait as long as a reading.
         let settled = failure == nil || failure == .needsSignIn || failure == .outdated
         guard now.timeIntervalSince(attempted) >= (settled ? Self.freshness : Self.retryAfter) else { return }
         refresh()
@@ -81,8 +68,6 @@ final class AgentCodexResetService: ObservableObject {
         }
     }
 
-    /// Waits behind a check still running, then uses the reset that expires
-    /// first, or tries the use that went unanswered again.
     func redeem() {
         guard !redeeming, let summary, summary.available > 0 else { return }
         redeeming = true
@@ -112,9 +97,6 @@ final class AgentCodexResetService: ObservableObject {
             pending = nil
             finished = Finished(outcome: outcome, date: Date())
         case .failure(.unreachable), .failure(.refused):
-            // No outcome came back. Codex also answers with an error when its
-            // own request to the account timed out or its reply was lost, so
-            // the use may have happened on the way: it keeps its key.
             finished = Finished(outcome: nil, date: Date())
         case .failure(let failure):
             pending = nil
@@ -132,7 +114,6 @@ final class AgentCodexResetService: ObservableObject {
 
     private func fail(_ failure: AgentCodexServer.Failure) {
         self.failure = failure
-        // A lost or refused reply leaves the last count standing; the rest make it moot.
         if failure != .unreachable, failure != .refused { summary = nil }
     }
 

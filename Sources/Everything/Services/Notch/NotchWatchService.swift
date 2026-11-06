@@ -4,14 +4,9 @@
 import AppKit
 import Combine
 
-/// The area a watch reads: a part of one window, followed wherever the
-/// window goes, even covered or on another Space, or a fixed part of a
-/// display when no window was under it.
 struct NotchWatchTarget: Equatable {
     let windowID: CGWindowID?
     let displayID: CGDirectDisplayID
-    /// In points from the window's top-left corner; for a display, its
-    /// pixels from the display's top-left corner.
     let crop: CGRect
     let appName: String
     let processID: pid_t?
@@ -25,15 +20,10 @@ struct NotchWatchTarget: Equatable {
 enum NotchWatchState: Equatable {
     case idle
     case watching
-    /// The window is there but cannot be read now, as when it is minimized
-    /// or the screen is locked. Watching continues when it can.
     case hidden
     case finished(NotchWatchOutcome)
 }
 
-/// Turns any part of any window into a live activity: reads it every second
-/// or two on the Mac itself, shows the reading in the closed island and
-/// speaks up once the rule the person chose is met.
 final class NotchWatchService: ObservableObject {
     static let shared = NotchWatchService()
 
@@ -42,23 +32,18 @@ final class NotchWatchService: ObservableObject {
     @Published private(set) var preview: CGImage?
     @Published private(set) var text = ""
     @Published private(set) var headline = ""
-    /// The line chosen to show in the island; nil picks one automatically.
     @Published private(set) var headlineLine: Int?
     @Published private(set) var startedAt: Date?
     @Published private(set) var condition: NotchWatchCondition = NotchWatchCondition.saved()
     @Published private(set) var matchText = ""
     @Published private(set) var matchNumber: Double?
-    /// Screen Recording was turned off while watching: the area stays
-    /// hidden until it is allowed again.
     @Published private(set) var permissionMissing = false
 
-    /// The page is on screen: read more often so the preview feels live.
     var pageVisible = false {
         didSet { if pageVisible, !oldValue, isActive { restartLoop() } }
     }
 
     var isActive: Bool { target != nil && (state == .watching || state == .hidden) }
-    /// An area without text shows itself in the closed island instead.
     var showsThumbnail: Bool { headline.isEmpty && preview != nil }
     var isSelecting: Bool { selection != nil }
 
@@ -70,8 +55,6 @@ final class NotchWatchService: ObservableObject {
     private var readAt: Date?
     private var regionCapture: ScreenshotCaptureEngine.RegionCapture?
     private var selection: ScreenshotSelectionController?
-    /// A chosen area can still be preparing after its selector closes.
-    /// Stopping or choosing again makes that preparation stale.
     private var choiceGeneration = UUID()
     private lazy var tone = NSSound(contentsOfFile: "/System/Library/Sounds/Glass.aiff", byReference: false)
 
@@ -86,7 +69,6 @@ final class NotchWatchService: ObservableObject {
 
     func chooseArea() {
         guard NotchWatchSupport.isEnabled(), selection == nil, !ScreenshotSelectionController.isSessionOnScreen else { return }
-        // Asked of the system: nothing keeps the shared state current for Watch.
         guard CGPreflightScreenCaptureAccess() else {
             Permissions.shared.requestScreenRecording()
             return
@@ -116,8 +98,6 @@ final class NotchWatchService: ObservableObject {
         if let windowID = region.windowID, let bounds = Self.windowInfo(windowID)?.bounds {
             picked = (windowID, CGRect(origin: .zero, size: bounds.size))
         } else {
-            // The area in the window server's top-left coordinates, as the
-            // window list gives each window's frame.
             let mainHeight = NSScreen.screens.first?.frame.height ?? 0
             let area = CGRect(x: region.anchorRect.minX, y: mainHeight - region.anchorRect.maxY,
                               width: region.anchorRect.width, height: region.anchorRect.height)
@@ -131,10 +111,6 @@ final class NotchWatchService: ObservableObject {
             target = NotchWatchTarget(windowID: picked.id, displayID: region.displayID, crop: picked.crop,
                                       appName: info.appName, processID: info.processID, windowTitle: info.title)
         } else {
-            // Nothing but the desktop or the menu bar under it: read that
-            // part of the display as it is.
-            // Beside the camera the island would read itself opening and
-            // closing as a change, so it stays out whatever captures show.
             guard let capture = await ScreenshotCaptureEngine.prepareDisplayRegion(
                 displayID: region.displayID, pixelRect: region.pixelRect, includePointer: false,
                 hideVorssaintWindows: true, protectedWindowIDs: protected, keepsIslandOut: true) else { return }
@@ -144,7 +120,6 @@ final class NotchWatchService: ObservableObject {
                                       appName: FeatureStrings.notchWatch(L10n.shared.language).title,
                                       processID: nil, windowTitle: nil)
         }
-        // Another area has other lines: its reading starts automatic again.
         headlineLine = nil
         begin(target)
         notch.open(.watch, feedback: false)
@@ -196,8 +171,6 @@ final class NotchWatchService: ObservableObject {
         resetTracker()
     }
 
-    /// Typed words and numbers apply once confirmed, so a half-typed "1" on
-    /// the way to 100 cannot end the watch early.
     func setMatchText(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != matchText else { return }
@@ -205,8 +178,6 @@ final class NotchWatchService: ObservableObject {
         if condition == .contains { resetTracker() }
     }
 
-    /// Read as the page writes numbers, so 1.000 is a thousand where a
-    /// comma starts the decimals.
     func setMatchNumber(_ text: String) {
         let value = NotchWatchSupport.typedNumber(text, locale: L10n.shared.language.formattingLocale())
         guard value != matchNumber else { return }
@@ -215,7 +186,6 @@ final class NotchWatchService: ObservableObject {
     }
 
     private func begin(_ target: NotchWatchTarget) {
-        // Another area must not show the last one's picture while it is first read.
         if target != self.target { preview = nil }
         self.target = target
         state = .watching
@@ -227,13 +197,10 @@ final class NotchWatchService: ObservableObject {
         text = ""
         headline = ""
         tracker = makeTracker()
-        // The alert falls back to a notification where the island cannot
-        // show itself; the system asks once, and only before the first watch.
         Notifier.requestPermission()
         restartLoop()
     }
 
-    /// A new rule starts from what the area shows now.
     private func resetTracker() {
         tracker = makeTracker()
         guard isActive, state == .watching, signature != nil else { return }
@@ -275,32 +242,19 @@ final class NotchWatchService: ObservableObject {
             guard let info = Self.windowInfo(windowID) else { finish(.closed); return }
             window = info
         }
-        // Captures paused while the permission check is slow cannot read the
-        // window, which says nothing about how it looks: the last reading
-        // stays until they resume (issue #1863).
         guard !WindowPreviewProvider.capturesArePaused else { return }
-        // Turned off in System Settings: nothing can be read, and asking the
-        // capture again would only raise the system's prompt.
         guard CGPreflightScreenCaptureAccess() else {
             if state != .hidden { state = .hidden }
             if !permissionMissing { permissionMissing = true }
             return
         }
         if permissionMissing { permissionMissing = false }
-        // ScreenCaptureKit draws nothing from sleeping displays, and a call
-        // left waiting there would hold every other capture's turn.
         let displaysAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
         let image: CGImage?
         if let windowID = target.windowID, let info = window {
-            // The window server returns only the part of a window inside a
-            // display, and Stage Manager its tilted strip; cropping either at
-            // the window's proportions would read other pixels.
             var captured = await WindowPreviewProvider.captureViaWindowServer(windowID)
                 .flatMap { Self.wholeWindow($0, size: info.bounds.size) }
             if captured == nil, info.onScreen, !displaysAsleep {
-                // ScreenCaptureKit alone, in a turn of its own: the window
-                // server already answered above, and asking it again would
-                // only add another permission check (issue #1863).
                 captured = await WindowPreviewProvider.captureViaScreenCaptureKit {
                     await ScreenshotCaptureEngine.captureIndependentWindow(windowID, scale: 2)
                 }.flatMap { Self.wholeWindow($0, size: info.bounds.size) }
@@ -317,19 +271,14 @@ final class NotchWatchService: ObservableObject {
         }
         guard self.generation == generation, isActive else { return }
         guard let image else {
-            // A capture refused because this very turn paused captures is no
-            // sign of a hidden window either.
             if !WindowPreviewProvider.capturesArePaused, state != .hidden { state = .hidden }
             return
         }
         if state != .watching { state = .watching }
-        // A whole window can be large: its picture is summed up off the main thread.
         let picture = await Task.detached(priority: .utility) { NotchWatchSupport.fingerprint(image) }.value
         guard self.generation == generation, isActive else { return }
         if signature != nil, NotchWatchSupport.sameFingerprint(picture, fingerprint),
            let readAt, Date().timeIntervalSince(readAt) < NotchWatchSupport.rereadInterval {
-            // The area looks as it did: no need to read it again, but it
-            // confirms a change and lets time settle it.
             if let outcome = tracker.observe(signature: signature, reading: text, at: Date()) { finish(outcome) }
             return
         }
@@ -343,8 +292,6 @@ final class NotchWatchService: ObservableObject {
             case .qr, .empty: return (area, "")
             }
         }.value
-        // Kept only once read: a reading dropped halfway must not leave the
-        // area marked as read, or a still area would never be read again.
         guard self.generation == generation, isActive else { return }
         fingerprint = picture
         readAt = Date()
@@ -369,11 +316,7 @@ final class NotchWatchService: ObservableObject {
         let onPage = notch.expanded && notch.selected == .watch
         let shown = onPage || notch.show(NotchNotice(event: .watch, title: title, detail: target.appName,
                                                      symbol: NotchModule.watch.symbol, mascot: outcome.mascotReaction))
-        // The companion takes the news in the notice, or beside the camera
-        // on the open page.
         notch.reactMascot(outcome.mascotReaction)
-        // Hidden in a full-screen app or while the Mac is locked, the island
-        // cannot speak up, and the person is counting on hearing about it.
         if !shown { Notifier.post(title: title, body: target.windowTitle ?? target.appName) }
     }
 
@@ -410,8 +353,6 @@ final class NotchWatchService: ObservableObject {
                           onScreen: entry[kCGWindowIsOnscreen as String] as? Bool ?? false)
     }
 
-    /// Recognition is slower on big areas and no more accurate past a few
-    /// hundred pixels, so a large area is read at a smaller size.
     private static func scaledForRecognition(_ image: CGImage) -> CGImage? {
         let longest = max(image.width, image.height)
         guard longest > NotchWatchSupport.maximumRecognitionSide else { return nil }

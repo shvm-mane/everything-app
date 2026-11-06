@@ -6,9 +6,6 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
-/// The actions that share the screen-selection surface. Availability is read
-/// when the chooser opens, so an uninstalled feature never leaves a dead mode
-/// behind.
 enum ScreenCaptureTool: String, CaseIterable {
     case screenshot
     case recording
@@ -38,15 +35,6 @@ enum ScreenCaptureTool: String, CaseIterable {
         }
     }
 
-    /// A tool's own global shortcut, which opens the chooser already on that
-    /// mode. The screenshot tool's entry keeps the storage keys of the old
-    /// general capture shortcut, so an existing combination keeps working
-    /// unchanged under its new per-tool name.
-    ///
-    /// Every case must have a hotkey registered for it. `ScreenCaptureService`
-    /// builds exactly one per case from this list, so a tool cannot gain a
-    /// settings row whose key nothing registers, which is what left three of
-    /// them doing nothing (issue #708).
     struct DedicatedShortcut {
         let role: GlobalShortcutRole
         let enabledKey: String
@@ -82,9 +70,6 @@ enum ScreenCaptureTool: String, CaseIterable {
         !fromShortcut || (defaults.object(forKey: showCaptureMenuOnShortcutKey) as? Bool ?? true)
     }
 
-    /// A running recording blocks the capture menu, because picking recording
-    /// from it would stop the take. A shortcut that skips the menu can only
-    /// reach its own tool, so it may run on top of the recording.
     func opensDuringRecording(fromShortcut: Bool, defaults: UserDefaults = .standard) -> Bool {
         self != .recording && !showsCaptureMenu(fromShortcut: fromShortcut, defaults: defaults)
     }
@@ -98,9 +83,6 @@ enum ScreenCaptureTool: String, CaseIterable {
         }
     }
 
-    /// Only the recorder writes sound, so its microphone and system-audio
-    /// choices are the only tool controls that belong under the chooser.
-    /// Every other mode leaves them out entirely, reserving no space for them.
     var capturesAudio: Bool { self == .recording }
 
     func settingsTitle(_ strings: Strings, language: AppLanguage) -> String {
@@ -118,25 +100,14 @@ enum ScreenCaptureTool: String, CaseIterable {
     }
 }
 
-/// Pure logic for the screenshot tool: capture routing, selection geometry,
-/// coordinate conversions between the window server, screens and image
-/// pixels, the annotation model and file naming. No AppKit so the unit test
-/// harness compiles it standalone.
 enum ScreenshotSupport {
-
     struct UnifiedCapturePolicy: Equatable {
         let freeze: Bool
         let includePointer: Bool
         let hideVorssaintWindows: Bool
-        /// Whether editors and pinned captures stay out of the picture and the
-        /// pickable windows. Recording keeps them out even while "Hide
-        /// Vorssaint windows" is off, which that flag alone cannot tell apart.
         let keepsContentWindowsOut: Bool
         let usesGeometry: Bool
 
-        /// Two tools can want the same photograph and still do different
-        /// things with it, so only the fields that decide which pixels are
-        /// taken, and which windows can be picked, force a new one.
         func sharesSource(with other: UnifiedCapturePolicy) -> Bool {
             freeze == other.freeze
                 && includePointer == other.includePointer
@@ -203,10 +174,6 @@ enum ScreenshotSupport {
         return max(chrome, controls) + 12
     }
 
-    /// Whether the guide should advertise repeating the last capture region.
-    /// The region is remembered for this app session only and belongs to one
-    /// display, so the hint stays hidden until pressing the key would really
-    /// capture something.
     static func offersRepeatLastRegion(isPickingColor: Bool,
                                        storedRegionDisplayIsAvailable: Bool) -> Bool {
         !isPickingColor && storedRegionDisplayIsAvailable
@@ -246,8 +213,6 @@ enum ScreenshotSupport {
         return kept
     }
 
-    /// Optional countdown before the capture starts, so menus, tooltips and
-    /// hover states can be staged first.
     static let allowedDelays = [0, 3, 5, 10]
 
     static func sanitizedDelay(_ raw: Int) -> Int {
@@ -321,17 +286,11 @@ enum ScreenshotSupport {
         }
     }
 
-    /// What a finished capture shows once its after-capture action ran.
     enum QuickPreviewPresentation: Equatable {
         case hidden
-        /// A nil interval keeps the preview until it is dismissed.
         case shown(dismissInterval: TimeInterval?)
     }
 
-    /// The whole decision `route` makes, read from the person's settings: a
-    /// successful action shows the confirmation for its chosen duration or
-    /// nothing at all, while a failed or partial action, or no action, gets
-    /// the recovery preview with its longer timer.
     static func quickPreviewPresentation(defaultAction: ScreenshotDefaultAction,
                                          saved: Bool,
                                          copied: Bool,
@@ -343,24 +302,17 @@ enum ScreenshotSupport {
         guard automaticActionSucceeded(defaultAction, saved: saved, copied: copied) else {
             return .shown(dismissInterval: recoveryPreviewDismissInterval)
         }
-        // A stored value that is not a number reads as the default duration,
-        // not as 0, which would keep every confirmation until dismissed.
         let duration = (defaults.object(forKey: DefaultsKey.screenshotPreviewDuration) as? NSNumber)?
             .intValue ?? defaultConfirmationPreviewDuration
         return .shown(dismissInterval: confirmationPreviewDismissInterval(duration))
     }
 
-    /// Captures go to the shelf on their own only while the shelf is
-    /// installed and on, so a switched-off shelf never fills up unseen.
     static func addsCapturesToShelf(in defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: DefaultsKey.screenshotAddToShelf)
             && AppFeature.shelf.isAvailable(in: defaults)
             && defaults.bool(forKey: DefaultsKey.shelfEnabled)
     }
 
-    /// Remaining stroke for the one-second countdown ring. Time drives the
-    /// value directly so a delayed frame catches up instead of restarting the
-    /// animation or leaving the ring frozen.
     static func countdownRingProgress(elapsed: TimeInterval,
                                       duration: TimeInterval = 0.92) -> CGFloat {
         guard elapsed.isFinite, duration.isFinite, duration > 0 else { return 0 }
@@ -370,9 +322,6 @@ enum ScreenshotSupport {
 
     // MARK: - Scrolling capture
 
-    /// A failed scroll target must never keep the capture alive forever or
-    /// exhaust memory. Reaching a guard keeps the valid portion and explains
-    /// why the capture stopped.
     static let scrollingCaptureMaximumDuration: TimeInterval = 120
     static let scrollingCaptureMaximumFrames = 512
     static let scrollingCaptureMaximumRetainedPixels = 60_000_000
@@ -410,15 +359,11 @@ enum ScreenshotSupport {
         let columns = contentColumns ?? 0..<previous.width
         guard columns.lowerBound >= 0, columns.upperBound <= previous.width,
               !columns.isEmpty else { return false }
-        // Empty space must not dilute movement in a narrow column of text.
         return scrollingColumnTiles(in: columns, sampleWidth: previous.width).allSatisfy {
             scrollingDifference(previous, current, columns: $0) <= 1.5
         }
     }
 
-    /// Finds how many rows two successive views share. The calculation is
-    /// deliberately pure: captures only provide small grayscale samples and
-    /// the exact same matching policy is exercised by the test harness.
     static func scrollingTransition(previous: ScrollingSample,
                                     current: ScrollingSample,
                                     contentColumns: Range<Int>? = nil) -> ScrollingTransition {
@@ -441,9 +386,6 @@ enum ScreenshotSupport {
         }
 
         let height = previous.height
-        // The final scroll at the bottom of a page is often only a few rows.
-        // Treating every advance below 18% as a mismatch discarded an otherwise
-        // valid capture on short pages just before it could detect the end.
         let minimumAdvance = max(2, Int((Double(height) * 0.01).rounded()))
         let maximumAdvance = min(height - 8, Int((Double(height) * 0.88).rounded()))
         guard minimumAdvance <= maximumAdvance else { return .unmatched }
@@ -460,9 +402,6 @@ enum ScreenshotSupport {
 
         let tiles = scrollingColumnTiles(in: columns, sampleWidth: previous.width)
         if previous.width > 32 {
-            // Keep native detail where pixels actually change, instead of
-            // shrinking a wide Terminal until different digits look alike.
-            // Limit the expensive offset search to 32 representative columns.
             let selected: [(column: Int, bounds: Range<Int>)]
             if columns.count <= 32 {
                 selected = columns.map { ($0, $0..<($0 + 1)) }
@@ -501,9 +440,6 @@ enum ScreenshotSupport {
         }
         guard !movingTiles.isEmpty else { return .unmatched }
 
-        // Compute pixel differences in Accelerate, once per offset. The old
-        // nested Swift pixel loops repeated the work for each tile and candidate
-        // and took seconds per Retina frame in unoptimized Developer builds.
         let previousPixels = previous.pixels.map(Float.init)
         let currentPixels = current.pixels.map(Float.init)
         var differences = [Float](repeating: 0, count: previous.pixels.count)
@@ -541,9 +477,6 @@ enum ScreenshotSupport {
             if $0.supportingTiles != $1.supportingTiles {
                 return $0.supportingTiles > $1.supportingTiles
             }
-            // Similar digits can pass the row tolerance at a wrong offset.
-            // Prefer the closer pixel match before rewarding a longer overlap,
-            // which otherwise biases sparse text toward a shorter scroll.
             if $0.difference != $1.difference { return $0.difference < $1.difference }
             if $0.longestRun != $1.longestRun { return $0.longestRun > $1.longestRun }
             return $0.matchingRows > $1.matchingRows
@@ -555,11 +488,6 @@ enum ScreenshotSupport {
             return .unmatched
         }
 
-        // Repeated content can match equally well over different lengths.
-        // Require comparable support so a short blank band does not veto a
-        // longer match, but reject any equally precise, substantial rival.
-        // Scale the error margin down for precise matches: an approximate
-        // low-contrast pattern must not veto an exact overlap.
         let ambiguityTolerance = min(0.75, best.difference)
         if matches.dropFirst().contains(where: { rival in
             (rival.reversed != best.reversed || abs(rival.advance - best.advance) > 2)
@@ -576,9 +504,6 @@ enum ScreenshotSupport {
                          contentColumns: best.contentColumns)
     }
 
-    /// A fixed footer stays at the same viewport rows while the page behind it
-    /// advances. Keeping that suffix in every new strip repeats it throughout
-    /// the final image, so identify it separately from the moving overlap.
     static func scrollingFixedBottomRows(previous: ScrollingSample,
                                          current: ScrollingSample,
                                          overlap: Int,
@@ -610,8 +535,6 @@ enum ScreenshotSupport {
         return rows
     }
 
-    /// Rows newly revealed by a forward scroll. A fixed footer shifts this
-    /// range upward by its own height; its pixels are appended once at the end.
     static func scrollingNewContentRows(imageHeight: Int,
                                         overlap: Int,
                                         fixedBottomRows: Int) -> Range<Int>? {
@@ -738,9 +661,6 @@ enum ScreenshotSupport {
                                        columns: Range<Int>,
                                        differences: [Float]) -> ScrollingRowMatch? {
         let width = previous.width
-        // Trim the shared rows, not the whole viewport. A viewport-sized inset
-        // can erase a valid smaller overlap and strand a long capture on its
-        // last accepted frame, or favor a blank band at the wrong offset.
         let edgeInset = max(2, (previous.height - advance) / 10)
         let lastRow = previous.height - advance - edgeInset
         guard lastRow > edgeInset,
@@ -770,8 +690,6 @@ enum ScreenshotSupport {
                     matchingRows += 1
                     if run > longestRun { longestRun = run }
                 } else {
-                    // Bound the influence of a changing block without treating
-                    // its rows as matches or discarding their error entirely.
                     totalDifference += threshold
                     run = 0
                 }
@@ -797,7 +715,6 @@ enum ScreenshotSupport {
         return lower..<upper
     }
 
-    /// Restores the pixels-per-point scale stored as standard PNG DPI.
     static func captureScale(fromDPI dpi: Double?) -> CGFloat? {
         guard let dpi, dpi.isFinite else { return nil }
         let scale = dpi / 72
@@ -805,8 +722,6 @@ enum ScreenshotSupport {
         return CGFloat(scale)
     }
 
-    /// Uses the logical size carried by a copied image when it describes one
-    /// consistent display scale. Imported files without that metadata edit at 1x.
     static func clipboardImageScale(pixelSize: CGSize, pointSize: CGSize) -> CGFloat {
         guard pixelSize.width > 0, pixelSize.height > 0,
               pointSize.width > 0, pointSize.height > 0
@@ -821,9 +736,6 @@ enum ScreenshotSupport {
 
     // MARK: - Selection geometry
 
-    /// Rectangle between two drag points. `square` constrains to the largest
-    /// square that fits the drag; `fromCenter` treats the origin as the
-    /// center when Option is held.
     static func selectionRect(from origin: CGPoint,
                               to current: CGPoint,
                               square: Bool = false,
@@ -844,8 +756,6 @@ enum ScreenshotSupport {
                       width: abs(dx), height: abs(dy))
     }
 
-    /// A full-image crop cannot move, so an interior drag must start a new
-    /// selection. Dragging outside an existing crop replaces it as well.
     static func startsNewCropSelection(at point: CGPoint,
                                        draft: CGRect,
                                        within bounds: CGRect) -> Bool {
@@ -853,13 +763,11 @@ enum ScreenshotSupport {
             && (draft.standardized == bounds.standardized || !draft.contains(point))
     }
 
-    /// A captured image's alpha, top row first.
     struct AlphaCoverage {
         let alpha: [UInt8]
         let width: Int
         let height: Int
 
-        /// Total alpha inside `rect`, in image pixels from the top left.
         func sum(in rect: CGRect) -> Int {
             let area = rect.integral.intersection(CGRect(x: 0, y: 0, width: width, height: height))
             guard !area.isNull, !area.isEmpty else { return 0 }
@@ -872,13 +780,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Where a display capture of only some windows put them. Older systems
-    /// draw each window where it sits on the display. macOS 27 packs the
-    /// included windows into the image's top-left corner, keeping their
-    /// relative layout, so cropping at the window's place on screen kept only
-    /// its lower-right part beside empty space. Everything but those windows
-    /// is transparent, so
-    /// the placement that holds more of them is the one the system used.
     static func attachedCaptureCrop(placed: CGRect, packed: CGRect,
                                     coverage: AlphaCoverage) -> CGRect {
         coverage.sum(in: packed) > coverage.sum(in: placed) ? packed : placed
@@ -890,28 +791,18 @@ enum ScreenshotSupport {
         return result
     }
 
-    /// A press that never travelled beyond this is a click, which captures
-    /// the window under the cursor instead of a region.
     static let clickDragThreshold: CGFloat = 4
 
     static func isClick(from origin: CGPoint, to end: CGPoint) -> Bool {
         abs(end.x - origin.x) < clickDragThreshold && abs(end.y - origin.y) < clickDragThreshold
     }
 
-    /// Whether the selection surface should still answer the pointer. Once a
-    /// capture is on its way, or the session is over, every remaining event
-    /// has to do nothing: the surface has already left the screen and the
-    /// picture is being taken. Gestures that end with more than one release,
-    /// like a drag made with three fingers, deliver exactly those late events.
     static func selectionAcceptsPointerInput(sessionIsOver: Bool, capturePending: Bool) -> Bool {
         !sessionIsOver && !capturePending
     }
 
     // MARK: - Coordinate conversions
 
-    /// Window-server rectangles (top-left origin, global) into Cocoa global
-    /// coordinates (bottom-left origin). `mainScreenHeight` is the height of
-    /// the primary screen, which anchors both systems.
     static func cocoaRect(fromWindowServer rect: CGRect, mainScreenHeight: CGFloat) -> CGRect {
         CGRect(x: rect.origin.x,
                y: mainScreenHeight - rect.maxY,
@@ -919,8 +810,6 @@ enum ScreenshotSupport {
                height: rect.height)
     }
 
-    /// A Cocoa global rectangle into the coordinates of a top-left-origin
-    /// (flipped) view that covers `screenFrame` exactly.
     static func flippedViewRect(fromCocoa rect: CGRect, screenFrame: CGRect) -> CGRect {
         CGRect(x: rect.minX - screenFrame.minX,
                y: screenFrame.maxY - rect.maxY,
@@ -928,8 +817,6 @@ enum ScreenshotSupport {
                height: rect.height)
     }
 
-    /// A rectangle in a flipped screen overlay back into Cocoa global
-    /// coordinates. This anchors transient controls beside the captured area.
     static func cocoaRect(fromFlippedView rect: CGRect, screenFrame: CGRect) -> CGRect {
         CGRect(x: screenFrame.minX + rect.minX,
                y: screenFrame.maxY - rect.maxY,
@@ -937,9 +824,6 @@ enum ScreenshotSupport {
                height: rect.height)
     }
 
-    /// A rectangle in a flipped view of `viewSize` points mapped onto an
-    /// image of `imageSize` pixels covering the same area, rounded outward to
-    /// whole pixels and clamped to the image.
     static func imagePixelRect(fromView rect: CGRect,
                                viewSize: CGSize,
                                imageSize: CGSize) -> CGRect {
@@ -953,9 +837,6 @@ enum ScreenshotSupport {
         return clamp(scaled, to: CGRect(origin: .zero, size: imageSize))
     }
 
-    /// A point in the flipped full-screen overlay mapped to the source
-    /// image. Keeping this separate from rectangle rounding lets a pixel
-    /// loupe follow the pointer without jumping by whole selections.
     static func imagePixelPoint(fromView point: CGPoint,
                                 viewSize: CGSize,
                                 imageSize: CGSize) -> CGPoint {
@@ -976,9 +857,6 @@ enum ScreenshotSupport {
         case bottomRight
     }
 
-    /// Picks the display containing most of the capture. The pointer breaks
-    /// an exact tie and is also the fallback when a display was disconnected
-    /// or rearranged before the preview appears.
     static func quickPreviewVisibleFrame(
         anchor: CGRect,
         pointer: CGPoint,
@@ -1003,8 +881,6 @@ enum ScreenshotSupport {
         return screens.first { NSMouseInRect(pointer, $0.frame, false) }?.visibleFrame ?? fallback
     }
 
-    /// Places the capture preview beside the selection in automatic mode, or
-    /// in the selected display corner, and clamps it to the visible frame.
     static func quickPreviewFrame(size: CGSize,
                                   anchor: CGRect,
                                   pointer: CGPoint,
@@ -1062,8 +938,6 @@ enum ScreenshotSupport {
 
     // MARK: - Editor layout
 
-    /// A fresh editor should be large enough for its controls and canvas,
-    /// while still fitting compact or rotated displays.
     static func editorMinimumContentSize(visibleSize: CGSize) -> CGSize {
         CGSize(width: min(visibleSize.width,
                           min(980, max(760, visibleSize.width * 0.76))),
@@ -1071,8 +945,6 @@ enum ScreenshotSupport {
                            min(680, max(560, visibleSize.height * 0.72))))
     }
 
-    /// Initial content size for an editor window. Large captures fit inside
-    /// the display and small captures still open on a comfortable canvas.
     static func editorContentSize(imagePointSize: CGSize,
                                   visibleSize: CGSize) -> CGSize {
         let chrome = CGSize(width: 96, height: 140)
@@ -1088,48 +960,30 @@ enum ScreenshotSupport {
                       height: min(maximum.height, max(minimum.height, preferred.height)))
     }
 
-    /// The footer under the canvas wraps to a second row when a tool's
-    /// controls do not fit beside the info and zoom chips, so its height
-    /// changes with the tool.
     static let editorWrappedFooterHeight: CGFloat = 76
 
-    /// The height the tool rail plans for: its column, less what a wrapped
-    /// footer would take from it, so picking a tool never reflows the rail
-    /// under the pointer.
     static func toolRailHeight(column: CGFloat, footer: CGFloat) -> CGFloat {
         min(column, column + footer - editorWrappedFooterHeight)
     }
 
-    /// How the tool rail fits its height. Regular rows when every tool fits,
-    /// compact rows when only those fit, and past that the last tools move
-    /// behind an overflow button, as toolbar items that do not fit do.
     struct ToolRailLayout: Equatable {
         var rowHeight: CGFloat = 29
         var spacing: CGFloat = 2
-        /// Tools shown as buttons. The ones after them are in the overflow menu.
         var visibleTools: Int
 
-        /// The rail's padding and the divider above the gear.
         static let chromeHeight: CGFloat = 15
 
         init(toolCount: Int, height: CGFloat) {
             visibleTools = toolCount
-            // Every tool and the gear.
             if Self.chromeHeight + CGFloat(toolCount + 1) * (rowHeight + spacing) <= height { return }
-            // Compact rows still hold all of them in the shortest editor.
             rowHeight = 23
             spacing = 1
             let rows = Int(((height - Self.chromeHeight) / (rowHeight + spacing)).rounded(.down))
             if rows >= toolCount + 1 { return }
-            // The overflow button and the gear take the last two rows.
             visibleTools = max(0, rows - 2)
         }
     }
 
-    /// Select-to-copy utilities answer a mouse drag with a posted ⌘C, which in
-    /// the editor would copy the capture and close it under a stroke that has
-    /// not landed yet. A ⌘C another process posts while the pointer presses or
-    /// drags in the editor, or just after, is theirs; a pressed ⌘C always copies.
     static let editorPostedCopyGrace: TimeInterval = 0.6
 
     static func editorIgnoresPostedCopy(sourceProcessID: Int64,
@@ -1140,19 +994,11 @@ enum ScreenshotSupport {
             && now - lastPointerActivity < editorPostedCopyGrace
     }
 
-    /// A held Return or ⌘C repeats into what the first press left on screen:
-    /// Return that applied a crop, or chose Edit in the preview, would copy
-    /// the capture and close the editor a moment later. A held ⌘V would
-    /// stack copies of the same image exactly under the pasted one.
     static func editorIgnoresRepeatedOutputKey(keyCode: Int, command: Bool, isRepeat: Bool) -> Bool {
         isRepeat && (keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter
             || (command && (keyCode == kVK_ANSI_C || keyCode == kVK_ANSI_V)))
     }
 
-    /// Local key monitors normally receive the editor's window number, but
-    /// AppKit can clear it while resolving a main-menu key equivalent such as
-    /// Command-Z. In that case the key window still owns the event. Never use
-    /// the fallback for an event that explicitly belongs to another window.
     static func editorOwnsKeyEvent(eventWindowNumber: Int,
                                    editorWindowNumber: Int,
                                    editorIsKey: Bool) -> Bool {
@@ -1165,19 +1011,15 @@ enum ScreenshotSupport {
 
     struct PickableWindow: Equatable {
         let windowID: UInt32
-        /// Frame in the flipped coordinates of the overlay's own view.
         let frame: CGRect
     }
 
-    /// First window whose frame contains the point; the list keeps the window
-    /// server's front-to-back order, so the visible window wins.
     static func window(at point: CGPoint, in windows: [PickableWindow]) -> PickableWindow? {
         windows.first { $0.frame.contains(point) }
     }
 
     // MARK: - File naming
 
-    /// Stable local file name with a localizable prefix and colon-free time.
     static func fileName(prefix: String, date: Date, fileExtension: String = "png") -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1185,9 +1027,6 @@ enum ScreenshotSupport {
         return "\(prefix) \(formatter.string(from: date)).\(fileExtension)"
     }
 
-    /// Marks a saved capture the way macOS marks its own screenshots, so
-    /// Spotlight and the Cleaner's forgotten screenshots treat both alike.
-    /// Best effort: an unmarked file is only never offered for cleaning.
     static func markAsScreenCapture(_ url: URL) {
         guard let data = try? PropertyListSerialization.data(fromPropertyList: true,
                                                              format: .binary,
@@ -1201,9 +1040,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Writes one drag payload into its own temporary directory. Separate
-    /// directories keep captures made in the same second from replacing each
-    /// other while either drag is still in flight.
     static func temporaryDragFile(data: Data, name: String,
                                   directory: URL = FileManager.default.temporaryDirectory) throws -> URL {
         let folder = directory.appendingPathComponent("ScreenshotDrag-\(UUID().uuidString)",
@@ -1214,8 +1050,6 @@ enum ScreenshotSupport {
         return url
     }
 
-    /// Keeps copied captures available long enough for paste targets that read
-    /// the file after accepting its URL from the pasteboard.
     static func copiedFile(data: Data, name: String, directory: URL) throws -> URL {
         guard Int64(data.count) <= copiedFileMaximumBytes else {
             throw CocoaError(.fileWriteOutOfSpace)
@@ -1308,8 +1142,6 @@ enum ScreenshotSupport {
         return victims
     }
 
-    /// Applies the cache bounds only after `current` has reached the pasteboard.
-    /// A stale render may finish later, but it can never evict the published URL.
     static func pruneCopiedFiles(in directory: URL, preserving current: URL,
                                  now: Date = Date()) {
         copiedFileLock.withLock {
@@ -1371,11 +1203,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Expands a date-token pattern into a relative subfolder path, e.g.
-    /// "%y-%mo" becomes "24-03" and "%year/%month" becomes "2024/March".
-    /// Slashes in the pattern become nested folders. The result never
-    /// escapes the base folder: empty, "." and ".." components are dropped.
-    /// An empty pattern expands to an empty string, meaning no subfolder.
     static func expandSaveSubfolder(_ pattern: String, date: Date) -> String {
         guard !pattern.isEmpty else { return "" }
         return applyingDateTokens(pattern, date: date)
@@ -1384,20 +1211,12 @@ enum ScreenshotSupport {
             .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
             .joined(separator: "/")
     }
-    /// Expands a non-empty file name pattern with the same date tokens as
-    /// `expandSaveSubfolder`, plus "%#" (and "%##", "%###", …) for an
-    /// auto-incrementing, zero-padded number. Slashes and colons would nest
-    /// folders or fail the write, so they become dashes. Callers are
-    /// responsible for falling back to the default name when the pattern is
-    /// blank, and for appending the file extension.
     static func expandFileNamePattern(_ pattern: String, date: Date, number: Int) -> String {
         let withDate = applyingDateTokens(pattern, date: date)
         return applyingNumberTokens(withDate, number: number)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
     }
-    /// Whether a file name pattern actually uses the number sequence, so
-    /// callers know whether to advance and persist it.
     static func fileNamePatternUsesNumber(_ pattern: String) -> Bool {
         pattern.contains("%#")
     }
@@ -1405,8 +1224,6 @@ enum ScreenshotSupport {
         let calendar = Calendar(identifier: .gregorian)
         let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         let year = parts.year ?? 0
-        // Longer tokens are substituted first so "%year"/"%month" don't get
-        // clobbered by their short prefixes "%y"/"%mo" during replacement.
         let tokens: [(String, String)] = [
             ("%year", String(format: "%04d", year)),
             ("%month", monthName(parts.month ?? 1)),
@@ -1423,9 +1240,6 @@ enum ScreenshotSupport {
         }
         return result
     }
-    /// Replaces runs like "%#", "%##", "%###" with `number`, zero-padded to
-    /// the run's length (minus the leading "%"). Matches are expanded from
-    /// the end of the string backwards so earlier ranges stay valid.
     private static func applyingNumberTokens(_ pattern: String, number: Int) -> String {
         guard let regex = try? NSRegularExpression(pattern: "%#+") else { return pattern }
         let fullRange = NSRange(pattern.startIndex..<pattern.endIndex, in: pattern)
@@ -1451,7 +1265,6 @@ enum ScreenshotSupport {
         return formatter.string(from: date)
     }
 
-    /// First free variant of a file name: "name.png", "name 2.png", ….
     static func uniqueFileName(_ name: String, exists: (String) -> Bool) -> String {
         guard exists(name) else { return name }
         let base = (name as NSString).deletingPathExtension
@@ -1465,9 +1278,6 @@ enum ScreenshotSupport {
 
     // MARK: - Annotation model
 
-    /// Movement in view points, so clicks keep the same tolerance at every
-    /// zoom. Only the pen keeps its path when it returns to the start; other
-    /// tools still discard a shape whose endpoints form a click.
     struct EditorDrag {
         private var start: CGPoint = .zero
         private var stayedNearStart = true
@@ -1490,12 +1300,9 @@ enum ScreenshotSupport {
     }
 
     enum Tool: String, CaseIterable {
-        // Case order is the default rail order and therefore the default
-        // mapping for keys 1 through 9. Put the common actions first.
         case select, arrow, pixelate, crop, text, sticker, rect, highlight,
              freehand, line, ellipse, counter, redact, spotlight, expandCanvas, image
 
-        /// Content-only image annotations never appear in the tool rail.
         static var editorTools: [Tool] { allCases.filter { $0 != .image } }
 
         static let shortcutLimit = 9
@@ -1504,7 +1311,6 @@ enum ScreenshotSupport {
             editorTools.map(\.rawValue).joined(separator: ",")
         }
 
-        /// Tools that create an annotation by dragging a rectangle.
         var dragsRect: Bool {
             switch self {
             case .rect, .ellipse, .highlight, .pixelate, .redact, .spotlight: return true
@@ -1513,21 +1319,15 @@ enum ScreenshotSupport {
             }
         }
 
-        /// Existing rectangular marks with visible resize grips.
         var resizesWithHandles: Bool {
             dragsRect || self == .sticker || self == .image
         }
 
-        /// The tool a new editor opens with. Select, crop and expand canvas
-        /// act on the capture as a whole and an image is never picked by
-        /// hand, so each falls back to arrow and the editor opens ready to draw.
         static func startingTool(remembered raw: String?) -> Tool {
             let tool = Tool(rawValue: raw ?? "") ?? .arrow
             return [.select, .crop, .expandCanvas, .image].contains(tool) ? .arrow : tool
         }
 
-        /// Saved ids first, then any tools added by a later version in the
-        /// canonical order. Invalid and duplicate ids never reach the UI.
         static func ordered(from raw: String?) -> [Tool] {
             var seen = Set<Tool>()
             var result: [Tool] = []
@@ -1571,8 +1371,6 @@ enum ScreenshotSupport {
                       !isReservedEditorKey(shortcut) else { continue }
                 result[tool] = shortcut
             }
-            // Edited backups can contain duplicate bindings. Keep one owner,
-            // in rail-default order, so routing and the displayed keys agree.
             var seen = Set<GlobalShortcut>()
             for tool in editorTools {
                 if let shortcut = result[tool], !seen.insert(shortcut).inserted {
@@ -1582,8 +1380,6 @@ enum ScreenshotSupport {
             return result
         }
 
-        /// A layout or Caps Lock change can make a saved symbol type a rail
-        /// digit. Suspend it in that context without erasing the saved choice.
         static func activeBindings(from raw: String?, capsLockOn: Bool = false) -> [Tool: GlobalShortcut] {
             bindings(from: raw).filter { shortcutDigit($0.value, capsLockOn: capsLockOn) == nil }
         }
@@ -1597,7 +1393,6 @@ enum ScreenshotSupport {
         static func isReservedEditorKey(_ shortcut: GlobalShortcut) -> Bool {
             let key = Int(shortcut.keyCode)
             if shortcut.modifiers.contains(.command) {
-                // The editor's Command branch also accepts extra modifiers.
                 return [kVK_ANSI_C, kVK_ANSI_V, kVK_ANSI_S, kVK_ANSI_Z, kVK_ANSI_P,
                         kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_Equal, kVK_ANSI_Minus,
                         kVK_Delete, kVK_ForwardDelete, kVK_ANSI_W, kVK_ANSI_Q].contains(key)
@@ -1612,8 +1407,6 @@ enum ScreenshotSupport {
                                  bindingsRaw: String?, enabled: Bool, capsLockOn: Bool = false) -> Tool? {
             guard enabled else { return nil }
             let bindings = activeBindings(from: bindingsRaw, capsLockOn: capsLockOn)
-            // The event's printed digit is authoritative, including input
-            // methods whose output differs from the underlying keycap table.
             if !modifiers.hasPrimaryModifier, let number, (1...shortcutLimit).contains(number) {
                 guard let tool = shortcutTool(number: number, orderRaw: orderRaw, enabled: true),
                       bindings[tool] == nil else { return nil }
@@ -1623,11 +1416,6 @@ enum ScreenshotSupport {
             return editorTools.first(where: { bindings[$0] == shortcut })
         }
 
-        /// The rail slot a recorded key names, read from what the key types
-        /// on the active layout rather than from its position: AZERTY's 1 is
-        /// Shift on the & key, and the numerical variant also reaches it
-        /// through Caps Lock. Recording carries the actual lock state rather
-        /// than trying to recover it from the stored shortcut's modifiers.
         static func shortcutDigit(_ shortcut: GlobalShortcut, capsLockOn: Bool = false) -> Int? {
             guard !shortcut.modifiers.hasPrimaryModifier else { return nil }
             let shifted = shortcut.modifiers.contains(.shift)
@@ -1639,9 +1427,6 @@ enum ScreenshotSupport {
             return digit
         }
 
-        /// What the rail badge and the recorder show for a tool: its own
-        /// binding's caps, or the position digit of an unbound tool in the
-        /// first nine.
         static func shortcutLabel(for tool: Tool, orderRaw: String?,
                                   bindingsRaw: String?, enabled: Bool, capsLockOn: Bool = false) -> String? {
             guard enabled else { return nil }
@@ -1651,15 +1436,6 @@ enum ScreenshotSupport {
             return shortcutNumber(for: tool, orderRaw: orderRaw, enabled: true).map(String.init)
         }
 
-        /// Why a recorded key cannot become a binding, or nil when it can.
-        /// Digits never get here: they move the tool instead. The outside
-        /// checks are the same three every shortcut field runs, passed in by
-        /// the field so the order and the early return are testable without
-        /// defaults or the WindowServer. Recording silences those owners, so
-        /// the key records fine and then fires them once the field lets go:
-        /// macOS and the app's global taps answer before the editor's window
-        /// monitor ever sees the press. The system table is asked last
-        /// because it is the one read that leaves the process.
         enum BindingRejection: Equatable {
             case reserved
             case tool(Tool)
@@ -1684,8 +1460,6 @@ enum ScreenshotSupport {
             return systemConflict(shortcut) ? .system : nil
         }
 
-        /// A recorded digit moves the tool; clearing moves it below the first
-        /// nine. Other bindings stay attached to their tools through reorders.
         static func assigningBinding(_ shortcut: GlobalShortcut?, digit: Int? = nil,
                                      to tool: Tool, orderRaw: String?, bindingsRaw: String?)
             -> (orderRaw: String, bindingsRaw: String) {
@@ -1697,9 +1471,6 @@ enum ScreenshotSupport {
             return (order.map(\.rawValue).joined(separator: ","), bindingsStorage(bindings))
         }
 
-        /// Assigning a number is the same operation as moving the tool into
-        /// that numbered rail slot. Choosing no shortcut moves it just below
-        /// the first nine, where it remains available without a key.
         static func assigningShortcut(_ number: Int?,
                                       to tool: Tool,
                                       orderRaw: String?) -> [Tool] {
@@ -1721,7 +1492,6 @@ enum ScreenshotSupport {
     enum ColorID: String, CaseIterable {
         case red, orange, yellow, green, blue, purple, black, white
 
-        /// sRGB components, shared by live rendering and export.
         var components: (red: Double, green: Double, blue: Double) {
             switch self {
             case .red: return (0.93, 0.26, 0.21)
@@ -1743,8 +1513,6 @@ enum ScreenshotSupport {
     enum StrokeID: String, CaseIterable {
         case small, medium, large
 
-        /// Line width in image points at 1x; export multiplies by the image
-        /// scale so marks keep their weight on Retina captures.
         var width: CGFloat {
             switch self {
             case .small: return 2
@@ -1758,9 +1526,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Text point sizes at 1x, offered as presets. Text has its own size
-    /// instead of borrowing the shape thickness, so a thin arrow can sit
-    /// beside a large label.
     static let textSizes: [Int] = [10, 12, 14, 16, 19, 24, 28, 36, 48, 64, 72, 96]
     static let defaultTextSize = 19
 
@@ -1769,32 +1534,20 @@ enum ScreenshotSupport {
         return size == 0 ? defaultTextSize : min(max(size, first), last)
     }
 
-    /// The preset one step away from `size`, or nil at either end.
     static func steppedTextSize(from size: Int, up: Bool) -> Int? {
         up ? textSizes.first(where: { $0 > size }) : textSizes.last(where: { $0 < size })
     }
 
-    /// How dark a spotlight turns everything outside its regions, from 0
-    /// (untouched) to 1 (black).
     static let defaultSpotlightDim: CGFloat = 0.5
 
-    /// A stored or passed dim kept within 0...1; an unreadable one falls
-    /// back to the default.
     static func sanitizedSpotlightDim(_ strength: CGFloat) -> CGFloat {
         strength.isFinite ? min(max(strength, 0), 1) : defaultSpotlightDim
     }
 
-    /// The dim the editor's control settles on: the nearest 5% step, so a
-    /// continuous slider needs no tick marks and the spoken percent stays
-    /// whole.
     static func steppedSpotlightDim(_ strength: CGFloat) -> CGFloat {
         (sanitizedSpotlightDim(strength) * 20).rounded() / 20
     }
 
-    /// How hard a blur hides what is under it, from 1 (lightest) to 5
-    /// (heaviest). Level 3 is the strength blurs always had. The screenshot
-    /// pixelate tool and video blurs share the scale so a level means the
-    /// same thing in both editors.
     enum BlurStrength {
         static let levels = 1...5
         static let defaultLevel = 3
@@ -1803,15 +1556,10 @@ enum ScreenshotSupport {
             min(max(level, levels.lowerBound), levels.upperBound)
         }
 
-        /// Where a new capture's pixelate tool starts: the remembered level,
-        /// but never a light one. Levels 1 and 2 make blocks smaller than a
-        /// line of text, which can stay readable, so they are picked area by
-        /// area instead of carried into the next redaction.
         static func startingLevel(remembered: Int) -> Int {
             max(sanitized(remembered), defaultLevel)
         }
 
-        /// What the level does to the mosaic block, relative to level 3.
         static func blockFactor(for level: Int) -> CGFloat {
             switch sanitized(level) {
             case 1: return 0.4
@@ -1831,8 +1579,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// What a blur area does to what is under it. Pixelate was the only style
-    /// before, so it stays the default.
     enum BlurStyleID: String, CaseIterable {
         case pixelate, blur, erase
 
@@ -1840,7 +1586,6 @@ enum ScreenshotSupport {
             BlurStyleID(rawValue: raw ?? "") ?? .pixelate
         }
 
-        /// Erasing paints the surroundings over the area, so it has no strength.
         var usesStrength: Bool {
             self != .erase
         }
@@ -1893,16 +1638,12 @@ enum ScreenshotSupport {
         return movedRect(rect, by: .zero, within: bounds)
     }
 
-    /// Immutable pixels shared by image annotations and undo snapshots.
     final class ImageAsset: Equatable {
         let image: CGImage
         init(image: CGImage) { self.image = image }
         static func == (lhs: ImageAsset, rhs: ImageAsset) -> Bool { lhs === rhs }
     }
 
-    /// One annotation on the canvas. Geometry lives in image-point
-    /// coordinates (top-left origin), so export is resolution-exact and the
-    /// view only scales for display.
     struct Annotation: Identifiable, Equatable {
         let id: UUID
         var tool: Tool
@@ -1914,7 +1655,6 @@ enum ScreenshotSupport {
         var textSize: Int
         var blurLevel: Int
         var blurStyle: BlurStyleID
-        /// A blur area that covers only the text recognized inside it.
         var blurTextOnly: Bool
         var arrowStyle: ArrowStyleID
         var scribbleSeed: UInt64
@@ -1960,7 +1700,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// The style values the editor controls should show for a picked mark.
     struct SelectionStyle: Equatable {
         let color: ColorID?
         let stroke: StrokeID?
@@ -2004,13 +1743,10 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Which way a selected annotation moves through the drawing order.
     enum LayerMove {
         case forward, backward
     }
 
-    /// Whether the annotation has somewhere to go: false at the end it is
-    /// already heading for, and for an id that is not in the array.
     static func canReorder(_ annotations: [Annotation],
                            moving id: UUID,
                            _ move: LayerMove) -> Bool {
@@ -2018,10 +1754,6 @@ enum ScreenshotSupport {
         return annotations.indices.contains(move == .forward ? index + 1 : index - 1)
     }
 
-    /// Moves one annotation a single step through the array the renderer draws
-    /// in order, so a shape can go behind text that was written first. An
-    /// annotation already at the end it is heading for stays put, and an
-    /// unknown id leaves the array alone.
     static func reordering(_ annotations: [Annotation],
                            moving id: UUID,
                            _ move: LayerMove) -> [Annotation] {
@@ -2033,8 +1765,6 @@ enum ScreenshotSupport {
         return reordered
     }
 
-    /// Counters stay 1…n in creation order; deleting one renumbers the rest
-    /// so a sequence never shows a hole.
     static func renumberingCounters(_ annotations: [Annotation]) -> [Annotation] {
         var next = 1
         return annotations.map { annotation in
@@ -2046,8 +1776,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Counter badge diameter for an image, scaling with capture resolution
-    /// so badges stay readable without swallowing small screenshots.
     static func counterDiameter(for imageSize: CGSize, scale: CGFloat) -> CGFloat {
         max(22, min(imageSize.width, imageSize.height) / 24) * scale
     }
@@ -2078,8 +1806,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// The rectangle after dragging `handle` to `point`. Width and height are
-    /// kept non-negative by swapping edges when a drag crosses over.
     static func resizedRect(_ rect: CGRect, dragging handle: Handle, to point: CGPoint) -> CGRect {
         var minX = rect.minX, minY = rect.minY, maxX = rect.maxX, maxY = rect.maxY
         switch handle {
@@ -2096,8 +1822,6 @@ enum ScreenshotSupport {
                       width: abs(maxX - minX), height: abs(maxY - minY))
     }
 
-    /// Moves an existing crop without resizing it, stopping cleanly at the
-    /// image edges instead of shrinking the rectangle through intersection.
     static func movedRect(_ rect: CGRect,
                           by delta: CGPoint,
                           within bounds: CGRect) -> CGRect {
@@ -2109,11 +1833,6 @@ enum ScreenshotSupport {
         return CGRect(x: x, y: y, width: rect.width, height: rect.height)
     }
 
-    /// The pixel rectangle a crop draft stands for. A crop cuts on pixel
-    /// boundaries, so the chrome, the loupe cross and `applyCrop` all read the
-    /// draft through here and mark the same edge. Rounding both edges to the
-    /// nearest boundary leaves an already snapped rectangle the same size under
-    /// a move, because the two edges carry the same fraction.
     static func pixelSnappedCropRect(_ rect: CGRect, within bounds: CGRect) -> CGRect {
         let minX = (rect.minX).rounded()
         let minY = (rect.minY).rounded()
@@ -2123,9 +1842,6 @@ enum ScreenshotSupport {
                      to: bounds)
     }
 
-    /// A stable square of source pixels for the crop loupe. Near an image
-    /// edge the sample slides inward instead of shrinking, and the loupe's
-    /// reticle still marks the exact adjusted pixel.
     static let captureLoupeBaseSampleSide: CGFloat = 13
     static let captureLoupeMinSampleSide: CGFloat = 3
     static let captureLoupeMinZoom: CGFloat = 0.5
@@ -2133,8 +1849,6 @@ enum ScreenshotSupport {
         captureLoupeBaseSampleSide / captureLoupeMinSampleSide
     }
     static let captureLoupeDefaultZooms: [Double] = [0.5, 1, 2, 4]
-    /// The magnifier square on screen, in view points. Big enough that each
-    /// sampled pixel becomes a readable grid cell at every zoom level.
     static let captureLoupeFrameSide: CGFloat = 132
 
     static func captureLoupeInitialZoom(rememberLast: Bool,
@@ -2150,9 +1864,6 @@ enum ScreenshotSupport {
         steppedByDefault != optionPressed
     }
 
-    /// A few high-resolution mouse drivers put sub-notch movement only in
-    /// the fixed-point wheel field. `NSEvent.scrollingDeltaY` rounds those
-    /// packets to zero, which would make apparently random notches disappear.
     static func captureLoupeWheelDelta(scrollingDelta: CGFloat,
                                        lineDelta: Int64,
                                        fixedPointDelta: Double) -> CGFloat {
@@ -2163,13 +1874,6 @@ enum ScreenshotSupport {
         return scrollingDelta.isFinite ? scrollingDelta : 0
     }
 
-    /// Fast mode on a plain wheel. Its 15% per event was tuned for a smoothed
-    /// wheel, whose train of packets per notch sweeps the range; one discrete
-    /// event per notch made fast mode crawl at the same pace as stepped mode.
-    /// A plain notch therefore zooms by three of those factors. The event's
-    /// line count is left out, as stepped mode leaves it out: scroll tools
-    /// write a fixed count per notch there, and following it would let one
-    /// notch cross the whole range.
     static func captureLoupeFastZoom(_ zoom: CGFloat,
                                      adjustedBy scrollDelta: CGFloat,
                                      isContinuous: Bool) -> CGFloat {
@@ -2181,7 +1885,6 @@ enum ScreenshotSupport {
         return result
     }
 
-    /// Fast mode preserves the original one-step-per-event behavior.
     static func captureLoupeZoom(_ zoom: CGFloat,
                                  adjustedBy scrollDelta: CGFloat) -> CGFloat {
         guard scrollDelta.isFinite, scrollDelta != 0 else {
@@ -2191,10 +1894,6 @@ enum ScreenshotSupport {
         return min(max(zoom * factor, captureLoupeMinZoom), captureLoupeMaxZoom)
     }
 
-    /// Step mode advances by exactly one drawable pixel-grid level. A fixed
-    /// percentage cannot promise that: at the wide end it can skip two odd
-    /// sample sizes, while at the narrow end it can round back to the same
-    /// size and appear to do nothing.
     static func captureLoupeSteppedZoom(_ zoom: CGFloat,
                                         adjustedBy scrollDelta: CGFloat) -> CGFloat {
         let clamped = min(max(zoom, captureLoupeMinZoom), captureLoupeMaxZoom)
@@ -2207,16 +1906,11 @@ enum ScreenshotSupport {
             : min(widestSide, currentSide + 2)
         guard targetSide != currentSide else { return clamped }
 
-        // The widest level lies just below the numeric minimum when expressed
-        // as base / side, so it deliberately resolves to the public boundary.
         if targetSide == widestSide { return captureLoupeMinZoom }
         return min(max(captureLoupeBaseSampleSide / targetSide,
                        captureLoupeMinZoom), captureLoupeMaxZoom)
     }
 
-    /// Sampled source pixels per side. Always an odd whole number, never
-    /// below three, so the pixel under the pointer is a real middle cell
-    /// that the grid can outline instead of a boundary between two cells.
     static func captureLoupeSampleSide(zoom: CGFloat) -> CGFloat {
         let clamped = min(max(zoom, captureLoupeMinZoom), captureLoupeMaxZoom)
         let raw = captureLoupeBaseSampleSide / clamped
@@ -2224,15 +1918,10 @@ enum ScreenshotSupport {
         return max(captureLoupeMinSampleSide, odd)
     }
 
-    /// The pixel grid earns its ink only once a cell is big enough that the
-    /// lines separate pixels instead of shading the whole image.
     static func captureLoupeGridVisible(frameSide: CGFloat, sampleSide: CGFloat) -> Bool {
         sampleSide > 0 && frameSide / sampleSide >= 6
     }
 
-    /// Arrow keys move the pointer by whole device pixels of the screen it is
-    /// on, in points, so one press always lands on the neighbouring pixel
-    /// even on Retina displays. Shift covers ten pixels per press.
     static func captureLoupeNudge(dx: CGFloat,
                                   dy: CGFloat,
                                   fast: Bool,
@@ -2241,19 +1930,6 @@ enum ScreenshotSupport {
         return CGPoint(x: dx * step, y: dy * step)
     }
 
-    /// The square of source pixels a loupe magnifies. The two loupes centre on
-    /// different things and therefore need opposite parities.
-    ///
-    /// The capture loupe reads a color, so it centres on a whole *pixel*
-    /// (`centredOnPixel`): the side is forced odd because an even one has no
-    /// middle cell, which left the sampled pixel half a cell right of and below
-    /// the frame's centre, and the ring drawn around it followed. Centring on
-    /// the floored coordinate keeps the pointer's sub-pixel position out of it.
-    ///
-    /// The editor's crop loupe marks a crop *edge*, which runs between pixels.
-    /// An edge lands in the middle of the frame only when the side is even and
-    /// the coordinate is whole, so that caller passes `centredOnPixel: false`
-    /// and reads a draft `pixelSnappedCropRect` has put on a boundary.
     static func cropLoupeSampleRect(around point: CGPoint,
                                     imageSize: CGSize,
                                     sideLength: CGFloat = 13,
@@ -2277,11 +1953,6 @@ enum ScreenshotSupport {
                       height: height)
     }
 
-    /// Where the one source pixel under `point` lands inside a loupe frame.
-    /// It floors the coordinate exactly like the color read does, so a
-    /// highlight built from this rect can never mark a neighbour of the pixel
-    /// that gets copied, and the pointer's sub-pixel position stops leaking
-    /// into the drawing.
     static func captureLoupeTargetPixelRect(around point: CGPoint,
                                             source: CGRect,
                                             frame: CGRect) -> CGRect {
@@ -2298,8 +1969,6 @@ enum ScreenshotSupport {
 
     // MARK: - Shape geometry
 
-    /// Arrow head as two wing points for a line ending at `tip`. The head
-    /// grows with the stroke so thick arrows stay proportionate.
     static func arrowHead(from tail: CGPoint,
                           to tip: CGPoint,
                           strokeWidth: CGFloat) -> (left: CGPoint, right: CGPoint) {
@@ -2316,9 +1985,6 @@ enum ScreenshotSupport {
         return (left, right)
     }
 
-    /// One continuous outline for the complete arrow. Keeping the shaft,
-    /// round tail and head on the same contour avoids winding-rule cutouts
-    /// where independently filled shapes would overlap.
     static func arrowSilhouette(from tail: CGPoint,
                                 to tip: CGPoint,
                                 strokeWidth: CGFloat) -> CGPath {
@@ -2351,9 +2017,6 @@ enum ScreenshotSupport {
         return path
     }
 
-    /// Shaft and heads of a stroked arrow style as one path, so a single
-    /// stroke draws the whole arrow and casts one shadow. The solid style is a
-    /// filled silhouette rather than a stroke and answers nil.
     static func arrowStrokePath(from tail: CGPoint,
                                 to tip: CGPoint,
                                 strokeWidth: CGFloat,
@@ -2389,9 +2052,6 @@ enum ScreenshotSupport {
         return path
     }
 
-    /// A lightly hand-drawn arrow made from stable, seeded wobble. The seed
-    /// belongs to the annotation so a redraw or export keeps the same sketch,
-    /// while each newly created scribbly arrow gets its own variation.
     struct ScribblyArrowGeometry: Equatable {
         let shaft: [CGPoint]
         let leftWing: [CGPoint]
@@ -2484,7 +2144,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Distance from a point to a segment, for hit-testing lines and arrows.
     static func distance(from point: CGPoint, toSegment start: CGPoint, _ end: CGPoint) -> CGFloat {
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -2499,24 +2158,16 @@ enum ScreenshotSupport {
 
     // MARK: - Redaction
 
-    /// Pixelation block size in image pixels, scaled to the capture so small
-    /// crops and full screens redact equally well. From the default level up
-    /// the mosaic carries no legible detail; levels 1 and 2 are lighter and
-    /// can leave large text readable.
     static func pixelBlockSize(for imageSize: CGSize,
                                level: Int = BlurStrength.defaultLevel) -> Int {
         let base = max(10, Int(min(imageSize.width, imageSize.height) / 55))
         return max(2, Int((CGFloat(base) * BlurStrength.blockFactor(for: level)).rounded()))
     }
 
-    /// The blur levels the pixelate marks use. Keep only their sampled mosaics;
-    /// drawing expands each one to the capture size when needed.
     static func mosaicLevels(for annotations: [Annotation]) -> Set<Int> {
         blurLevels(for: annotations, style: .pixelate)
     }
 
-    /// The levels the soft blur marks use, each kept as a small blurred sample
-    /// the same way.
     static func softBlurLevels(for annotations: [Annotation]) -> Set<Int> {
         blurLevels(for: annotations, style: .blur)
     }
@@ -2525,10 +2176,6 @@ enum ScreenshotSupport {
         Set(annotations.filter { $0.tool == .pixelate && $0.blurStyle == style }.map(\.blurLevel))
     }
 
-    /// Recognized words joined into the runs a text only blur area covers.
-    /// Neighboring words on a line share one run, so the spaces between them
-    /// are covered too, and words far apart, like table columns, stay apart.
-    /// Each run is padded past the antialiased edges of its glyphs.
     static func textRuns(from words: [RecognizedWord]) -> [CGRect] {
         var runs: [CGRect] = []
         var current: (rect: CGRect, line: Int)?
@@ -2551,15 +2198,9 @@ enum ScreenshotSupport {
     }
 
     private static func paddedTextRun(_ rect: CGRect) -> CGRect {
-        // In a tall band recognition can place a box a few pixels off, or
-        // stop it short of the glyphs, so the padding above and below is wider.
-        // A word read one letter short ends its box before that letter, so
-        // each end reaches about a glyph further.
         rect.insetBy(dx: -max(1, rect.height * 0.6), dy: -max(1, rect.height * 0.3))
     }
 
-    /// Runs moved into a crop's coordinates, keeping those still on it, or
-    /// nil when there were none to move.
     static func croppedRuns(_ runs: [CGRect]?, by crop: CGRect) -> [CGRect]? {
         let bounds = CGRect(origin: .zero, size: crop.size)
         return runs?.compactMap { run -> CGRect? in
@@ -2568,9 +2209,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// The runs a text only blur area covers: every run that reaches into it.
-    /// Nil runs mean recognition has not read the capture yet, and the whole
-    /// area stands in for them, so an early export never leaves text readable.
     static func blurTextRuns(in rect: CGRect, from runs: [CGRect]?) -> [CGRect] {
         guard let runs else { return [rect] }
         return runs.filter { $0.intersects(rect) }
@@ -2578,7 +2216,6 @@ enum ScreenshotSupport {
 
     // MARK: - Export
 
-    /// Pixel size after the optional 1x downscale of a Retina capture.
     static func downscaledSize(pixelSize: CGSize, scale: CGFloat) -> CGSize {
         guard scale > 1 else { return pixelSize }
         return CGSize(width: (pixelSize.width / scale).rounded(),
@@ -2587,11 +2224,9 @@ enum ScreenshotSupport {
 
     // MARK: - Backdrop
 
-    /// Padded background, corner rounding and shadow applied during export.
     enum BackdropID: String, CaseIterable {
         case none, ocean, sunset, forest, candy, graphite
 
-        /// Gradient stops as sRGB components, top-left to bottom-right.
         var stops: [(red: Double, green: Double, blue: Double)] {
             switch self {
             case .none: return []
@@ -2605,9 +2240,6 @@ enum ScreenshotSupport {
 
     }
 
-    /// Padding around the image for a backdrop. `factor` is the user's margin
-    /// slider (0…1); even 0 keeps a small frame so the gradient always shows,
-    /// and a floor keeps a visible margin around small captures.
     static func backdropPadding(for imageSize: CGSize, factor: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, factor))
         let side = min(imageSize.width, imageSize.height)
@@ -2615,19 +2247,11 @@ enum ScreenshotSupport {
         return max(24, proportional).rounded()
     }
 
-    /// Corner rounding of the capture card in image pixels. Factor 0 keeps
-    /// the capture square; 1 is a generous fifth of the short side.
     static func cardCornerRadius(for imageSize: CGSize, factor: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, factor))
         return (clamped * min(imageSize.width, imageSize.height) * 0.2).rounded()
     }
 
-    /// The rounding a picture already carries in its alpha, such as a window
-    /// captured with its own corners, in image pixels: how far transparency
-    /// reaches in along each corner's diagonal, read as the radius of the arc
-    /// that meets the diagonal there. The least rounded corner wins, so a
-    /// mark drawn into one corner cannot round the card past the picture. An
-    /// opaque picture reads 0.
     static func transparentCornerRadius(of image: CGImage) -> CGFloat {
         let side = min(image.width, image.height, 512) / 2
         guard side >= 2 else { return 0 }
@@ -2645,7 +2269,6 @@ enum ScreenshotSupport {
                   let pixels = context.data
             else { return 0 }
             context.draw(crop, in: CGRect(x: 0, y: 0, width: side, height: side))
-            // Rows run top down in the buffer, as in the picture.
             let startX = corner.stepX > 0 ? 0 : side - 1
             let startY = corner.stepY > 0 ? 0 : side - 1
             guard let opaqueAt = (0..<side).first(where: { step in
@@ -2655,31 +2278,22 @@ enum ScreenshotSupport {
             }) else { return 0 }
             reach = min(reach, opaqueAt)
         }
-        // The arc crosses the diagonal at r · (1 − 1/√2) from the corner.
         return (CGFloat(reach) / (1 - 1 / 2.0.squareRoot())).rounded()
     }
 
-    /// Gaussian blur radius in output pixels. Keeping it proportional makes
-    /// the same slider look consistent on small screenshots and 4K video.
     static func backdropBlurRadius(for size: CGSize, factor: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, factor))
         return clamped * min(size.width, size.height) * 0.035
     }
 
-    /// The full backdrop configuration behind a capture, persisted as JSON
-    /// (one style in use, plus the user's saved presets). Colors are sRGB
-    /// components so the codec stays pure and testable.
     struct BackdropStyle: Codable, Equatable {
         enum Kind: String, Codable {
             case none, preset, solid, gradient, image
         }
 
         var kind: Kind
-        /// BackdropID raw value when kind == .preset.
         var presetID: String?
-        /// 1 color (solid) or 2 colors (gradient), each [r, g, b] in 0…1.
         var colors: [[Double]]?
-        /// Absolute path when kind == .image (user image or a wallpaper).
         var imagePath: String?
         var padding: Double
         var cornerRadius: Double
@@ -2727,9 +2341,6 @@ enum ScreenshotSupport {
             try values.encode(blur, forKey: .blur)
         }
 
-        /// Clamps sliders, validates colors and drops broken configurations
-        /// back to .none, so a damaged persisted value can never wedge the
-        /// editor.
         func sanitized() -> BackdropStyle {
             var style = self
             style.padding = style.padding.isFinite ? max(0, min(1, style.padding)) : 0.5
@@ -2785,23 +2396,15 @@ enum ScreenshotSupport {
 
     // MARK: - Recognized text (selectable on the canvas)
 
-    /// One word of recognized text, in image-pixel coordinates.
     struct RecognizedWord: Equatable {
         let text: String
         let rect: CGRect
-        /// Line index, so copied selections keep their line breaks.
         let line: Int
     }
 
-    /// Bands of the capture that text recognition reads one at a time, so a
-    /// tall capture never becomes one huge request. Neighboring bands share
-    /// some rows, because recognition misses a line cut by a band's edge, and
-    /// each band owns the rows up to the middle of what it shares.
-    /// `mergedRecognition` uses that seam to keep a word read twice once.
     static func recognitionTiles(width: Int, height: Int) -> [(rect: CGRect, ownedRows: Range<CGFloat>)] {
         let maximumTilePixels = 12_000_000
         let tileHeight = min(height, max(512, min(4096, maximumTilePixels / max(width, 1))))
-        // Even, so the owned rows of two bands meet on the same row.
         let overlap = tileHeight < height ? min(256, tileHeight / 4) & ~1 : 0
         var tiles: [(rect: CGRect, ownedRows: Range<CGFloat>)] = []
         var tileY = 0
@@ -2817,9 +2420,6 @@ enum ScreenshotSupport {
         return tiles
     }
 
-    /// A word one recognition band read, in image pixels. `rect` is nil when
-    /// recognition gave the word no box of its own, and its line's box then
-    /// stands in for it wherever text must be covered.
     struct BandWord: Equatable {
         let text: String
         let rect: CGRect?
@@ -2827,18 +2427,6 @@ enum ScreenshotSupport {
         let line: Int
     }
 
-    /// Joins what each band read into the capture's words and the runs text
-    /// only blur areas cover. `reads` follows `tiles`, and nil marks a band
-    /// recognition could not read.
-    ///
-    /// Two bands read the rows they share, and each places a word there a few
-    /// pixels from where the other does, so neither guess alone can say which
-    /// band keeps it. A word both bands read is kept once, from the band that
-    /// owns the middle of the two guesses, and a word only one band read is
-    /// always kept. Runs also take the second guess near a seam, so the text
-    /// stays covered whichever guess was off. Runs stay nil unless every band
-    /// was read, so text only areas keep covering all of themselves. Words
-    /// come band by band, each in the band that owns its middle.
     static func mergedRecognition(_ reads: [[BandWord]?],
                                   tiles: [(rect: CGRect, ownedRows: Range<CGFloat>)])
         -> (words: [RecognizedWord], runs: [CGRect]?) {
@@ -2859,10 +2447,6 @@ enum ScreenshotSupport {
             var unpaired = sharedWords(lower)
             for (index, rect) in sharedWords(upper) {
                 let text = bands[upper].words[index].text
-                // The other band's read of this word has the same text over
-                // at least half its height, or a box covering at least half of
-                // the smaller one. The same word on the next line is not it,
-                // or it would take the only read of a line one band missed.
                 let match = unpaired.indices.compactMap { candidate -> (candidate: Int, score: CGFloat)? in
                     let other = unpaired[candidate].rect
                     let common = rect.intersection(other)
@@ -2883,13 +2467,9 @@ enum ScreenshotSupport {
                 }
             }
         }
-        // Kept words follow the band that owns each, so a word kept from
-        // the other band of a seam still copies among the lines around it.
         var ownedWords = [[RecognizedWord]](repeating: [], count: bands.count)
         var covered: [RecognizedWord] = []
         for (index, band) in bands.enumerated() {
-            // Both guesses of a word near a seam become runs: each band's
-            // owned rows reach a quarter of the shared rows past the seam.
             let above = index > 0
                 ? (bands[index - 1].tile.rect.maxY - band.tile.rect.minY) / 4 : 0
             let below = index + 1 < bands.count
@@ -2914,8 +2494,6 @@ enum ScreenshotSupport {
         return (ownedWords.flatMap { $0 }, everyBandRead ? textRuns(from: covered) : nil)
     }
 
-    /// Words a selection drag touches, in reading order. A hairline drag
-    /// still selects what it crosses.
     static func wordSelection(anchor: CGPoint,
                               current: CGPoint,
                               boxes: [CGRect]) -> [Int] {
@@ -2924,8 +2502,6 @@ enum ScreenshotSupport {
         return boxes.indices.filter { boxes[$0].intersects(rect) }
     }
 
-    /// Joins selected words with spaces inside a line and newlines between
-    /// lines, whatever order the indexes arrive in.
     static func joinedWords(_ words: [RecognizedWord], selected: [Int]) -> String {
         let picked = selected.sorted().compactMap { words.indices.contains($0) ? words[$0] : nil }
         guard !picked.isEmpty else { return "" }
@@ -2944,7 +2520,6 @@ enum ScreenshotSupport {
         return lines.joined(separator: "\n")
     }
 
-    /// Saved custom backdrops, capped at the configured limit.
     static let backdropPresetLimit = 12
 
     static func decodedBackdropPresets(_ raw: String?) -> [BackdropStyle] {
@@ -2966,32 +2541,20 @@ enum ScreenshotSupport {
 
     // MARK: - Watermark
 
-    /// A mark of your own on every capture that leaves the editor: a line of
-    /// text or a picture from disk, faded, tilted if you like and set on one
-    /// of nine places. Persisted as JSON like the backdrop, so the next
-    /// capture opens with it already on.
     struct WatermarkStyle: Codable, Equatable {
         enum Kind: String, Codable {
             case none, text, image
         }
 
-        /// The same nine places the recorder's captions and pictures take:
-        /// one grid to learn across both editors.
         typealias Anchor = RecorderTextOverlay.Anchor
 
         var kind: Kind
         var text: String
-        /// Absolute path when kind == .image.
         var imagePath: String?
-        /// ColorID raw value the text is drawn in.
         var color: String
         var anchor: Anchor
-        /// Sliders 0…1; `watermarkFontSize` and `watermarkImageWidth` turn
-        /// them into pixels for a given capture.
         var size: Double
         var opacity: Double
-        /// Degrees, -90…90: positive tilts the mark up to the right, the way
-        /// a diagonal document watermark runs.
         var rotation: Double
 
         init(kind: Kind = .none,
@@ -3016,9 +2579,6 @@ enum ScreenshotSupport {
         static let rotationRange: ClosedRange<Double> = -90...90
         static let textLimit = 120
 
-        /// Clamps the sliders, trims the text and drops a configuration
-        /// missing its content back to .none, so a damaged persisted value
-        /// can never wedge the editor.
         func sanitized() -> WatermarkStyle {
             var style = self
             style.text = String(text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3062,7 +2622,6 @@ enum ScreenshotSupport {
         }
     }
 
-    /// Saved watermarks, capped like the backdrops.
     static func decodedWatermarkPresets(_ raw: String?) -> [WatermarkStyle] {
         guard let raw, !raw.isEmpty,
               let data = raw.data(using: .utf8),
@@ -3080,33 +2639,21 @@ enum ScreenshotSupport {
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
-    /// Point size of watermark text in image pixels: factor 0 is a discreet
-    /// 2% of the short side, 1 a bold 16%, the recorder's caption ceiling.
     static func watermarkFontSize(for imageSize: CGSize, factor: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, factor))
         return max(8, (min(imageSize.width, imageSize.height) * (0.02 + 0.14 * clamped)).rounded())
     }
 
-    /// Width of a watermark picture in image pixels, from a corner mark of
-    /// 5% of the capture's width up to half of it. The picture's own
-    /// proportions decide the height.
     static func watermarkImageWidth(for imageSize: CGSize, factor: CGFloat) -> CGFloat {
         let clamped = max(0, min(1, factor))
         return max(1, (imageSize.width * (0.05 + 0.45 * clamped)).rounded())
     }
 
     struct WatermarkPlacement {
-        /// Where the mark's center goes, in image pixels with a top-left origin.
         let center: CGPoint
-        /// How much the content shrinks so its tilted bounds stay inside the
-        /// margins; 1 when it already fits.
         let fit: CGFloat
     }
 
-    /// Where a mark of `contentSize`, turned by `rotation` degrees, sits on a
-    /// capture: its tilted bounding box is what the nine places position, so
-    /// a diagonal mark in a corner touches the margin instead of leaving it.
-    /// The margin is the recorder's, 5% of the short side.
     static func watermarkPlacement(contentSize: CGSize,
                                    rotation: Double,
                                    anchor: WatermarkStyle.Anchor,
@@ -3121,10 +2668,6 @@ enum ScreenshotSupport {
             width: abs(contentSize.width * cos(radians)) + abs(contentSize.height * sin(radians)),
             height: abs(contentSize.width * sin(radians)) + abs(contentSize.height * cos(radians)))
         let shortSide = min(imageSize.width, imageSize.height)
-        // The inset rectangle must lie entirely inside the rounded capture.
-        // At the diagonal of a quarter circle the inset is r * (1 - sqrt(0.5)).
-        // A pixel of breathing room avoids clipping antialiased edges. Keep
-        // positive space even after cropping down to only a few pixels.
         let radius = cornerRadius.isFinite ? max(0, min(shortSide / 2, cornerRadius)) : 0
         let roundedInset = radius > 0 ? ceil(radius * (1 - sqrt(0.5))) + 1 : 0
         let margin = min(shortSide * 0.45, max(shortSide * 0.05, roundedInset))
@@ -3140,9 +2683,6 @@ enum ScreenshotSupport {
     }
 }
 
-/// The action to run automatically right after a capture, chosen in
-/// Settings. `.none` leaves the quick-preview HUD waiting for the user, as
-/// before this setting existed.
 enum ScreenshotDefaultAction: String, CaseIterable {
     case none = ""
     case save
@@ -3150,17 +2690,13 @@ enum ScreenshotDefaultAction: String, CaseIterable {
     case copy
     case edit
 
-    /// The persisted choice; an unknown raw value reads as `.none`.
     static var current: ScreenshotDefaultAction {
         let raw = UserDefaults.standard.string(forKey: DefaultsKey.screenshotDefaultAction) ?? ""
         return ScreenshotDefaultAction(rawValue: raw) ?? .none
     }
 
-    /// Copy and Save and copy put every capture on the clipboard.
     var copiesToClipboard: Bool { self == .copy || self == .saveAndCopy }
 
-    /// The same choice without its clipboard half. Turning automatic copy
-    /// off in Settings applies this, so Save and copy keeps saving.
     var withoutCopy: ScreenshotDefaultAction {
         switch self {
         case .copy: return .none

@@ -6,7 +6,6 @@ enum FontSize: String, CaseIterable {
     case large
     case extraLarge
 
-    /// Everything keeps the scratchpad at one size: 14 pt.
     static let fixed = FontSize.small
 
     var pointSize: CGFloat { 14 }
@@ -17,8 +16,6 @@ enum FontSize: String, CaseIterable {
         return all[(idx + 1) % all.count]
     }
 
-    /// One step up or down for ⌘= / ⌘-, stopping at the ends rather
-    /// than wrapping the way the footer button's cycle does.
     var larger: FontSize {
         let all = FontSize.allCases
         let idx = all.firstIndex(of: self) ?? 0
@@ -36,9 +33,6 @@ enum FontSize: String, CaseIterable {
 final class EditorModel: ObservableObject {
     @Published var text: String = "" {
         didSet {
-            // Published only when the outline changes: every assignment
-            // re-renders the header bar, and typing above a heading moves
-            // its offset without changing what the bar shows.
             let parsed = text.extractHeadings()
             headingOffsets = parsed.map(\.lineStart)
             if !parsed.map({ [$0.name, String($0.level)] }).elementsEqual(headings.map({ [$0.name, String($0.level)] })) {
@@ -50,14 +44,8 @@ final class EditorModel: ObservableObject {
         }
     }
     @Published private(set) var headings: [Heading] = []
-    /// Where each of `headings` starts right now; kept current on every
-    /// keystroke without republishing.
     private var headingOffsets: [Int] = []
-    /// Trails typing slightly. It's a quiet footer figure, and counting
-    /// words walks the whole note.
     @Published private(set) var wordCount: Int = 0
-    /// A few words of confirmation in the footer — "Filed to Inbox" —
-    /// that clear themselves.
     @Published private(set) var notice: String?
     @Published var focusToken: Int = 0
     @Published var scrollToken: Int = 0
@@ -66,57 +54,29 @@ final class EditorModel: ObservableObject {
     @Published var showHelp: Bool = false
     @Published var showHotKeyCapture: Bool = false
     @Published var showFirstRunHint: Bool = false
-    /// Tips this user hasn't been shown, fixed for the session so the
-    /// "New" tags don't vanish out from under them the moment the dot
-    /// is marked seen.
     @Published private(set) var newTips: [Tip] = []
-    /// Drives the dot on the `?`. Cleared as soon as they look.
     @Published private(set) var hasUnseenTips: Bool = false
     @Published var showTour: Bool = false
-    /// Set to true when the user clicks "Later" on the update overlay.
-    /// Reset to false on every panel-open so the overlay reappears on
-    /// the next interaction if an update is still available.
     @Published var updateDismissed: Bool = false
-    /// True when the last write to disk failed — ejected drive, lost
-    /// permission, a sync folder that went away. Surfaced in the footer
-    /// so the user is never told everything is fine while nothing is
-    /// actually being saved.
     @Published private(set) var saveFailed: Bool = false
 
     // MARK: Find
     @Published var showFind: Bool = false
     @Published var findQuery: String = "" {
         didSet {
-            // Only react while find is open. When the bar is torn down,
-            // the text field resigns focus and writes its value back
-            // through the binding; Swift's didSet fires even on an equal
-            // write, which would otherwise re-highlight the just-cleared
-            // match after closeFind().
             guard didLoad, showFind else { return }
             recomputeMatches(resetIndex: true)
         }
     }
-    /// Number of matches for the current query (0 when none / empty).
     @Published private(set) var findMatchCount: Int = 0
-    /// 1-based index of the current match for display ("3 / 12").
-    /// 0 when there are no matches.
     @Published private(set) var findCurrentDisplayIndex: Int = 0
-    /// Token + range driving the highlight in MinimalTextEditor — same
-    /// pattern as scrollToken/scrollTarget. A zero-length range clears.
     @Published var findHighlightToken: Int = 0
     private(set) var findHighlightRange = NSRange(location: 0, length: 0)
-    /// A clicked reminder's line, to scroll to and highlight once.
     @Published private(set) var reminderFlashToken: Int = 0
     private(set) var reminderFlashRange = NSRange(location: 0, length: 0)
     private var findMatches: [NSRange] = []
     private var findIndex = 0
 
-    /// AppDelegate replaces this with the real Carbon-registration
-    /// attempt. Returns nil on success or a user-facing error message
-    /// if registration was rejected (typically because the combo is
-    /// already in use system-wide). Default is a no-op so this is
-    /// always callable.
-    /// The editor showing the note, once there is one.
     weak var editor: NoteEditor?
 
     private static let placeholders = [
@@ -132,14 +92,12 @@ final class EditorModel: ObservableObject {
             UserDefaults.standard.set(fontSize.rawValue, forKey: "wisp.FontSize")
         }
     }
-    @Published var fontFace: FontFace = .charter {
+    @Published var fontFace: FontFace = .sanFrancisco {
         didSet {
             guard didLoad else { return }
             UserDefaults.standard.set(fontFace.rawValue, forKey: "wisp.FontFace")
         }
     }
-    /// Close the panel when the user clicks anywhere outside it. Off by
-    /// default so nobody's habits change on update. Persisted.
     @Published var dismissOnOutsideClick: Bool = false {
         didSet {
             guard didLoad else { return }
@@ -147,12 +105,8 @@ final class EditorModel: ObservableObject {
             onDismissPreferenceChange?()
         }
     }
-    /// PanelController subscribes so it can start or stop the global
-    /// monitor when the preference flips while the panel is open.
     var onDismissPreferenceChange: (@MainActor () -> Void)?
 
-    /// Open the panel on whichever screen the pointer is on, rather
-    /// than where it was left. Off by default. Persisted.
     @Published var opensOnPointerScreen: Bool = false {
         didSet {
             guard didLoad else { return }
@@ -160,20 +114,15 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    /// System Settings → Accessibility → Display → Reduce transparency.
-    /// Overrides the Transparency menu while it's on.
     @Published private(set) var reduceTransparency =
         NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
         didSet { onChromeChange?() }
     }
 
-    /// What's actually drawn: the user's choice, unless the system has
-    /// asked for no transparency at all.
     var effectiveTransparency: Transparency {
         reduceTransparency ? .off : transparency
     }
 
-    /// How much of the desktop shows through. Persisted.
     @Published var transparency: Transparency = .subtle {
         didSet {
             guard didLoad else { return }
@@ -181,7 +130,6 @@ final class EditorModel: ObservableObject {
             onChromeChange?()
         }
     }
-    /// User-facing choice: light, dark, or follow-system. Persisted.
     @Published var themePreference: ThemePreference = .system {
         didSet {
             guard didLoad else { return }
@@ -190,24 +138,14 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    /// Resolved theme actually used for rendering. Driven by
-    /// themePreference, or — when preference is .system — by the OS
-    /// appearance via the KVO observer below.
     @Published private(set) var theme: WispTheme = .dark {
         didSet {
             onChromeChange?()
         }
     }
 
-    /// PanelController subscribes to this so it can apply chrome changes
-    /// (visualEffect material, tint color, panel appearance) when the
-    /// theme or the transparency changes. SwiftUI handles its own
-    /// re-render via @Published.
     var onChromeChange: (@MainActor () -> Void)?
 
-    /// KVO observer that re-resolves the theme when the OS switches
-    /// between Light and Dark while the user is on .system. Held strong
-    /// so the observation stays alive for the model's lifetime.
     private var appearanceObservation: NSKeyValueObservation?
     private var accessibilityObserver: NSObjectProtocol?
 
@@ -215,19 +153,8 @@ final class EditorModel: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var wordCountTask: Task<Void, Never>?
     private var noticeTask: Task<Void, Never>?
-    /// Set true while we're rewriting `text` from a disk reload — the
-    /// `text.didSet` save trigger checks this so we don't immediately
-    /// re-save the content we just loaded.
     private var isReloading = false
-    /// mtime of the file the last time we successfully loaded from
-    /// disk. Drives reloadFromDiskIfChanged so we only re-read when
-    /// the file has actually moved on (e.g., another Mac wrote to it
-    /// via iCloud sync).
     private var lastLoadedMTime: Date?
-    /// Text last successfully written to disk. Two jobs: it is the
-    /// "before" side of the snapshot big-shrink guard, and it tells us
-    /// what the file holds, so a disk reload can never discard edits
-    /// that haven't been saved yet.
     private var lastSavedText: String = ""
 
     init() {
@@ -267,15 +194,11 @@ final class EditorModel: ObservableObject {
         let hasSeenTour = UserDefaults.standard.bool(forKey: "wisp.HasSeenFirstRunTour")
         showFirstRunHint = !hasSeenTour
         if hasSeenTour {
-            // Someone who updated into this. Anything they've not been
-            // shown gets flagged on the `?`.
             newTips = Tips.unseen(
                 since: UserDefaults.standard.string(forKey: Tips.seenKey)
             )
             hasUnseenTips = !newTips.isEmpty
         } else {
-            // Fresh install: the tour covers the basics and the help
-            // overlay is already current, so nothing here is "new".
             UserDefaults.standard.set(Tips.version, forKey: Tips.seenKey)
         }
         let url = StorageLocation.currentURL
@@ -283,31 +206,20 @@ final class EditorModel: ObservableObject {
             text = loaded
             lastSavedText = loaded
             lastLoadedMTime = Self.fileMTime(at: url)
-            // A line ticked or deleted while Wisp wasn't running cancels
-            // its reminder now, not on the next local edit.
             ReminderStore.shared.loaded(loaded)
         } else {
-            // Nothing readable. In a sync folder that usually means
-            // iCloud is still holding the file in the cloud — ask for
-            // it now and pick it up on a later panel open.
             StorageLocation.startDownloadIfPlaceholder()
         }
         placeholder = Self.placeholders.randomElement() ?? Self.placeholders[0]
         wordCountTask?.cancel()
         wordCount = Self.countWords(text)
         didLoad = true
-        // Preserve the loaded content as a session-start snapshot
-        // (deduped) so each launch is a recoverable point.
         let loadedText = text
         Task.detached(priority: .background) {
             Snapshots.recordCheckpoint(text: loadedText)
         }
     }
 
-    /// Called when the panel is dismissed — a natural "I'm done for
-    /// now" boundary. Flushes the debounced save before checkpointing:
-    /// without that, re-summoning inside the debounce window reloads
-    /// the *previous* save off disk and the last keystrokes vanish.
     func saveAndCheckpoint() {
         saveNow()
         let snapshot = text
@@ -316,13 +228,8 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    /// Whether a panel-open should pull the file back into the editor.
-    /// Pure and public so the rule that once cost people their last
-    /// keystrokes is pinned by tests.
     enum ReloadDecision: Equatable {
-        /// The file hasn't moved on since we last read or wrote it.
         case skipNotNewer
-        /// The file changed, but we're holding edits it doesn't have.
         case skipUnsavedEdits
         case reload
     }
@@ -334,20 +241,10 @@ final class EditorModel: ObservableObject {
         lastSavedText: String
     ) -> ReloadDecision {
         if let last = lastLoadedMTime, fileMTime <= last { return .skipNotNewer }
-        // saveNow() keeps lastSavedText in step with the file, so a
-        // mismatch here means we hold work the file doesn't. Local
-        // edits win: losing what someone just typed is worse than
-        // missing a remote change we'll pick up on the next open.
         guard text == lastSavedText else { return .skipUnsavedEdits }
         return .reload
     }
 
-    /// Re-read scratchpad.md from disk if its modification time has
-    /// advanced since we last loaded it. Called on every panel-open so
-    /// changes from another Mac (via iCloud Drive / Dropbox / etc.)
-    /// show up the next time the user summons Wisp. Mid-session writes
-    /// to the file from outside Wisp aren't observed (no file watcher
-    /// — kept intentionally simple).
     func reloadFromDiskIfChanged() {
         let url = StorageLocation.currentURL
         guard let mtime = Self.fileMTime(at: url) else {
@@ -376,19 +273,10 @@ final class EditorModel: ObservableObject {
         }
         lastSavedText = loaded
         lastLoadedMTime = mtime
-        // A line deleted on another Mac cancels its reminder here; a
-        // reminder line written there is never set here.
         ReminderStore.shared.loaded(loaded)
     }
 
-    /// Replace the in-memory text with a freshly chosen content (e.g.,
-    /// after switching to a folder that already contained a synced
-    /// scratchpad). Suppresses the auto-save that would otherwise fire
-    /// from `text.didSet`, so we don't bounce-write what we just read.
     func adoptLoadedText(_ newText: String) {
-        // "Use Existing" sets this note aside for a synced one — moved to
-        // a backup, not deleted — so its reminders keep firing, as when
-        // filed to the Inbox. Lines the synced note shares stay set.
         if newText != text { ReminderStore.shared.archive(noteText: text, keeping: newText) }
         isReloading = true
         text = newText
@@ -421,32 +309,6 @@ final class EditorModel: ObservableObject {
         requestFocus()
     }
 
-    /// File the note into the Inbox and start with a clean pad. Returns
-    /// false when there was nothing worth filing.
-    @discardableResult
-    func archiveToInbox() -> Bool {
-        let current = text
-        guard Inbox.isWorthArchiving(current) else { return false }
-        do {
-            try Inbox.archive(text: current)
-        } catch {
-            saveFailed = true
-            return false
-        }
-        // The archived copy also goes to history, so an accidental
-        // archive is recoverable from the same place as everything else.
-        Snapshots.recordCheckpoint(text: current)
-        // Reminders filed with the note keep firing — including one on
-        // the line being written, so finish that first.
-        editor?.finishEditing()
-        ReminderStore.shared.archive(noteText: text)
-        text = ""
-        saveNow()
-        requestFocus()
-        showNotice("Filed to Inbox")
-        return true
-    }
-
     func showNotice(_ message: String) {
         noticeTask?.cancel()
         notice = message
@@ -457,7 +319,12 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    private nonisolated static let taskMarker = try! NSRegularExpression(pattern: #"(?m)^[ \t]*[-*+] \[[ xX]\]"#)
+
     nonisolated static func countWords(_ text: String) -> Int {
+        // A task's `[x]` is a checkbox, not a word.
+        let text = taskMarker.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         var count = 0
         text.enumerateSubstrings(in: text.startIndex..., options: [.byWords, .substringNotRequired]) { _, _, _, _ in
             count += 1
@@ -480,14 +347,7 @@ final class EditorModel: ObservableObject {
         _ = resolved
     }
 
-    /// The notification's Done button: tick the reminder's line off.
-    /// Through the editor when there is one, so it's one undoable edit
-    /// and the caret stays put; otherwise straight into the note. Saved
-    /// at once — Wisp may be in the background, and nothing else will
-    /// prompt a save soon.
     func markReminderDone(id: String) {
-        // The panel may have been closed for hours: pick up anything
-        // another Mac or editor wrote since, or saving would undo it.
         reloadFromDiskIfChanged()
         guard let reminder = ReminderStore.shared.reminder(id: id),
               let range = ReminderStore.shared.locate(reminder, in: text) else { return }
@@ -498,8 +358,6 @@ final class EditorModel: ObservableObject {
         saveNow()
     }
 
-    /// Scroll to a clicked reminder's line and highlight it once. Does
-    /// nothing when the line is gone — filed to the Inbox, or deleted.
     func showReminder(id: String) {
         guard let reminder = ReminderStore.shared.reminder(id: id),
               let range = ReminderStore.shared.locate(reminder, in: text) else { return }
@@ -567,9 +425,6 @@ final class EditorModel: ObservableObject {
         placeholder = Self.placeholders.randomElement() ?? Self.placeholders[0]
     }
 
-    /// Opening the help is what marks tips seen — that's the moment
-    /// they're in front of the user. `newTips` is deliberately left
-    /// alone so the group stays on screen for this session.
     func openHelp() {
         showHelp = true
         guard hasUnseenTips else { return }
@@ -591,26 +446,17 @@ final class EditorModel: ObservableObject {
         UserDefaults.standard.set(true, forKey: "wisp.HasSeenFirstRunTour")
     }
 
-    /// Force a synchronous flush — call from applicationWillTerminate so an
-    /// in-flight debounced save isn't lost when the user quits.
     func flushSave() {
         saveNow()
         Snapshots.recordCheckpoint(text: text)
     }
 
-    /// The one place that writes the scratchpad. Cancels any pending
-    /// debounced save, preserves the old version if this write would
-    /// collapse it, and — crucially — records the resulting mtime.
-    /// Skipping that last step is what made our own writes look like
-    /// somebody else's to reloadFromDiskIfChanged.
     func saveNow() {
         saveTask?.cancel()
         saveTask = nil
         guard didLoad else { return }
         let newText = text
         guard newText != lastSavedText || saveFailed else { return }
-        // The old version goes to history first, while it still exists
-        // on disk — this is the accidental select-all-and-type case.
         Snapshots.recordOnSave(old: lastSavedText, new: newText)
         do {
             try Self.write(newText)
@@ -618,14 +464,8 @@ final class EditorModel: ObservableObject {
             lastLoadedMTime = Self.fileMTime(at: StorageLocation.currentURL)
             saveFailed = false
         } catch {
-            // Keep lastSavedText untouched: the text stays "unsaved",
-            // so the next change retries and a reload can't overwrite
-            // it with the stale copy on disk.
             saveFailed = true
         }
-        // Even if the write failed: a reminder whose line was deleted,
-        // ticked or changed is cancelled; one that comes back soon after
-        // is revived.
         ReminderStore.shared.reconcile(noteText: newText)
     }
 
@@ -650,9 +490,7 @@ final class EditorModel: ObservableObject {
 
 struct EditorView: View {
     @ObservedObject var model: EditorModel
-    /// Shown in the help overlay: the shortcut that opens the scratchpad.
     var hotKeyDisplay: String = ""
-    /// The island shows the headings in its own top row instead.
     var showsHeader = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -686,10 +524,6 @@ struct EditorView: View {
                     .padding(.horizontal, 10)
                     .padding(.top, 2)
                     if model.text.isEmpty {
-                        // Laid out to land exactly where the caret is: in
-                        // the same centred column as the text, and pushed
-                        // down by the extra leading the text view puts
-                        // above its first line.
                         Text(model.placeholder)
                             .font(Font(editorFont as CTFont))
                             .foregroundStyle(.tertiary)
@@ -702,8 +536,6 @@ struct EditorView: View {
                     }
                 }
                 if !showsHeader {
-                    // Everything: in the island the headings run along the
-                    // bottom; the count sits in the island's top row.
                     HeaderBar(headings: model.headings) { heading in
                         model.jumpTo(heading)
                     }
@@ -764,9 +596,6 @@ struct EditorView: View {
         MinimalTextEditor.makeFont(face: model.fontFace, size: model.fontSize.pointSize)
     }
 
-    /// The text view sets its lines at `lineHeightMultiple`, and the
-    /// extra height goes above each line's glyphs — the first line
-    /// included.
     private var firstLineLead: CGFloat {
         let natural = NSLayoutManager().defaultLineHeight(for: editorFont)
         return (natural * (MarkdownStyler.lineHeightMultiple - 1)).rounded()
@@ -776,8 +605,6 @@ struct EditorView: View {
         .spring(response: 0.3, dampingFraction: 0.9)
     }
 
-    /// Overlays settle in with a slight scale, or simply fade when the
-    /// system asks for reduced motion.
     private var overlayTransition: AnyTransition {
         reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98))
     }

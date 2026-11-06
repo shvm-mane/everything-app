@@ -6,13 +6,6 @@ import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct MediaSettings: View {
-    var body: some View {
-        MediaWorkspaceView(compact: false)
-            .padding(16)
-    }
-}
-
 struct PanelMediaView: View {
     var onClose: () -> Void
 
@@ -121,9 +114,6 @@ struct MediaWorkspaceView: View {
     @State private var profileName = ""
     @State private var imageMoreOptionsExpanded = false
     @State private var isImportingVideo = false
-    /// Read once per chosen file. Loading it in the body meant decoding the
-    /// logo from disk on every redraw, so dragging the opacity slider was
-    /// re-reading a file for each frame.
     @State private var watermarkLogo: NSImage?
 
     var compact: Bool
@@ -452,8 +442,6 @@ struct MediaWorkspaceView: View {
                 if imageMoreOptionsExpanded {
                     VStack(alignment: .leading, spacing: 10) {
                         imageProfileRow
-                        // PDF output never carries EXIF (the image is re-encoded
-                        // into the document), so the toggle would be a dead control.
                         if MediaImageFormat.sanitized(imageFormatRaw) != .pdf {
                             Toggle(l10n.s.mediaStripMetadata, isOn: $imageStripMetadata)
                                 .toggleStyle(.checkbox)
@@ -1057,8 +1045,6 @@ struct MediaWorkspaceView: View {
     }
 
     private func integerField(_ label: String, value: Binding<Int>, suffix: String) -> some View {
-        // Wider than the trim fields: this label is a phrase in most languages,
-        // not a single word.
         numberField(label, suffix: suffix, labelWidth: compact ? 74 : 92) {
             TextField("", value: value, formatter: Self.megabytesFormatter)
         }
@@ -1249,8 +1235,6 @@ struct MediaWorkspaceView: View {
         case .videoCompressor: return l10n.s.mediaStartVideo
         case .gifMaker: return l10n.s.mediaStartGIF
         case .imageCompressor:
-            // Choosing PDF changes the file's kind, so the button says what
-            // will actually happen instead of promising compression.
             return MediaImageFormat.sanitized(imageFormatRaw) == .pdf
                 ? l10n.s.mediaStartConvertPDF
                 : l10n.s.mediaStartImage
@@ -1324,15 +1308,6 @@ struct MediaWorkspaceView: View {
         }
     }
 
-    /// The hosts of this view (menu popover, quick launcher) never activate
-    /// the app, and a modal file dialog in an inactive app takes no clicks or
-    /// keys (only Cancel reacts). Activate first and let the run loop turn so
-    /// the activation lands before the modal session starts, then hand key
-    /// focus back to the launcher.
-    /// One dialog at a time: the modal now starts a run-loop turn after the
-    /// click, so a double-click (or clicking both pickers quickly) would queue
-    /// a second identical dialog behind the first without this guard.
-    /// While it is set, the island keeps its working surface open.
     private(set) static var panelModalActive = false
 
     private static func runPanelModal(_ panel: NSSavePanel,
@@ -1341,21 +1316,14 @@ struct MediaWorkspaceView: View {
         panelModalActive = true
         if let island = NotchService.shared.presentationWindow, island.isVisible,
            NSApp.currentEvent?.window === island || NSApp.keyWindow === island {
-            // The island floats above the modal panel level, so an
-            // application-modal dialog would open behind it, and a sheet
-            // moves/reskins the borderless island. Open it on its own,
-            // just above the island.
             panel.level = NSWindow.Level(rawValue: island.level.rawValue + 1)
-            // Like the sheet it replaces, it stays up while another app is active.
             panel.hidesOnDeactivate = false
             panel.begin { response in
                 panelModalActive = false
-                // Dismissal restores the previous key window after this callback.
                 DispatchQueue.main.async { if NotchService.shared.expanded { island.makeKey() } }
                 completion(response)
             }
             NSApp.activate(ignoringOtherApps: true)
-            // Activation alone can leave the nonactivating island holding focus.
             panel.makeKeyAndOrderFront(nil)
             return
         }
@@ -1440,8 +1408,6 @@ struct MediaWorkspaceView: View {
         workspace.durationLoading.cancel()
         if replacingInput {
             workspace.durationLoading.reset()
-            // Zero means the full recording until its actual duration arrives.
-            // Never leave a previous input's saved trim on a newly chosen file.
             if tool == .videoCompressor { videoStart = 0; videoEnd = 0 }
             else if tool == .gifMaker { gifStart = 0; gifEnd = 0 }
         }
@@ -1696,8 +1662,6 @@ struct MediaWorkspaceView: View {
 
     private func applyImageOptions(_ options: MediaImageOptions) {
         imageQuality = options.quality
-        // Older profiles can carry the previously clamped legacy field;
-        // resizeMode remains authoritative for the value the user selected.
         imageMaxDimension = options.resizeMode.maxDimension
         imageFormatRaw = options.format.rawValue
         imageStripMetadata = options.stripMetadata
@@ -1724,8 +1688,6 @@ struct MediaWorkspaceView: View {
         pasteboard.setString(text, forType: .string)
     }
 
-    /// A size target is typed rather than stepped, so the formatter is what
-    /// keeps it a whole number the planner can work with.
     private static let megabytesFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .none

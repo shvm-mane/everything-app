@@ -24,8 +24,6 @@ enum NotchTimerRulerScale {
         (Double(minute) - Double(selected)) * spacing
     }
 
-    /// Keep the ruler filled near either end instead of centering a short
-    /// duration over an empty half. The inset fits the hour labels as well.
     static func selectionX(selected: Int, width: Double) -> Double {
         guard width.isFinite, width > 0 else { return 0 }
         let inset = min(24, width / 2)
@@ -43,7 +41,6 @@ enum NotchTimerRulerScale {
     }
 }
 
-/// Preferences describe the next cycle; a running cycle owns an immutable copy.
 struct NotchPomodoroConfiguration: Equatable {
     static let focusRange = 1...180
     static let breakRange = 1...60
@@ -72,30 +69,6 @@ struct NotchPomodoroConfiguration: Equatable {
     }
 }
 
-/// Every value accepted by the saved configuration remains selectable.
-enum NotchPomodoroOption: CaseIterable, Identifiable {
-    case focus, shortBreak, longBreak, longBreakInterval, totalSessions
-    var id: Self { self }
-
-    var range: ClosedRange<Int> {
-        switch self {
-        case .focus: return NotchPomodoroConfiguration.focusRange
-        case .shortBreak, .longBreak: return NotchPomodoroConfiguration.breakRange
-        case .longBreakInterval, .totalSessions: return NotchPomodoroConfiguration.sessionRange
-        }
-    }
-
-    var isDuration: Bool {
-        switch self {
-        case .focus, .shortBreak, .longBreak: return true
-        case .longBreakInterval, .totalSessions: return false
-        }
-    }
-}
-
-/// The anchor is an injected, continuous time coordinate: a countdown's
-/// deadline, or the instant a stopwatch read zero. UI refreshes and delayed
-/// callbacks never subtract ticks, so sleep and busy frames cannot drift.
 struct NotchTimerSession: Equatable {
     private(set) var mode: NotchTimerMode = .timer
     private(set) var phase: NotchTimerPhase = .timer
@@ -117,7 +90,6 @@ struct NotchTimerSession: Equatable {
         min(configuration.totalSessions, completedFocuses + (phase == .focus && !completed ? 1 : 0))
     }
 
-    /// Seconds left in a countdown, or elapsed on a stopwatch.
     func reading(at now: TimeInterval) -> TimeInterval {
         if let anchor { return max(0, countsUp ? now - anchor : anchor - now) }
         return pausedReading ?? (completed || countsUp ? 0 : duration)
@@ -171,8 +143,6 @@ struct NotchTimerSession: Equatable {
         phase == .focus ? (completedFocuses.isMultiple(of: configuration.longBreakInterval) ? .longBreak : .shortBreak) : .focus
     }
 
-    /// A new phase always starts by an explicit action. Returning from a long
-    /// sleep cannot silently complete work/break cycles the user never took.
     mutating func startNext(at now: TimeInterval) {
         guard canStartNext, now.isFinite else { return }
         phase = nextPhase
@@ -186,9 +156,6 @@ struct NotchTimerSession: Equatable {
 }
 
 enum NotchTimerSupport {
-    /// Hiding the countdown never disables the session or its completion
-    /// alerts, and a finished timer shows in the closed island until it is
-    /// dismissed. The expanded timer page remains available.
     static func showsActivity(_ session: NotchTimerSession, in defaults: UserDefaults = .standard) -> Bool {
         session.hasSession && isEnabled(in: defaults)
             && (session.completed || !defaults.bool(forKey: DefaultsKey.notchHideTimerCountdown))
@@ -204,26 +171,14 @@ enum NotchTimerSupport {
             && NotchSupport.modules(in: defaults).contains(.timer)
     }
 
-    /// The modes read as three words in a row, the current one underlined,
-    /// each as wide as its text, where a full top row leaves them room;
-    /// beside a camera they are a menu named by the current one, its chevron
-    /// `menuSpacing` from the name. The test measures both in every language.
     enum ModePicker {
         static let height: CGFloat = 24
         static let spacing: CGFloat = 14
         static let labelSize: CGFloat = 12
         static let labelPadding: CGFloat = 4
         static let menuSpacing: CGFloat = 3
-        /// macOS 15 draws Japanese kana about 4% wider than macOS 26, so the
-        /// stopwatch's name needs about 0.74 of its size beside the widest
-        /// camera there.
         static let menuMinimumScale: CGFloat = 0.7
 
-        /// Whether the menu beside the camera can name the current mode in
-        /// `room`: every mode's name, so choosing another never changes how
-        /// the menu reads, at the minimum scale with macOS 15's wider kana.
-        /// Where the sections button leaves less, the menu shows the mode's
-        /// glyph instead of cutting its name.
         static func menuNamesFit(_ names: [String], in room: CGFloat) -> Bool {
             let font = NSFont.systemFont(ofSize: labelSize, weight: .medium)
             let widest = names.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
@@ -232,21 +187,15 @@ enum NotchTimerSupport {
             return widest * menuMinimumScale * 1.05 + menuSpacing + chevron + labelPadding * 2 <= room
         }
 
-        /// The glyph a menu with no room for the name shows: the closed
-        /// island's own, a countdown's timer or the stopwatch.
         static func symbol(for mode: NotchTimerMode) -> String { mode == .stopwatch ? "stopwatch" : "timer" }
     }
 
-    /// The start capsule in the top row; the test measures it against a side
-    /// beside the camera, with the pin, in every language.
     enum StartButton {
         static let labelSize: CGFloat = 12
         static let padding: CGFloat = 10
     }
 
     static let timerLimit: TimeInterval = 180 * 60
-    /// A stopwatch keeps counting; its clock saturates at the widest reading
-    /// the surface fits, two hour digits.
     static let stopwatchLimit: TimeInterval = 100 * 3600 - 1
 
     static func timerMinutes(_ value: Int) -> Int { min(180, max(1, value)) }
@@ -271,14 +220,10 @@ enum NotchTimerSupport {
         clockText(seconds: wholeSeconds(remaining, limit: timerLimit, rounded: .up))
     }
 
-    /// Elapsed time never rounds up: a stopwatch cannot show a second that
-    /// has not passed yet.
     static func stopwatchText(_ elapsed: TimeInterval) -> String {
         clockText(seconds: wholeSeconds(elapsed, limit: stopwatchLimit, rounded: .down))
     }
 
-    /// Hours read as "1h35", never "1:35", which beside the minute clock
-    /// would pass for one minute and thirty five seconds.
     static func hoursText(hours: Int, minutes: Int) -> String {
         String(format: "%dh%02d", hours, minutes)
     }
@@ -288,8 +233,6 @@ enum NotchTimerSupport {
         return hoursText(hours: seconds / 3600, minutes: seconds / 60 % 60)
     }
 
-    /// The compact strip keeps a stopwatch's seconds, the reading that shows
-    /// it is alive, until hours take their place.
     static func compactStopwatchText(_ elapsed: TimeInterval) -> String {
         let seconds = wholeSeconds(elapsed, limit: stopwatchLimit, rounded: .down)
         return seconds >= 3600 ? hoursText(hours: seconds / 3600, minutes: seconds / 60 % 60) : clockText(seconds: seconds)
@@ -299,10 +242,6 @@ enum NotchTimerSupport {
         session.countsUp ? stopwatchText(session.reading(at: now)) : clockText(session.reading(at: now))
     }
 
-    /// What a clock's digits roll on. The closed island can show a clock for
-    /// hours, and rolling every second kept it animating a third of the time,
-    /// at about ten times the energy of a clock that changes in place. There
-    /// the seconds change in place and the rest rolls: "12:04" rolls as "12".
     static func rollingValue(_ value: String, everySecond: Bool) -> String {
         guard !everySecond, let colon = value.lastIndex(of: ":") else { return value }
         return String(value[..<colon])
@@ -314,9 +253,6 @@ enum NotchTimerSupport {
         return reading >= 3600 ? compactHoursText(reading) : compactText(reading, locale: locale)
     }
 
-    /// Seconds until the reading next crosses a whole second. A tick every
-    /// second from there lands just after each change; ticks spaced from the
-    /// display refresh instead drift across a boundary and skip a value.
     static func secondBoundaryOffset(for session: NotchTimerSession, at now: TimeInterval) -> TimeInterval {
         let reading = session.reading(at: now)
         guard reading.isFinite else { return 0 }
@@ -325,10 +261,6 @@ enum NotchTimerSupport {
         return offset > 0 ? offset : 1
     }
 
-    /// Start of the periodic schedule that ticks the clock, relative to now.
-    /// A timeline renders its first entry at once and wakes only at the next,
-    /// so the schedule starts at the boundary already behind the reading: the
-    /// entry that fires is the boundary ahead, never one skipped past.
     static func tickScheduleOffset(for session: NotchTimerSession, at now: TimeInterval) -> TimeInterval {
         secondBoundaryOffset(for: session, at: now) - 1
     }
@@ -344,29 +276,20 @@ enum NotchTimerSupport {
 
     // MARK: Strip
 
-    /// A wing is never narrower than the music strip's; the longest readings
-    /// keep the width the strip always had.
     static let stripWingRange: ClosedRange<CGFloat> = 44...64
-    /// Air between the camera and what sits beside it.
     static let stripCameraGap: CGFloat = 6
 
     static func stripTextSize(height: CGFloat) -> CGFloat { min(16, height - 6) }
 
-    /// Everything: the shortest the countdown bar gets, so a short time
-    /// like "5m" still has a bar worth reading.
     static let barMinimumWidth: CGFloat = 40
 
-    /// Everything: the reading sits as far from the island's end as the mark
-    /// opposite it does, so both sides of the camera balance.
     static func readingInset(_ geometry: NotchGeometry) -> CGFloat {
         guard !geometry.compactActivityUsesFooter else { return 0 }
         let height = geometry.compactActivityContentHeight
         let text = geometry.compactActivityEdgeInset(boxHeight: stripTextSize(height: height) * 0.72, radius: 0)
         let icon = stripIconSize(height: height)
-        // Plus a little air: digits right at the curve read as touching it.
         return max(text, geometry.compactActivityEdgeInset(boxHeight: icon, radius: icon / 2)) + 4
     }
-    /// The mark takes the strip's height less an even gap above and below.
     static func stripIconSize(height: CGFloat) -> CGFloat { min(20, height - NotchLayout.compactEdgeGap * 2) }
     static func stripAgentMarkSize(height: CGFloat, working: Int) -> CGFloat {
         min(working > 1 ? 11 : 14, max(8, height - NotchLayout.compactEdgeGap * 2 - 4))

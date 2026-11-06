@@ -3,10 +3,6 @@
 
 import Foundation
 
-/// Reads the append-only event log Copilot CLI and the GitHub Copilot app
-/// share. Only session context, turn boundaries and cumulative model
-/// counters are decoded; prompts, replies, reasoning and tool arguments are
-/// ignored.
 struct CopilotReader: AgentHarnessReader {
     var provider: AgentProvider { .copilot }
 
@@ -17,8 +13,6 @@ struct CopilotReader: AgentHarnessReader {
               AgentLogParser.copilotEvent(type), let data = envelope.object("data") else { return [] }
         let agent = envelope.string("agentId").flatMap { $0.isEmpty ? nil : $0 }
         let root = agent == nil
-        // Subagents share the root log. Their responses count as activity,
-        // but their lifecycle and model changes never change the root task.
         guard root || type == "assistant.message" else { return [] }
         let date = AgentLogParser.timestamp(envelope.value("timestamp")) ?? now
         switch type {
@@ -30,15 +24,11 @@ struct CopilotReader: AgentHarnessReader {
             state.turnOpen = true
             return [entry, .turnContext(model: state.model, project: state.project)]
         case "assistant.message":
-            // A subagent can choose a different model; missing metadata is
-            // unknown, not evidence that it used the root's selected model.
             let model = data.string("model").flatMap { $0.isEmpty ? nil : AgentLogParser.native($0) } ?? (root ? state.model : "")
             var entries = copilotActivity(data, envelope: envelope, agent: agent, model: model,
                                           date: date, state: &state)
             guard root else { return entries }
             state.model = model
-            // Each tool iteration has its own turn_end. Only an iteration
-            // delivering a final response can finish the person's task.
             state.copilotFinalResponse = !data.hasItems("toolRequests")
                 && !["thinking", "commentary"].contains(data.string("phase") ?? "")
             if state.turnOpen {
@@ -95,9 +85,6 @@ struct CopilotReader: AgentHarnessReader {
         let call = data.string("apiCallId").flatMap { $0.isEmpty ? nil : $0 }
         let message = data.string("messageId").flatMap { $0.isEmpty ? nil : $0 }
             ?? envelope.string("id") ?? String(date.timeIntervalSince1970)
-        // Each API call can emit several messages. Older logs lack apiCallId,
-        // so they retain message-level deduplication. Namespace IDs by kind
-        // and agent so independent calls cannot collide with those fallbacks.
         let request = (agent.map { "agent:\($0)" } ?? "root") + ":"
             + (call.map { "api:\($0)" } ?? "message:\(message)")
         let key = "copilot:\(state.session):\(request):activity"
@@ -133,9 +120,6 @@ struct CopilotReader: AgentHarnessReader {
         let unresolved = state.copilotRequests["", default: 0]
         var missing = max(0, deficits.reduce(0) { $0 + $1.count } - unresolved)
         var requests: [String: Int] = [:]
-        // Unknown responses can cover any model's deficit, but only once
-        // across the whole session. Attribute only the excess that must be
-        // this model; retain ambiguous requests in the unknown bucket.
         for deficit in deficits {
             let certain = max(0, deficit.count - unresolved)
             requests[deficit.model] = certain

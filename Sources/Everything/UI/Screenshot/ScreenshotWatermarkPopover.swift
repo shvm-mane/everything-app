@@ -4,11 +4,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The watermark picker: a line of text in one of the editor's colors or a
-/// picture from disk, set on one of nine places with size, opacity and tilt
-/// sliders. Everything applies live and is remembered for the next capture,
-/// like the backdrop, and a mark worth keeping goes into the presets row so
-/// switching between a logo and a caption is one click.
 struct ScreenshotWatermarkPopover: View {
     @ObservedObject var model: ScreenshotEditorModel
     @ObservedObject private var l10n = L10n.shared
@@ -64,8 +59,6 @@ struct ScreenshotWatermarkPopover: View {
                 .controlSize(.small)
                 .focused($textFocused)
                 .onAppear {
-                    // A fresh text mark is there to be typed; an existing
-                    // one keeps the keyboard where it was.
                     guard model.watermarkStyle.text.isEmpty else { return }
                     DispatchQueue.main.async { textFocused = true }
                 }
@@ -169,7 +162,6 @@ struct ScreenshotWatermarkPopover: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 38)
-            // A neutral plate keeps both black and white marks legible.
             .background(Color(white: 0.5).opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
@@ -257,16 +249,12 @@ struct ScreenshotWatermarkPopover: View {
     private func sliderLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12))
-            // The column keeps the controls aligned; Russian and Turkish run
-            // past it, so the label gives a little rather than being cut.
             .lineLimit(1)
             .minimumScaleFactor(0.82)
             .frame(width: 80, alignment: .leading)
             .foregroundStyle(isOn ? .secondary : .tertiary)
     }
 
-    /// Nine places instead of a drag, the recorder's grid: it reads at a
-    /// glance and a corner mark stays in its corner whatever the capture.
     private var anchorGrid: some View {
         let rows: [[ScreenshotSupport.WatermarkStyle.Anchor]] = [
             [.topLeading, .top, .topTrailing],
@@ -303,7 +291,6 @@ struct ScreenshotWatermarkPopover: View {
             model.watermarkStyle.kind
         } set: { kind in
             model.watermarkStyle.kind = kind
-            // Choosing a picture mark without a picture yet is asking for one.
             if kind == .image, model.watermarkStyle.imagePath == nil {
                 DispatchQueue.main.async { chooseImage() }
             }

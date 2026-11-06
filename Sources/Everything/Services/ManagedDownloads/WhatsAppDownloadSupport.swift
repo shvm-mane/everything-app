@@ -4,8 +4,6 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// User-facing buckets for confirmed WhatsApp downloads. The raw values are
-/// persisted, so cases may be appended but never renamed.
 enum WhatsAppDownloadCategory: String, CaseIterable, Identifiable {
     case image, video, audio, document, archive, other
 
@@ -24,9 +22,6 @@ enum WhatsAppDuplicateAction: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Pure classification and retention rules for the WhatsApp downloads
-/// manager. Keeping every judgment here makes the destructive boundary easy
-/// to test without touching a real Downloads folder.
 enum WhatsAppDownloadSupport {
     static let allowedRetentionDays = [1, 2, 7, 14, 30]
     static let allowedOrganizerDelayMinutes = [1, 5, 15, 60]
@@ -107,14 +102,6 @@ enum WhatsAppDownloadSupport {
         return age >= 0 && age < organizerUndoLifetime
     }
 
-    /// Whether an organizer move stays on one volume, which is the only case
-    /// where the move is a rename and the destination needs no re-hash.
-    /// `volumeIdentifier` is opaque and only `isEqual` is defined on it, so
-    /// that is what decides here. An unknown identity answers "not the same
-    /// volume": guessing wrong that way only costs a verified copy, while the
-    /// opposite guess would let a real cross-volume copy through unchecked.
-    /// The inverse fallback in `CutPasteProgressSupport.isCrossVolume` is
-    /// deliberate - there an unknown identity only hides a progress bar.
     static func isSameVolume(source: NSObject?, destination: NSObject?) -> Bool {
         guard let source, let destination else { return false }
         return source.isEqual(destination)
@@ -164,9 +151,6 @@ enum WhatsAppDownloadSupport {
         return .other
     }
 
-    /// A file is old enough only when both its download/addition date and its
-    /// latest edit are beyond the retention window. Editing a document in
-    /// place therefore postpones cleanup instead of losing recent work.
     static func isOldEnough(downloadedAt: Date,
                             modifiedAt: Date,
                             now: Date,

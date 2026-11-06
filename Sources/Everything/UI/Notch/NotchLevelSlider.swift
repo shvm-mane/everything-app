@@ -4,28 +4,16 @@
 import AppKit
 import SwiftUI
 
-/// AppKit owns tracking, keyboard input and accessibility; the cell only
-/// draws the larger filled track used by the notch's level controls. The same
-/// control carries the playback position, so every bar in the panel matches.
-/// A vertical one is a fader filling from the bottom; the orientation is set
-/// outright because AppKit fixes it from the frame it first sees, which under
-/// SwiftUI is empty.
 struct NotchLevelSlider: NSViewRepresentable {
     @Binding var value: Double
     let label: String
     var range: ClosedRange<Double> = 0...1
     var tint: Color = .white
     var vertical = false
-    /// A slimmer drawing can retain the native control's full hit area.
     var trackThickness: CGFloat?
-    /// A value worth a tick on the track, such as unity on a fader that boosts.
     var marker: Double?
     var valueLabel: String?
-    /// A level moved from outside, by a key, eases to its new place; the
-    /// playback position and a drag follow at once.
     var easesChanges = false
-    /// A scroll over the bar moves the level; the playback position is not
-    /// scrolled, since each step would seek.
     var scrollable = true
     var onEditingChanged: ((Bool) -> Void)?
 
@@ -79,8 +67,6 @@ struct NotchLevelSlider: NSViewRepresentable {
             let cell = slider.cell as? NotchLevelCell
             let drawn = cell?.drawnValue ?? slider.doubleValue
             slider.doubleValue = bounded
-            // A slider not yet on screen starts at its level rather than
-            // filling up from empty each time the page opens.
             if NotchSliderEasing.eases(enabled: easesChanges,
                                        onScreen: slider.window?.occlusionState.contains(.visible) == true,
                                        reduceMotion: context.environment.accessibilityReduceMotion,
@@ -202,7 +188,6 @@ private final class NotchLevelCell: NSSliderCell {
     var marker: Double?
     var trackThickness: CGFloat?
     var trackingChanged: ((Bool) -> Void)?
-    /// Where the bar is drawn while it eases to the slider's value.
     var drawnValue: Double?
     private(set) var isTracking = false
     private var isFader: Bool { isVertical }
@@ -214,8 +199,6 @@ private final class NotchLevelCell: NSSliderCell {
                 ? bounds.insetBy(dx: max(1, (bounds.width - trackThickness) / 2), dy: 1)
                 : bounds.insetBy(dx: 1, dy: max(1, (bounds.height - trackThickness) / 2))
         }
-        // Proportional so the same control reads as a chunky level bar and as
-        // a slim playback position without a second cell.
         return isFader
             ? bounds.insetBy(dx: max(1, bounds.width * 0.11), dy: 1)
             : bounds.insetBy(dx: 1, dy: max(1, bounds.height * 0.11))

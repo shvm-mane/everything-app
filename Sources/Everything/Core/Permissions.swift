@@ -9,23 +9,13 @@ import CoreGraphics
 import EventKit
 import UserNotifications
 
-/// Central place to check, request and watch the TCC permissions the app uses.
-/// Accessibility powers the scroll inverter and the switcher's event tap;
-/// Screen Recording powers window titles and thumbnails in the switcher.
 final class Permissions: ObservableObject {
     static let shared = Permissions()
 
     @Published private(set) var accessibility = false
     @Published private(set) var screenRecording = false
-    /// Optional — only used to make the uninstaller's scan more thorough by
-    /// reaching protected locations. There is no API prompt for it; the user
-    /// grants it in System Settings.
     @Published private(set) var fullDiskAccess = false
-    /// Refreshed inside refresh() only (launch and activation); notifications
-    /// have no cheap poll and the portal calls refresh() when it appears.
     @Published private(set) var notifications: NotificationPermissionState = .unknown
-    /// Camera access for the preview mirror. The status read is free, so it
-    /// rides the same refresh() moments as the rest.
     @Published private(set) var camera: CameraPermissionState = .unknown
     @Published private(set) var calendarAccess = EKEventStore.authorizationStatus(for: .event)
     @Published private(set) var requestingCalendar = false
@@ -37,8 +27,6 @@ final class Permissions: ObservableObject {
                                             resolvedAt: calendarPermissionResolution,
                                             now: ProcessInfo.processInfo.systemUptime)
     }
-    /// Optional microphone access, used only while a recording that asked for
-    /// it is active.
     @Published private(set) var microphone: MicrophonePermissionState = .unknown
 
     enum NotificationPermissionState {
@@ -61,18 +49,7 @@ final class Permissions: ObservableObject {
 
     private init() {
         refresh()
-        // Watch Accessibility and Screen Recording only while a running
-        // feature or visible permission surface can use the result. One-shot
-        // tools refresh when invoked, so their mere availability must not keep
-        // a timer alive in the background.
-        // Full Disk Access is deliberately NOT polled here: it can only change
-        // across a relaunch (a running process never gains or is meant to lose
-        // it mid-session), and probing it touches protected paths, so polling it
-        // would just be repeated denied accesses for no gain.
         scheduleActivePermissionPolling()
-        // Re-check everything the instant the user returns from System Settings
-        // (e.g. after relaunching for Full Disk Access), so the state reflects
-        // immediately instead of waiting for the next poll.
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                                     object: nil, queue: .main) { [weak self] _ in
             self?.refresh()
@@ -118,8 +95,6 @@ final class Permissions: ObservableObject {
         activePermissionTimer = timer
     }
 
-    /// Visible permission UI owns a stable demand identifier so repeated
-    /// SwiftUI appearances cannot accidentally leave an unbalanced timer.
     func setActivePermissionSurface(_ id: UUID, visible: Bool) {
         if visible {
             permissionSurfaceDemands.insert(id)
@@ -130,17 +105,12 @@ final class Permissions: ObservableObject {
         scheduleActivePermissionPolling()
     }
 
-    /// Full refresh including Full Disk Access. Runs at launch and on activation.
     func refresh() {
         refreshActivePermissions()
         refreshNotificationPermission()
         refreshCameraPermission()
         calendarAccess = EKEventStore.authorizationStatus(for: .event)
         refreshMicrophonePermission()
-        // Checking Full Disk Access means asking the system about protected
-        // folders, and every refused answer costs time. Doing that where the
-        // app is starting up holds back the menu bar icon, so it moves off
-        // and reports back.
         DispatchQueue.global(qos: .utility).async {
             let granted = Self.probeFullDiskAccess()
             DispatchQueue.main.async {
@@ -176,10 +146,6 @@ final class Permissions: ObservableObject {
     }
 
     private func refreshNotificationPermission() {
-        // Asking the system for the notification centre ends the process
-        // outright when it cannot resolve this app, which is what happens
-        // when the bundle is replaced or moved out from under a running copy.
-        // An update does exactly that, so reporting nothing beats dying.
         guard Bundle.main.bundleIdentifier != nil,
               FileManager.default.fileExists(atPath: Bundle.main.bundlePath) else {
             if notifications != .unknown { notifications = .unknown }
@@ -199,23 +165,16 @@ final class Permissions: ObservableObject {
         }
     }
 
-    /// Accessibility and Screen Recording only — free, side-effect-free checks
-    /// suitable for frequent polling.
     private func refreshActivePermissions() {
         let ax = AXIsProcessTrusted()
         let sr = CGPreflightScreenCaptureAccess()
         DispatchQueue.main.async {
             if self.accessibility != ax { self.accessibility = ax }
             if self.screenRecording != sr { self.screenRecording = sr }
-            // A flip can change which cadence applies (e.g. the last grant
-            // landed while the app was in the background).
             self.scheduleActivePermissionPolling()
         }
     }
 
-    /// Protected directories safe to use both as access probes and as
-    /// registration attempts. Request-only paths stay separate because every
-    /// entry here must remain a reliable signal that access was granted.
     private static let fdaGatedDirectories = [
         "Library/Safari",
         "Library/Mail",
@@ -225,16 +184,10 @@ final class Permissions: ObservableObject {
         "Library/Application Support/MobileSync",
     ]
 
-    /// Detects Full Disk Access without a prompt. Reading the TCC database is the
-    /// classic signal, but that file is absent on some macOS versions (so a
-    /// missing file would read as "no access" forever, even once granted). The
-    /// dependable fallback is to list a protected directory that exists: that
-    /// listing is denied without Full Disk Access and succeeds with it.
     private static func probeFullDiskAccess() -> Bool {
         let home = NSHomeDirectory()
         let fm = FileManager.default
 
-        // Preferred when present: the TCC database is readable only with access.
         let tccDB = (home as NSString)
             .appendingPathComponent("Library/Application Support/com.apple.TCC/TCC.db")
         if let handle = FileHandle(forReadingAtPath: tccDB) {
@@ -243,14 +196,10 @@ final class Permissions: ObservableObject {
             if ok { return true }
         }
 
-        // Works on every version: each of these is gated by Full Disk Access, so
-        // a successful listing (even of an empty directory) means it is granted.
         let gatedDirs = fdaGatedDirectories.map { (home as NSString).appendingPathComponent($0) }
         return gatedDirs.contains { (try? fm.contentsOfDirectory(atPath: $0)) != nil }
     }
 
-    /// Shows the system Accessibility prompt (once per TCC reset) and floats
-    /// the little guide card for the System Settings round trip.
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
@@ -260,8 +209,6 @@ final class Permissions: ObservableObject {
         }
     }
 
-    /// Shows the system Screen Recording prompt (once per TCC reset) and
-    /// floats the guide card, like the Accessibility path.
     func requestScreenRecording() {
         CGRequestScreenCaptureAccess()
         refreshActivePermissions()
@@ -270,21 +217,10 @@ final class Permissions: ObservableObject {
         }
     }
 
-    /// Drops this app's entry from the list and asks again. The entry macOS
-    /// keeps is bound to the app's code signature, so a copy signed
-    /// differently (a local build, an update signed another way) finds the
-    /// switch on and the permission gone; nothing short of removing the entry
-    /// makes the system ask afresh. `tccutil` does that for the calling
-    /// user's own entries with no privilege, and is the command Apple
-    /// documents for the purpose.
     func startOver(_ kind: PermissionKind) {
         guard kind == .accessibility || kind == .screenRecording,
               let bundleID = Bundle.main.bundleIdentifier else { return }
         let service = kind == .accessibility ? "Accessibility" : "ScreenCapture"
-        // Off the main thread through the bounded runner, like
-        // `SelfUninstall.resetTCC`: a stuck tccutil must not hang the UI. The
-        // hop back also lets the button's click finish before the card that
-        // holds the button is rebuilt by the new request.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             _ = Shell.run("/usr/bin/tccutil", ["reset", service, bundleID])
             DispatchQueue.main.async {
@@ -311,19 +247,10 @@ final class Permissions: ObservableObject {
         open(pane: "Privacy_FilesAndFolders")
     }
 
-    /// Full Disk Access has no prompt API, and an app only shows up (toggled
-    /// off) in its System Settings list once it has attempted to read a
-    /// protected location. Touch likely protected paths to register the app,
-    /// then open the pane after a short delay so tccd has recorded the denial
-    /// before System Settings reads the list. If it still does not appear, the
-    /// user can add the app with the list's "+" button.
     func requestFullDiskAccess() {
         DispatchQueue.global(qos: .userInitiated).async {
             let home = NSHomeDirectory()
             let fm = FileManager.default
-            // The TCC database is the classic trigger when present. Some macOS
-            // versions omit it, so the protected directories below are the
-            // fallback registration attempts.
             let tccDB = (home as NSString)
                 .appendingPathComponent("Library/Application Support/com.apple.TCC/TCC.db")
             _ = try? Data(contentsOf: URL(fileURLWithPath: tccDB), options: .mappedIfSafe)
@@ -331,20 +258,16 @@ final class Permissions: ObservableObject {
                 _ = try? handle.read(upToCount: 1)
                 try? handle.close()
             }
-            // Protected locations, harmless when absent. The TCC directory is
-            // useful for registration but is not part of the access probe.
             let dirs = (["Library/Application Support/com.apple.TCC"] + Self.fdaGatedDirectories)
                 .map { (home as NSString).appendingPathComponent($0) }
             for path in dirs { _ = try? fm.contentsOfDirectory(atPath: path) }
 
-            // Let tccd persist the denial before the pane loads its list.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                 self.openFullDiskAccessSettings()
             }
         }
     }
 
-    /// Reading calendar events requires full access even though the app never writes them.
     func requestCalendar() {
         guard !requestingCalendar else { return }
         requestingCalendar = true
@@ -407,8 +330,6 @@ final class Permissions: ObservableObject {
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AppBundles")!
         if NSWorkspace.shared.open(pane) { return }
 
-        // A general Privacy & Security page is still useful if a future macOS
-        // version stops accepting the pane identifier.
         let fallback = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
         NSWorkspace.shared.open(fallback)
     }
@@ -428,9 +349,6 @@ final class Permissions: ObservableObject {
         case granted, denied, undetermined, notDeterminable
     }
 
-    /// Never prompts (askUserIfNeeded false). A target that is not running
-    /// cannot be checked and reads as notDeterminable. Call off the main
-    /// thread; the check can block briefly.
     static func automationStatus(for target: AutomationTarget) -> AutomationStatus {
         var descriptor = AEAddressDesc()
         let bundleID = target.rawValue

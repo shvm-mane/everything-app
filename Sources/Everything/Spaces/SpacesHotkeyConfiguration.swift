@@ -1,7 +1,4 @@
 // Ported from InstantSpaceSwitcher (MIT): Hotkeys/HotkeyConfiguration.swift.
-// Changes: preference keys carry an "iss." prefix inside Everything's
-// domain, and the nineteen published properties became one dictionary
-// (same keys, same JSON encoding, same defaults).
 import AppKit
 import ISS
 import Carbon
@@ -286,7 +283,6 @@ enum HotkeyIdentifier: String, CaseIterable {
     }
   }
 
-  /// "iss.hotkey.left" etc. — ISS's own key names under an "iss." prefix.
   var storageKey: String { "iss.hotkey.\(rawValue)" }
   var enabledKey: String { "iss.enabled.\(rawValue)" }
 }
@@ -304,7 +300,6 @@ final class HotkeyStore: ObservableObject {
     reload()
   }
 
-  /// Re-reads everything from defaults (after an import).
   func reload() {
     var combos: [HotkeyIdentifier: HotkeyCombination] = [:]
     var enabled: [HotkeyIdentifier: Bool] = [:]

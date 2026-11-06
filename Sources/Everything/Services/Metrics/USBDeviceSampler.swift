@@ -5,7 +5,6 @@ import Foundation
 import IOKit
 import IOKit.usb
 
-/// An external USB device plugged into the Mac.
 struct ConnectedUSBDevice: Identifiable, Equatable, Hashable {
     let id: String
     let name: String
@@ -15,9 +14,6 @@ struct ConnectedUSBDevice: Identifiable, Equatable, Hashable {
     let locationId: UInt32
 }
 
-/// Samples connected external USB peripherals via IOKit on demand.
-/// Only external, removable devices are reported (built-in peripherals,
-/// internal sensors and root controllers are excluded).
 final class USBDeviceSampler {
     func sample() -> [ConnectedUSBDevice] {
         var devices: [ConnectedUSBDevice] = []
@@ -61,7 +57,6 @@ final class USBDeviceSampler {
         return Self.parseDevice(properties: dict, registryEntryID: entryID)
     }
 
-    /// Pure parser for testability.
     static func parseDevice(properties dict: [String: Any],
                             registryEntryID: UInt64 = 0) -> ConnectedUSBDevice? {
         func isTruthy(_ val: Any?) -> Bool {
@@ -74,12 +69,10 @@ final class USBDeviceSampler {
             return false
         }
 
-        // Exclude built-in / non-removable internal hardware
         if isTruthy(dict["Built-In"]) || isTruthy(dict["non-removable"]) {
             return nil
         }
 
-        // Exclude root controllers and root hubs (vendor 0, product 0)
         let vendorId = (dict[kUSBVendorID as String] as? NSNumber)?.intValue
             ?? (dict["idVendor"] as? NSNumber)?.intValue ?? 0
         let productId = (dict[kUSBProductID as String] as? NSNumber)?.intValue
@@ -88,10 +81,6 @@ final class USBDeviceSampler {
             return nil
         }
 
-        // A physical USB hub can enumerate once per supported bus generation.
-        // It is infrastructure rather than a connected peripheral, so omit it.
-        // So is a billboard device (class 17): USB-C adapters and docks with a
-        // display output add one that only reports whether the display mode worked.
         let deviceClass = (dict["bDeviceClass"] as? NSNumber)?.intValue
         if deviceClass == 9 || deviceClass == 17 {
             return nil
@@ -100,8 +89,6 @@ final class USBDeviceSampler {
         let productString = (dict[kUSBProductString as String] as? String)
             ?? (dict["USB Product Name"] as? String)
             ?? (dict["Product Name"] as? String) ?? ""
-        // Without a product string the registry name is only the class name, so
-        // the name stays empty and the list shows its translated fallback.
         let displayName = productString.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let vendorString = (dict[kUSBVendorString as String] as? String)

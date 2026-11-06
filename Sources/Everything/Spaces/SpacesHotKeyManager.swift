@@ -1,6 +1,4 @@
 // Ported from InstantSpaceSwitcher (MIT): Hotkeys/HotKeyManager.swift.
-// Change: the key-down event tap is installed only while at least one
-// hotkey is registered, so a disabled switcher costs nothing.
 import AppKit
 import ISS
 import Carbon
@@ -103,7 +101,6 @@ final class HotKeyManager {
     CGEvent.tapEnable(tap: eventTap, enable: true)
   }
 
-  /// Without Accessibility the tap cannot be created; try again until it is granted.
   private func scheduleEventTapRetry() {
     guard !retryScheduled else { return }
     retryScheduled = true

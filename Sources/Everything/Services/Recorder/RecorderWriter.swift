@@ -6,24 +6,12 @@ import CoreMedia
 import os.log
 import VideoToolbox
 
-/// Writes the master file a recording produces: the pixels exactly as they
-/// were on screen, plus one track per sound source. Nothing is composited
-/// here and nothing is paced here, so a screen that sits still costs almost
-/// nothing and every decision about how the recording finally looks stays
-/// open until the editor makes it.
-///
-/// Everything except `start()` and `finish()` runs on the session's serial
-/// writer queue. `finish()` is only called once every source has been stopped
-/// and awaited, so no buffer can still be in flight.
 final class RecorderWriter {
-
     private static let preparationQueue = DispatchQueue(label: "com.vorssaint.recorder.prepare",
                                                          qos: .userInitiated)
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "vorssaint",
                                     category: "recorder")
 
-    /// Encoder discovery can wait for VideoToolbox. Keep it off the UI thread
-    /// and return a fully prepared writer before any capture starts.
     static func prepare(url: URL,
                         pixelSize: CGSize,
                         frameRate: Int,
@@ -59,8 +47,6 @@ final class RecorderWriter {
     private var failed = false
     private var loggedInvalidAudio = false
 
-    /// Frames actually written, so a recording that produced nothing can be
-    /// reported as a failure instead of leaving an unplayable file behind.
     private(set) var videoFrameCount = 0
 
     var url: URL { writer.outputURL }
@@ -72,8 +58,6 @@ final class RecorderWriter {
           capturesMicrophone: Bool,
           pauseClock: RecorderPauseClock) {
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mov) else { return nil }
-        // A recording that outlives a crash is worth the few extra bytes a
-        // fragmented file costs.
         writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
 
         let width = Int(pixelSize.width)
@@ -129,9 +113,6 @@ final class RecorderWriter {
 
     // MARK: - Settings
 
-    /// `canApply` accepts HEVC for sizes the machine's encoder then rejects on
-    /// the first frame (-12902 on some Intel Macs for small frames), which
-    /// fails the whole file. Encoding one blank frame is the only reliable test.
     static func hevcEncodes(width: Int, height: Int) -> Bool {
         var session: VTCompressionSession?
         guard VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
@@ -176,8 +157,6 @@ final class RecorderWriter {
             AVVideoAverageBitRateKey: bitRate,
             AVVideoExpectedSourceFrameRateKey: frameRate,
             AVVideoMaxKeyFrameIntervalDurationKey: RecorderSupport.takeQuality.keyframeSeconds,
-            // No reordering: screen content gains little from it and the
-            // editor scrubs a file without B-frames far more smoothly.
             AVVideoAllowFrameReorderingKey: false,
         ]
         if codec == .h264 {
@@ -232,8 +211,6 @@ final class RecorderWriter {
 
         switch kind {
         case .video:
-            // Hold the first captured image over startup latency. Keep the
-            // shared origin and every later timestamp so audio stays aligned.
             let videoTime: CMTime = videoFrameCount == 0 ? .zero : shifted
             guard videoInput.isReadyForMoreMediaData else { return .notReady }
             guard let retimed = RecorderSampleTiming.retimed(sampleBuffer, to: videoTime)
@@ -286,8 +263,6 @@ final class RecorderWriter {
         Self.log.error("Dropping invalid or unsupported recorder audio from \(String(describing: kind), privacy: .public)")
     }
 
-    /// Give the encoder consistent Float32 PCM, including integer and mono
-    /// inputs. Preserve the device's timing, sample rate and channel layout.
     static func interleavedAudioSample(_ sample: CMSampleBuffer,
                                        converter: inout AVAudioConverter?) -> CMSampleBuffer? {
         let sampleCount = CMSampleBufferGetNumSamples(sample)
@@ -302,8 +277,6 @@ final class RecorderWriter {
         let (byteCount, overflow) = count.multipliedReportingOverflow(by: asbd.mBytesPerFrame)
         guard !overflow else { return nil }
         let planar = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
-        // A CMBlockBuffer may include alignment padding between channels.
-        // Check the actual audio buffers, not the allocation's total length.
         let valid = try? sample.withAudioBufferList(blockBufferMemoryAllocator: nil, flags: []) { list, _ in
             list.count == (planar ? Int(asbd.mChannelsPerFrame) : 1)
                 && list.allSatisfy {
@@ -312,8 +285,6 @@ final class RecorderWriter {
                 }
         }
         guard valid == true else { return nil }
-        // Some devices omit speaker labels for their discrete input channels.
-        // AVAudioFormat requires a layout above stereo; preserve their order.
         let sourceLayout = CMAudioFormatDescriptionGetChannelLayout(description, sizeOut: nil)
             .map { AVAudioChannelLayout(layout: $0) }
             ?? AVAudioChannelLayout(layoutTag: asbd.mChannelsPerFrame == 1
@@ -358,9 +329,6 @@ final class RecorderWriter {
         return result
     }
 
-    /// Closes the file. The last frame is written once more at the moment the
-    /// person pressed stop, otherwise a recording that ended on a still screen
-    /// would be as short as its last change instead of as long as it felt.
     func finish(at wallClockEnd: CMTime) async -> Bool {
         guard started, !failed, videoFrameCount > 0 else {
             writer.cancelWriting()

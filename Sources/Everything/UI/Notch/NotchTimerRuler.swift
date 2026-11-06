@@ -4,7 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// A native duration ruler, including mouse dragging on desktop.
 struct NotchTimerRuler: NSViewRepresentable {
     @Binding var minutes: Int
     let label: String
@@ -160,8 +159,6 @@ final class NotchTimerRulerControl: NSSlider {
 
     override func draw(_ dirtyRect: NSRect) {
         let edgeFade = max(1, bounds.width * 0.12)
-        // Drawn for the full ruler height; a shorter island compresses the
-        // ticks and pointer below the labels instead of cutting them off.
         let scale = bounds.height / NotchLayout.timerRulerHeight
         let selectionX = self.selectionX
         for minute in 1...180 {

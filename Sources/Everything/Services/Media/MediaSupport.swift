@@ -13,8 +13,6 @@ enum MediaTool: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// A cancelled duration lookup remains resumable, while a successful lookup
-/// stays attached to its input and tool instead of resetting a user's trim.
 struct MediaDurationLoading {
     struct Request: Equatable {
         let id = UUID()
@@ -325,9 +323,6 @@ struct MediaImageOptions: Codable, Equatable {
          background: MediaImageBackground = .transparent,
          preserveModificationDate: Bool = false) {
         self.quality = MediaSupport.sanitizedQuality(quality)
-        // Image profiles and their resize mode share one range. Keeping this
-        // legacy field on the video-oriented even/7680 sanitizer let the two
-        // persisted values silently disagree for large image exports.
         self.maxDimension = MediaSupport.sanitizedImageDimension(maxDimension, fallback: 1600)
         self.format = format
         self.stripMetadata = stripMetadata
@@ -368,11 +363,6 @@ struct MediaTrimRange: Equatable {
     var duration: Double { max(0, end - start) }
 }
 
-/// How the video and GIF tools decide what to shrink.
-///
-/// `resolution` is the historical behavior: the output dimension is chosen and
-/// the file weighs whatever it weighs. `targetSize` inverts it, the weight is
-/// chosen and everything else is derived from it.
 enum MediaSizingMode: String, CaseIterable, Identifiable {
     case resolution, targetSize
 
@@ -405,13 +395,7 @@ enum MediaSupport {
     static let maximumTargetGIFWidth = 1600
     static let minimumTargetGIFFPS: Double = 6
     static let maximumTargetGIFPasses = 4
-    /// Muxer overhead plus what rate control overshoots by. Asking the encoder
-    /// for slightly less than the ceiling is what makes the first pass land
-    /// under it instead of just above.
     static let targetSizeHeadroom = 0.94
-    /// Bits a pixel needs before H.264 starts smearing detail. A budget that
-    /// cannot pay this for every source pixel buys fewer pixels rather than
-    /// starving the ones it keeps.
     private static let targetBitsPerPixel = 0.07
     private static let maxFilenameBytes = 255
 
@@ -479,16 +463,10 @@ enum MediaSupport {
         Swift.min(maximumTargetMegabytes, Swift.max(minimumTargetMegabytes, value))
     }
 
-    /// Megabytes here are 1000 based, the way a sharing limit is written and
-    /// the way Finder reports a file, so a file that fits a "20 MB" ceiling
-    /// also fits a 20 MiB one and never the other way around.
     static func targetBytes(megabytes: Int) -> Int64 {
         Int64(sanitizedTargetMegabytes(megabytes)) * 1_000_000
     }
 
-    /// A file size is a bitrate multiplied by a duration, so a target size is
-    /// a bitrate budget. The budget then decides how many pixels are worth
-    /// keeping, which is why this returns a size the caller did not pick.
     static func videoSizePlan(targetBytes: Int64,
                               duration: Double,
                               sourceSize: CGSize,
@@ -512,8 +490,6 @@ enum MediaSupport {
         let sourcePixels = Double(sourceSize.width) * Double(sourceSize.height)
         let longestEdge = Double(Swift.max(sourceSize.width, sourceSize.height))
         let ratio = Swift.min(1, (affordablePixels / sourcePixels).squareRoot())
-        // A tiny frame is worse than a soft one, so scaling stops at 480 on the
-        // long edge even when the budget would buy less.
         let floorRatio = Swift.min(1, 480 / longestEdge)
         let maxDimension = Int((longestEdge * Swift.max(ratio, floorRatio)).rounded())
         return MediaVideoSizePlan(size: scaledEvenSize(source: sourceSize, maxDimension: maxDimension),
@@ -526,9 +502,6 @@ enum MediaSupport {
         return Double(targetBytes) * 8 / duration < 1_200_000 ? 64_000 : 128_000
     }
 
-    /// One pass of rate control lands near the budget, not on it. A pass that
-    /// overshoots derives the next scale from what it actually produced, and
-    /// gives up at least a tenth so the sequence always converges.
     static func targetRetryScale(current: Double, actualBytes: Int64, targetBytes: Int64) -> Double? {
         guard current.isFinite, current > 0,
               actualBytes > 0, targetBytes > 0, actualBytes > targetBytes
@@ -538,9 +511,6 @@ enum MediaSupport {
         return Swift.min(current * 0.9, next)
     }
 
-    /// Aiming at a size means no frame rate was picked, so the first pass takes
-    /// the highest one the frame ceiling allows and the measured passes take it
-    /// down from there.
     static func targetGIFStartFPS(duration: Double, preferred: Double = 15) -> Double {
         guard duration.isFinite, duration > 0 else { return preferred }
         let fitting = (Double(maximumGIFFrames) / duration).rounded(.down)
@@ -553,9 +523,6 @@ enum MediaSupport {
                          Swift.min(maximumTargetGIFWidth, Int(sourceWidth.rounded())))
     }
 
-    /// A GIF has no bitrate to aim at: its weight is frames times pixels, so
-    /// overshooting is corrected by dropping frames first, since motion
-    /// survives a lower rate better than detail survives a smaller frame.
     static func gifSizePlan(width: Int, fps: Double,
                             actualBytes: Int64, targetBytes: Int64) -> MediaGIFSizePlan? {
         guard actualBytes > 0, targetBytes > 0, actualBytes > targetBytes else { return nil }
@@ -872,18 +839,11 @@ enum MediaSupport {
         }
     }
 
-    /// Whether a dropped file fits the selected tool, mirroring the open
-    /// panel's filter. Without this, dropping a PDF on the image tool would
-    /// "succeed" by silently rasterizing page one (ImageIO opens PDFs).
     static func inputMatchesTool(contentType: UTType?, inputTypes: [UTType]) -> Bool {
         guard let contentType else { return false }
         return inputTypes.contains { contentType.conforms(to: $0) }
     }
 
-    /// Whether the result deserves the "came out larger" caption: growth is
-    /// normal (PDF wraps the image, high quality can beat the source) but a
-    /// "compressor" should say so instead of looking broken. Unknown sizes
-    /// (zero) never trigger it.
     static func outputGrew(originalBytes: Int64, outputBytes: Int64) -> Bool {
         originalBytes > 0 && outputBytes > originalBytes
     }

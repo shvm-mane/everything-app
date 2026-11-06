@@ -3,16 +3,6 @@
 
 import Foundation
 
-/// Reads the battery "Maximum Capacity" percentage exactly as macOS System
-/// Information shows it. On Apple Silicon that figure is a smoothed value Apple
-/// computes, not a raw capacity ratio, so dividing IORegistry capacities never
-/// quite matches System Report. The only way to match it is to read the same
-/// source macOS does: `system_profiler SPPowerDataType`.
-///
-/// That call is slow (seconds) and the value changes over weeks, not seconds, so
-/// it runs off the hot path on a utility queue and is cached. Callers read the
-/// cached value and fall back to the IORegistry ratio when it isn't available
-/// (no battery, or a macOS that doesn't expose the field, e.g. some betas).
 final class MaxCapacityProbe {
     static let shared = MaxCapacityProbe()
 
@@ -21,19 +11,15 @@ final class MaxCapacityProbe {
     private var cached: Int?
     private var lastRefresh: TimeInterval = -.greatestFiniteMagnitude
     private var running = false
-    private let interval: TimeInterval = 1800   // 30 minutes is plenty for battery health
+    private let interval: TimeInterval = 1800
 
     private init() {}
 
-    /// The macOS-reported maximum capacity (1...100), or nil if not yet known or
-    /// unavailable. Thread-safe.
     var percent: Int? {
         lock.lock(); defer { lock.unlock() }
         return cached
     }
 
-    /// Refreshes the cache if it's stale. Non-blocking; the slow work runs on a
-    /// utility queue. Safe to call on every sample.
     func refreshIfStale() {
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
@@ -55,16 +41,11 @@ final class MaxCapacityProbe {
         }
     }
 
-    /// Parses `sppower_battery_health_maximum_capacity` out of system_profiler's
-    /// JSON. macOS has exposed it both as a string ("95%") and as a number in
-    /// beta builds, and the battery block can be nested under `_items`.
     static func percent(fromSystemProfilerJSON data: Data) -> Int? {
         guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
         return percent(in: root)
     }
 
-    /// Returns nil when the field is missing or not a usable number (e.g. a macOS
-    /// that prints a placeholder dash).
     private static func read() -> Int? {
         let result = runSystemProfiler()
         guard result.status == 0,

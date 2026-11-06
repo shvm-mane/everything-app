@@ -53,7 +53,6 @@ enum DiskImageInstallerSupport {
                               fileManager fm: FileManager) -> [URL]? {
         var applicationsURLs: [URL] = []
         for domain in collisionDomains(useUserApplications: useUserApplications) {
-            // Search-path URLs do not require the directory to exist or create it.
             guard let applicationsURL = fm.urls(for: .applicationDirectory, in: domain).first
             else { return nil }
             applicationsURLs.append(applicationsURL)

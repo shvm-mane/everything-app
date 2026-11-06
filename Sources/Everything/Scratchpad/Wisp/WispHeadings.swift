@@ -3,16 +3,12 @@ import Foundation
 struct Heading: Identifiable, Equatable {
     let name: String
     let level: Int
-    /// NSString character offset where the heading line starts, used for
-    /// scrolling the text view to the section.
     let lineStart: Int
 
     var id: Int { lineStart }
 }
 
 extension String {
-    /// Parse `#`-prefixed markdown headings out of the text. Returns one
-    /// entry per heading line, in document order.
     func extractHeadings() -> [Heading] {
         let ns = self as NSString
         let total = ns.length
@@ -20,9 +16,7 @@ extension String {
         var lineStart = 0
         while lineStart < total {
             let lineRange = ns.lineRange(for: NSRange(location: lineStart, length: 0))
-            // Nearly every line isn't a heading; skip those before
-            // paying for a substring and a regex.
-            guard ns.character(at: lineRange.location) == 0x23 else {  // #
+            guard ns.character(at: lineRange.location) == 0x23 else {
                 lineStart = NSMaxRange(lineRange)
                 continue
             }

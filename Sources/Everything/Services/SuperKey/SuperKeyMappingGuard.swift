@@ -4,10 +4,6 @@
 import Darwin
 import Foundation
 
-/// Keeps the selected key recoverable if the app is killed before normal
-/// termination can remove its HID mapping. A tiny shell waits on a pipe owned
-/// by the app, then replaces itself with this executable's cleanup mode when
-/// the pipe closes. The kernel closes it on both ordinary exit and SIGKILL.
 enum SuperKeyMappingGuard {
     static let cleanupArgument = "--super-key-mapping-cleanup"
     private static let commandTimeout: TimeInterval = 5
@@ -49,9 +45,6 @@ enum SuperKeyMappingGuard {
             self.finished = finished
         }
 
-        /// Closing the pipe asks the guard to clean now. The app has already
-        /// attempted the same clear; this bounded second pass covers a failed
-        /// command without ever holding termination indefinitely.
         func stop() -> Bool {
             try? input.close()
             var didFinish = finished.wait(
@@ -73,8 +66,6 @@ enum SuperKeyMappingGuard {
         Handle(source: source)
     }
 
-    /// Runs before NSApplication is created when the waiting guard observes
-    /// that its parent disappeared.
     static func runIfRequestedAndExit() {
         let arguments = CommandLine.arguments
         guard arguments.contains(cleanupArgument) else { return }
@@ -89,9 +80,6 @@ enum SuperKeyMappingGuard {
         return SuperKeySource(rawValue: arguments[index + 1])
     }
 
-    /// The report is reduced to the table that remains after this feature's
-    /// exact source-to-F18 entry is removed. Different external tables are
-    /// refused instead of copying one keyboard's mappings onto another.
     static func mappingsAfterCleanup(_ report: String,
                                      source: SuperKeySource) -> [SuperKeyMapping]? {
         SuperKeySupport.consistentMappings(

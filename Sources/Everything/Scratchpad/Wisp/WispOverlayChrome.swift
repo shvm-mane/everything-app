@@ -1,12 +1,7 @@
 import SwiftUI
 
-/// The two surfaces every overlay is built from, so they read as one
-/// family: a scrim that dims the note without hiding it, and a card
-/// that holds a short decision or message. Help is the exception — a
-/// long reference reads better as a full sheet — and uses `sheet`.
 struct OverlayScrim: View {
     let theme: WispTheme
-    /// Near-opaque, for content long enough to need the whole panel.
     var sheet = false
     var onTap: (() -> Void)?
 

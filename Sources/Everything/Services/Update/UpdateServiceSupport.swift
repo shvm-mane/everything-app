@@ -4,10 +4,7 @@
 import CryptoKit
 import Foundation
 
-/// Pure helpers for checking and comparing application versions according to
-/// Semantic Versioning 2.0.0, handling stable and pre-release (beta, rc, alpha) channels.
 enum UpdateServiceSupport {
-
     static func sha256Matches(_ data: Data, expectedHex: String) -> Bool {
         guard expectedHex.utf8.count == SHA256.byteCount * 2 else { return false }
         let actual = SHA256.hash(data: data)
@@ -44,7 +41,6 @@ enum UpdateServiceSupport {
             case let (.string(l), .string(r)):
                 return l.localizedStandardCompare(r) == .orderedAscending
             case (.numeric, .string):
-                // Numeric identifiers have lower precedence than non-numeric identifiers.
                 return true
             case (.string, .numeric):
                 return false
@@ -72,7 +68,6 @@ enum UpdateServiceSupport {
             let cleaned = raw.trimmingCharacters(in: CharacterSet(charactersIn: "vV \t\r\n"))
             guard !cleaned.isEmpty else { return nil }
 
-            // Separate build metadata if present (+build123)
             let withoutBuild = cleaned.components(separatedBy: "+").first ?? cleaned
 
             let parts = withoutBuild.components(separatedBy: "-")
@@ -107,14 +102,10 @@ enum UpdateServiceSupport {
             if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
             if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
 
-            // When major, minor, and patch are equal, a pre-release version has lower
-            // precedence than a normal (release) version.
-            // Example: 1.0.0-beta < 1.0.0
             if lhs.isPrerelease && !rhs.isPrerelease { return true }
             if !lhs.isPrerelease && rhs.isPrerelease { return false }
             if !lhs.isPrerelease && !rhs.isPrerelease { return false }
 
-            // Both have pre-release identifiers: compare each identifier step-by-step
             for (l, r) in zip(lhs.prerelease, rhs.prerelease) {
                 if l != r { return l < r }
             }
@@ -124,11 +115,9 @@ enum UpdateServiceSupport {
 
     // MARK: - Version Comparison
 
-    /// Returns true if `candidate` is a higher semantic version than `current`.
     static func isNewer(_ candidate: String, than current: String) -> Bool {
         guard let candidateVersion = SemanticVersion(raw: candidate) else { return false }
         guard let currentVersion = SemanticVersion(raw: current) else {
-            // If current is invalid or dev string, consider candidate newer if candidate is valid
             return true
         }
         return candidateVersion > currentVersion
@@ -145,7 +134,6 @@ enum UpdateServiceSupport {
         let body: String?
     }
 
-    /// Selects the best update candidate from a list of releases based on channel preferences.
     static func selectUpdate(from candidates: [ReleaseCandidate],
                              currentVersion: String,
                              includeBetas: Bool) -> ReleaseCandidate? {
@@ -162,7 +150,6 @@ enum UpdateServiceSupport {
             return isNewer(candidate.tagName, than: currentVersion)
         }
 
-        // Sort candidate versions in descending order (highest version first)
         return eligible.sorted { (lhs, rhs) -> Bool in
             guard let vL = SemanticVersion(raw: lhs.tagName),
                   let vR = SemanticVersion(raw: rhs.tagName) else { return false }

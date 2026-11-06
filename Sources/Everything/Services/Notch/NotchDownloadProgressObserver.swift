@@ -3,16 +3,13 @@
 
 import Foundation
 
-/// Native observations and file evidence share the existing download queue.
-/// Only immutable display values leave it; stopping never waits for file I/O.
 final class NotchDownloadProgressObserver {
     private let folder: URL
     private let queue: DispatchQueue
     private let changed: ([NotchDownloadItem], [NotchDownloadItem]) -> Void
     private let cancellation = DispatchWorkItem {}
     private let refreshLock = NSLock()
-    private var refreshQueued = false // Protected by refreshLock, including native callbacks.
-    // Everything below is confined to queue.
+    private var refreshQueued = false
     private var progress: [UUID: Progress] = [:]
     private var publications: [UUID: NotchDownloadPublication] = [:]
     private var observations: [UUID: [NSKeyValueObservation]] = [:]
@@ -43,8 +40,6 @@ final class NotchDownloadProgressObserver {
                 value.observe(\.isPaused) { _, _ in update() },
                 value.observe(\.isCancelled) { _, _ in update() },
                 value.observe(\.isFinished) { _, _ in update() },
-                // File metadata lives in userInfo. Foundation notifies the
-                // dependent descriptions, not the fileURL convenience getter.
                 value.observe(\.localizedDescription) { _, _ in update() },
                 value.observe(\.localizedAdditionalDescription) { _, _ in update() },
             ]
@@ -88,8 +83,6 @@ final class NotchDownloadProgressObserver {
             guard !cancellation.isCancelled else { return }
             let snapshot = NotchDownloadProgressSnapshot(value)
             if publications[id] == nil {
-                // A publication from another app, like Safari, arrives a moment
-                // before its file URL and kind. Judge it once they are here.
                 guard snapshot.fileURL != nil, snapshot.fileOperationKind != nil else {
                     if snapshot.isFinished || snapshot.isCancelled { invalid.append(id) }
                     continue
@@ -119,9 +112,6 @@ final class NotchDownloadProgressObserver {
         changed(items, completed)
     }
 
-    /// Called by the folder scan on this same queue. A browser's final path
-    /// can name an extracted folder, so only the original publisher can prove
-    /// that its missing partial finished instead of being cancelled.
     func didFinish(_ partial: NotchPartialDownload, at now: Date = Date()) -> Bool {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !cancellation.isCancelled, let source = partial.source else { return false }

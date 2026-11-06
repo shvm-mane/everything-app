@@ -6,12 +6,8 @@ struct HeaderBar: View {
 
     var body: some View {
         if headings.isEmpty {
-            // Nothing to show — keep the slot empty so the panel just looks
-            // like before the headings feature existed.
             EmptyView()
         } else {
-            // Everything: centred while they fit, scrolling once they do not;
-            // the words sit 4 pt lower in the same strip.
             GeometryReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
@@ -31,7 +27,6 @@ struct HeaderBar: View {
                     .frame(minWidth: proxy.size.width, minHeight: proxy.size.height, alignment: .leading)
                 }
             }
-            // Everything: a slim strip, the words left-aligned with equal air above and below.
             .frame(height: 16)
             .padding(.vertical, 3)
             .font(.system(size: 10, weight: .regular))

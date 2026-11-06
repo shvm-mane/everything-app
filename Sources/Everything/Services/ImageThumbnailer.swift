@@ -11,12 +11,6 @@ enum ImageThumbnailer {
         thumbnail(for: url, pointSize: pointSize, scale: backingScale)
     }
 
-    /// The same decode, off the main thread. Decoding is synchronous work
-    /// that scales with the source file, so a caller with many files to get
-    /// through (the shelf restoring a saved list) would otherwise hold the
-    /// main thread for the sum of all of them. NSScreen is main-thread-only,
-    /// so the scale is read there and the decode runs off the main actor,
-    /// the same split VideoThumbnailer uses.
     static func thumbnail(for url: URL, pointSize: CGFloat = defaultPointSize) async -> NSImage? {
         let scale = await MainActor.run { backingScale }
         return thumbnail(for: url, pointSize: pointSize, scale: scale)
@@ -63,11 +57,6 @@ enum ImageThumbnailer {
             return nil
         }
 
-        // The rep's point size MUST be set before the context is created: the
-        // context takes its user-space scale from the rep at creation time.
-        // Created first, it maps one point to one pixel, and drawing into the
-        // pointSize rect fills only a quarter of a retina bitmap, which is why
-        // icons used to render at half their intended size.
         let logicalSize = NSSize(width: pointSize, height: pointSize)
         rep.size = logicalSize
         guard let context = NSGraphicsContext(bitmapImageRep: rep) else {
@@ -100,10 +89,6 @@ enum ImageThumbnailer {
         max(1, NSScreen.main?.backingScaleFactor ?? 2)
     }
 
-    /// Takes `scale` rather than defaulting to `backingScale` so that every
-    /// caller's dependency on an `NSScreen` read is visible where it happens.
-    /// It does not move the read: the two callers that used the default now
-    /// pass `backingScale` themselves, on the same thread as before.
     private static func pixelSize(for pointSize: CGFloat, scale: CGFloat) -> Int {
         max(16, Int((pointSize * scale).rounded(.up)))
     }

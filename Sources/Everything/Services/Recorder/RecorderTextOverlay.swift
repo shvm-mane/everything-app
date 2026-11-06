@@ -4,20 +4,12 @@
 import CoreGraphics
 import Foundation
 
-/// A line of text that appears over the recording for a while.
-///
-/// Placed on a corner or an edge rather than dragged to an arbitrary spot:
-/// nine places cover what people actually do with a caption, they read at a
-/// glance, and they keep working when the shape of the video changes.
 struct RecorderTextOverlay: Codable, Equatable, Identifiable, RecorderTimelineBlock {
-
     enum Anchor: String, Codable, CaseIterable {
         case topLeading, top, topTrailing
         case leading, center, trailing
         case bottomLeading, bottom, bottomTrailing
 
-        /// Where the text sits, 0...1 with a top-left origin, before the
-        /// margin is taken off.
         var unitPoint: CGPoint {
             switch self {
             case .topLeading: return CGPoint(x: 0, y: 0)
@@ -32,22 +24,15 @@ struct RecorderTextOverlay: Codable, Equatable, Identifiable, RecorderTimelineBl
             }
         }
 
-        /// Where something of `contentSize` sits on the canvas, in Core
-        /// Image's bottom-left space, with a margin off every edge it touches.
-        /// Captions and pictures place the same way, so the nine places mean
-        /// the same thing whatever is put in them.
         func origin(of contentSize: CGSize, in canvas: CGSize) -> CGPoint {
             let margin = min(canvas.width, canvas.height) * 0.05
             let point = unitPoint
             let x = margin + (canvas.width - contentSize.width - margin * 2) * point.x
-            // The anchor counts down from the top, the way the screen does.
             let topY = margin + (canvas.height - contentSize.height - margin * 2) * point.y
             return CGPoint(x: x, y: canvas.height - topY - contentSize.height)
         }
     }
 
-    /// A short list rather than a colour well: every one of these is legible
-    /// over a screen recording, which an arbitrary colour is not.
     enum Palette: String, Codable, CaseIterable {
         case white, black, accent, yellow, red, green
 
@@ -65,11 +50,9 @@ struct RecorderTextOverlay: Codable, Equatable, Identifiable, RecorderTimelineBl
 
     var id: UUID
     var text: String
-    /// In the recording's own time, like everything else on the timeline.
     var start: Double
     var end: Double
     var anchor: Anchor
-    /// Height of the type as a share of the picture's height.
     var size: Double
     var palette: Palette
 
@@ -95,8 +78,6 @@ struct RecorderTextOverlay: Codable, Equatable, Identifiable, RecorderTimelineBl
     static let defaultLength: Double = 3.0
     static let fade: Double = 0.25
 
-    /// How solid the text is at a moment, eased at both ends so it never
-    /// appears or vanishes on a single frame.
     func opacity(at time: Double) -> Double {
         RecorderMotion.overlayOpacity(at: time, start: start, end: end, fade: Self.fade)
     }

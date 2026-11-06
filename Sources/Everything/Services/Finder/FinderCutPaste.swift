@@ -7,15 +7,6 @@ import Combine
 import CoreGraphics
 import SwiftUI
 
-/// Cut and paste for files in Finder: ⌘X marks the current selection, ⌘V moves
-/// it into the folder you're viewing. A global event tap claims those two
-/// shortcuts only while Finder is frontmost and no text field is being edited,
-/// so renaming and text editing keep working untouched.
-///
-/// The decision to swallow a keystroke is made synchronously (in-memory marks +
-/// the pasteboard change count + a fast Accessibility role check); the slow
-/// parts (reading the Finder selection, moving files) run off the tap thread.
-/// Requires Accessibility, and Automation consent for Finder on first use.
 final class FinderCutPaste: ObservableObject {
     static let shared = FinderCutPaste()
 
@@ -25,7 +16,6 @@ final class FinderCutPaste: ObservableObject {
         let icon: NSImage
         var name: String { url.lastPathComponent }
 
-        // NSImage isn't Equatable; identity + path is enough to diff the list.
         static func == (lhs: MarkedItem, rhs: MarkedItem) -> Bool {
             lhs.id == rhs.id && lhs.url == rhs.url
         }
@@ -36,10 +26,6 @@ final class FinderCutPaste: ObservableObject {
         let failed: Int
     }
 
-    /// Live state of a move that left its volume (a real copy, not a rename),
-    /// so the HUD can show a progress bar for large transfers (issue #168).
-    /// `fraction` is nil when the batch's byte total is unknown (directories
-    /// in the mix), which the HUD renders as an indeterminate bar.
     struct MoveProgress: Equatable {
         let completed: Int
         let total: Int
@@ -47,21 +33,12 @@ final class FinderCutPaste: ObservableObject {
         let fraction: Double?
     }
 
-    /// Files currently held for a move; drives the feedback HUD.
     @Published private(set) var marked: [MarkedItem] = []
-    /// Set briefly after a paste so the HUD can confirm the move.
     @Published private(set) var lastResult: MoveResult?
-    /// Set only while a cross-volume move is running; nil for instant moves.
     @Published private(set) var moveProgress: MoveProgress?
 
-    /// Pasteboard change count captured when the cut was made. A ⌘V only turns
-    /// into a move while this still matches — if anything else wrote to the
-    /// pasteboard since, ⌘V is left as a normal paste.
     private var markedChangeCount = 0
 
-    // An active keyboard tap makes the window server wait for its callback
-    // before delivering the key. Keep that callback on a user-interactive
-    // run loop so unrelated typing never queues behind the app's main thread.
     private let tapLifecycleLock = NSLock()
     private var tap: CFMachPort?
     private var tapRunLoop: CFRunLoop?
@@ -82,7 +59,6 @@ final class FinderCutPaste: ObservableObject {
     private static let syntheticPasteMarker: Int64 = 0x564F5249
     private static let maxRawImageBytes = 64 * 1024 * 1024
 
-    // ANSI virtual key codes.
     private enum Key {
         static let x: Int64 = 7
         static let c: Int64 = 8
@@ -99,7 +75,6 @@ final class FinderCutPaste: ObservableObject {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.finderBundleID
     }
 
-    /// Applies the persisted preference; safe to call repeatedly.
     func syncWithPreferences() {
         let available = AppFeature.finderCutPaste.isAvailable
         cutPasteEnabled = available
@@ -123,9 +98,6 @@ final class FinderCutPaste: ObservableObject {
         refreshPanel()
     }
 
-    /// Force-stops the tap regardless of the preference. Used before the app
-    /// resets its own permissions, so a revoked Accessibility grant can never
-    /// leave a live tap behind.
     func suspend() {
         removeTap()
         removeAppObserver()
@@ -251,14 +223,8 @@ final class FinderCutPaste: ObservableObject {
         }
     }
 
-    /// Runs on the tap thread. Every key except plain Command-X/C/V returns
-    /// after reading only the event itself; the rare candidate is handed to
-    /// the main thread where the service's UI and pasteboard state live.
     private func route(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            // removeTap() switches the tap off itself, and that is reported
-            // here like a disable by the system. A stop under way has nothing
-            // to recover: syncing would start the tap again under a suspend().
             let currentTap = tapLifecycleLock.withLock { shouldStopTapThread ? nil : tap }
             if SessionActivity.shared.isActive, AXIsProcessTrusted(), let currentTap {
                 CGEvent.tapEnable(tap: currentTap, enable: true)
@@ -285,14 +251,7 @@ final class FinderCutPaste: ObservableObject {
         return verdict
     }
 
-    /// Runs on the main thread, so reading `marked` and the pasteboard here is
-    /// race-free.
     private func handle(event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Accessibility gone (e.g. reset): the AX focus check below would hang
-        // inside the tap and freeze the keyboard, so pass the keystroke through.
-        // Cached here to keep a live TCC round-trip off the per-keystroke path;
-        // the live check sits right before the AX focus lookup, where it runs
-        // only for an actual ⌘X/C/V in Finder.
         guard Permissions.shared.accessibility else { return Unmanaged.passUnretained(event) }
 
         let flags = event.flags
@@ -306,11 +265,9 @@ final class FinderCutPaste: ObservableObject {
         switch keyCode {
         case Key.x:
             guard cutPasteEnabled else { return Unmanaged.passUnretained(event) }
-            // Finder has no native cut for files, so swallowing ⌘X is safe.
             cutAsync()
             return nil
         case Key.c:
-            // Copying something else supersedes a pending cut; let Finder copy.
             if cutPasteEnabled, !marked.isEmpty { clearMarks() }
             return Unmanaged.passUnretained(event)
         case Key.v:
@@ -320,9 +277,6 @@ final class FinderCutPaste: ObservableObject {
                     pasteAsync()
                     return nil
                 }
-                // Something else wrote to the pasteboard since the cut. Drop
-                // the marks, then let the image path below inspect that new
-                // content before falling back to Finder's normal paste.
                 clearMarks()
             }
             guard pasteImageAsFileEnabled,
@@ -342,9 +296,6 @@ final class FinderCutPaste: ObservableObject {
 
     // MARK: - Paste image as file
 
-    /// The event tap only queues the work. Pasteboard decoding, Finder IPC and
-    /// disk writes stay off the main run loop; non-image content is handed
-    /// back to Finder as the same standard paste shortcut.
     private func pasteImageAsync(targetPID: pid_t, expectedChangeCount: Int) {
         imagePasteInProgress = true
         GeneralPasteboardAccess.shared.async { [weak self] in
@@ -434,23 +385,16 @@ final class FinderCutPaste: ObservableObject {
         }
     }
 
-    /// True when the keyboard focus is in an editable text control, so cut/copy/
-    /// paste shortcuts must be left to the system (e.g. renaming a file).
     private func isEditingText() -> Bool {
         let system = AXUIElementCreateSystemWide()
-        // No cap here: on the system-wide element a timeout is the default for
-        // every question this process asks, whoever asks it (#938).
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, "AXFocusedUIElement" as CFString, &focused) == .success,
               let focused,
-              // Type-check before casting: this runs inside the event tap, so
-              // an unexpected CF type must degrade gracefully, never crash.
               CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
         let element = focused as! AXUIElement
         var roleRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, "AXRole" as CFString, &roleRef) == .success,
               let role = roleRef as? String else { return false }
-        // Stable public AX role strings; literals dodge CFString/String import quirks.
         return ["AXTextField", "AXTextArea", "AXComboBox", "AXSecureTextField"].contains(role)
     }
 
@@ -473,8 +417,6 @@ final class FinderCutPaste: ObservableObject {
         moveInProgress = false
         moveProgress = nil
         marked = urls.map { MarkedItem(url: $0, icon: NSWorkspace.shared.icon(forFile: $0.path)) }
-        // Also place the files on the pasteboard so a normal ⌘V elsewhere still
-        // works as a copy, and so the move guard has a change count to anchor to.
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.writeObjects(urls as [NSURL])
@@ -550,11 +492,6 @@ final class FinderCutPaste: ObservableObject {
         }
     }
 
-    /// Sizes up a batch before moving it. Progress only shows when at least
-    /// one item leaves its volume — everything else is a rename and finishes
-    /// before a bar could even appear. Byte totals only count regular files;
-    /// a directory in the batch makes the total unknowable cheaply, so the
-    /// bar falls back to indeterminate while the item counter keeps moving.
     private static func progressPlan(urls: [URL],
                                      dir: URL) -> (showsProgress: Bool, totalBytes: Int64, sizes: [Int64?]) {
         let destVolume = volumeIdentity(of: dir)
@@ -583,9 +520,6 @@ final class FinderCutPaste: ObservableObject {
         (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
     }
 
-    /// Samples the growing destination file while `FileManager` copies it, so
-    /// the bar advances within a single large file. Reading the size is one
-    /// stat call and can never disturb the move itself.
     private func makeBytePoller(destination: URL,
                                 generation: Int,
                                 completed: Int, total: Int,
@@ -624,8 +558,6 @@ final class FinderCutPaste: ObservableObject {
 
     private func finishPaste(generation: Int, moved: Int, failed: Int, stillCut: [URL]) {
         guard generation == operationGeneration else { return }
-        // Invalidate the generation so a progress publish still in flight from
-        // a just-cancelled poller can't revive the moving state after this.
         operationGeneration += 1
         moveInProgress = false
         moveProgress = nil
@@ -648,12 +580,8 @@ final class FinderCutPaste: ObservableObject {
         case needsPrivileges
     }
 
-    /// `willCopy` fires with the final destination just before the actual
-    /// move, and only when one happens (not for no-op moves into the same
-    /// folder), so the caller can watch the destination grow.
     private static func move(_ src: URL, into dir: URL, fm: FileManager,
                              willCopy: (URL) -> Void = { _ in }) -> MoveOutcome {
-        // A no-op move (already in the destination) counts as success.
         if src.deletingLastPathComponent().standardizedFileURL.path == dir.standardizedFileURL.path {
             return .moved
         }
@@ -668,8 +596,6 @@ final class FinderCutPaste: ObservableObject {
         }
     }
 
-    /// Appends " 2", " 3"… before the extension when a name already exists,
-    /// matching how Finder de-duplicates.
     private static func uniqueDestination(for name: String, in dir: URL, fm: FileManager) -> URL {
         var candidate = dir.appendingPathComponent(name)
         guard fm.fileExists(atPath: candidate.path) else { return candidate }
@@ -779,13 +705,6 @@ final class FinderCutPaste: ObservableObject {
     }
 }
 
-/// Reads the current Finder selection and the folder a paste would land in,
-/// sending the Apple Events IN-PROCESS (see `AppleScriptRunner`) so the Finder
-/// Automation consent is attributed to this app — stable across updates and
-/// re-requested if it was lost — which is why the cut HUD had stopped appearing
-/// for some users. Same Finder Automation permission as before; nothing new.
-/// Callers run this off the main thread so a slow Finder never blocks the UI or
-/// the event taps.
 enum FinderBridge {
     private static let finderBundleID = "com.apple.finder"
 

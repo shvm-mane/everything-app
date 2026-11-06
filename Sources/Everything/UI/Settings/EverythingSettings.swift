@@ -1,7 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// EVERYTHING's Settings: a sidebar of pages, each a grouped form. Every page
-// says what its feature does, and each permission a feature needs sits next
-// to it with a way to grant it.
 
 import AppKit
 import ServiceManagement
@@ -42,12 +39,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
 }
 
-/// Which page Settings shows; the island opens it on a page.
 final class EverythingSettingsRouter: ObservableObject {
     static let shared = EverythingSettingsRouter()
     @Published var pane: SettingsPane = .general
 
-    /// Older callers name the island's page this way.
     var tab: SettingsPane {
         get { pane }
         set { pane = newValue }
@@ -73,7 +68,6 @@ struct EverythingSettingsView: View {
     }
 }
 
-/// The page list; AppKit's sidebar split item hosts it in the window.
 struct EverythingSettingsSidebar: View {
     @ObservedObject private var router = EverythingSettingsRouter.shared
 
@@ -81,7 +75,6 @@ struct EverythingSettingsSidebar: View {
         List(selection: Binding(get: { router.pane }, set: { if let pane = $0 { router.pane = pane } })) {
             ForEach(SettingsPane.allCases) { pane in
                 if pane == .ai {
-                    // The island's own Claude mark, tinted like a symbol.
                     Label { Text(pane.title) } icon: {
                         Image(nsImage: ClaudeMark.templateImage(size: 15))
                     }
@@ -95,7 +88,6 @@ struct EverythingSettingsSidebar: View {
     }
 }
 
-/// The selected page.
 struct EverythingSettingsDetail: View {
     @ObservedObject private var router = EverythingSettingsRouter.shared
 
@@ -120,7 +112,6 @@ struct EverythingSettingsDetail: View {
 
 // MARK: - Shared rows
 
-/// A title with a short explanation under it, as macOS's own Settings label rows.
 private struct RowLabel: View {
     let title: String
     var caption: String?
@@ -136,7 +127,6 @@ private struct RowLabel: View {
     }
 }
 
-/// A permission's state and the way to System Settings for it.
 private struct PermissionRow: View {
     let title: String
     let caption: String
@@ -160,7 +150,6 @@ private struct PermissionRow: View {
     }
 }
 
-/// Click, then press a combination; Esc cancels.
 private struct KeybindField: View {
     let display: String
     let onRecord: (NSEvent) -> Bool
@@ -262,7 +251,6 @@ private struct GeneralPage: View {
         }
     }
 
-    /// Music lists EVERYTHING under Automation only once it has asked.
     private func askForAutomation() {
         let ask = {
             DispatchQueue.global().async {
@@ -283,8 +271,6 @@ private struct GeneralPage: View {
 
     private static let automationKey = "everythingMusicAutomationGranted"
 
-    /// macOS can only answer while Music is running (-600 otherwise), so the
-    /// last real answer is remembered and shown instead of "Grant…".
     private static func automationStatus(ask: Bool) -> OSStatus? {
         let defaults = UserDefaults.standard
         let remembered: OSStatus? = defaults.object(forKey: automationKey) == nil ? nil
@@ -389,10 +375,11 @@ private struct ScratchpadPage: View {
                 }
                 if Self.newYorkAvailable {
                     Picker(selection: Binding(
-                        get: { model.fontFace == .newYork ? FontFace.newYork : FontFace.sanFrancisco },
+                        get: { [.newYork, .sfMono].contains(model.fontFace) ? model.fontFace : FontFace.sanFrancisco },
                         set: { model.fontFace = $0 })) {
                         Text("SF Pro").tag(FontFace.sanFrancisco)
                         Text("New York").tag(FontFace.newYork)
+                        Text("SF Mono").tag(FontFace.sfMono)
                     } label: {
                         Text("Font")
                     }
@@ -413,9 +400,12 @@ private struct ScratchpadPage: View {
                 }
                 LabeledContent("Open") {
                     HStack {
-                        Button("Note") { NSWorkspace.shared.activateFileViewerSelecting([StorageLocation.currentURL]) }
+                        Button("Note") {
+                            let url = StorageLocation.currentURL
+                            NSWorkspace.shared.activateFileViewerSelecting(
+                                [FileManager.default.fileExists(atPath: url.path) ? url : StorageLocation.currentFolder])
+                        }
                         Button("History") { Snapshots.revealInFinder() }
-                        Button("Saved") { Inbox.revealInFinder() }
                     }
                 }
             }
@@ -423,7 +413,7 @@ private struct ScratchpadPage: View {
         .formStyle(.grouped)
         .onChange(of: keybindOn) { _, _ in ScratchpadService.shared.syncWithPreferences() }
         .onAppear {
-            if model.fontFace != .sanFrancisco && (model.fontFace != .newYork || !Self.newYorkAvailable) {
+            if ![.sanFrancisco, .sfMono].contains(model.fontFace) && (model.fontFace != .newYork || !Self.newYorkAvailable) {
                 model.fontFace = .sanFrancisco
             }
         }
@@ -500,7 +490,6 @@ private struct SpaceKeybindRow: View {
                     if !store.isEnabled(identifier) { store.setEnabled(true, for: identifier) }
                     return true
                 }, onStart: {
-                    // ISS's own tap would otherwise swallow a combination already in use.
                     HotKeyManager.shared.unregisterAll()
                 }, onStop: {
                     MainActor.assumeIsolated { SpaceSwitcher.shared.reregisterAllHotkeys() }

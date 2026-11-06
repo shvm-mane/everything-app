@@ -6,7 +6,6 @@ import Combine
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Apple stills + bookmarked own images. Apply-all hits WallpaperAgent's store.
 final class WallpaperService: ObservableObject {
     static let shared = WallpaperService()
 
@@ -24,25 +23,19 @@ final class WallpaperService: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var appliedPath: String?
     @Published private(set) var isLoading = false
-    // true while materializing an iCloud still or finishing apply
     @Published private(set) var isApplying = false
     @Published private(set) var isDownloading = false
-    // bumps when thumb generation changes so cell .task restarts
     @Published private(set) var thumbEpoch = 0
 
     private var ownBookmarks: [Data] = []
-    // folder-child paths the user hid from the gallery (files stay on disk)
     private var excludedOwnPaths: Set<String> = []
-    // file bookmark path → Data (built in rebuildOwnSources; gallery X match without FS)
     private var fileBookmarkByPath: [String: Data] = [:]
     private var pathByFileBookmark: [Data: String] = [:]
     private var scopedURLs: [URL] = []
     private var openPanel: NSOpenPanel?
-    // Apple catalog barely changes; keep after first scan to avoid tab hitch
     private var cachedApple: [WallpaperSupport.Entry]?
     private let galleryLifecycle = WallpaperGalleryLifecycle()
     private var applyToken = UUID()
-    // lock-backed copy so detached apply-all can bail if a newer apply won
     private let applyGenerationLock = NSLock()
     private var applyGeneration = UUID()
 
@@ -58,9 +51,7 @@ final class WallpaperService: ObservableObject {
         ownSources.filter(\.isFolder)
     }
 
-    // folders + unreachable + file bookmarks with no gallery cell (after catalog is ready)
     var removableChipSources: [OwnSource] {
-        // while scanning, every file bookmark would look like an orphan
         if isLoading {
             return ownSources.filter { $0.isFolder || !$0.isReachable }
         }
@@ -99,7 +90,6 @@ final class WallpaperService: ObservableObject {
             cachedApple = nil
             bumpThumbGeneration()
             WallpaperThumbnailCache.clear()
-            // keep bookmarks (settings intact on reinstall); clear live catalog only
             ownSources = []
             entries = []
             lastError = nil
@@ -131,7 +121,6 @@ final class WallpaperService: ObservableObject {
         WallpaperThumbnailCache.prefetch(current.map(\.previewURL) + next.map(\.previewURL))
     }
 
-    // bump decode generation then prefetch the new page (cancels older cell/prefetch work)
     func preparePageThumbs(for filter: WallpaperSupport.Filter, around page: Int) {
         bumpThumbGeneration()
         prefetchNearbyPages(for: filter, around: page)
@@ -153,7 +142,6 @@ final class WallpaperService: ObservableObject {
         thumbEpoch &+= 1
     }
 
-    // scan off-main; publish catalog first, thumbs later
     func refresh(forceAppleRescan: Bool = false) {
         guard isAvailable else {
             entries = []
@@ -161,7 +149,6 @@ final class WallpaperService: ObservableObject {
             return
         }
         guard galleryLifecycle.isVisible else { return }
-        // one resolve pass — startAccessing / own roots / sources share it
         let resolved = resolveOwnBookmarks()
         startAccessing(resolved)
         rebuildOwnSources(from: resolved)
@@ -251,7 +238,6 @@ final class WallpaperService: ObservableObject {
             guard self.isAvailable, self.applyToken == token else { return }
 
             if applyAll {
-                // plist + killall off main; bail if a newer apply superseded us
                 let expected = token
                 let allOK = await Task.detached(priority: .userInitiated) { [weak self] in
                     guard let self else { return false }
@@ -263,7 +249,6 @@ final class WallpaperService: ObservableObject {
                 if allOK || currentOK {
                     self.appliedPath = url.path
                 }
-                // store patch miss keeps current-space apply; do not banner as failure
                 if !allOK && !currentOK {
                     self.lastError = FeatureStrings.wallpaper(L10n.shared.language).applyFailed
                 }
@@ -278,7 +263,6 @@ final class WallpaperService: ObservableObject {
         }
     }
 
-    // iCloud Drive placeholder — pull the bytes before NSWorkspace / store write
     static func needsCloudDownload(_ url: URL) -> Bool {
         let keys: Set<URLResourceKey> = [
             .isUbiquitousItemKey,
@@ -334,8 +318,6 @@ final class WallpaperService: ObservableObject {
         return NSScreen.screens.first.map { [$0] } ?? []
     }
 
-    // fill crop; clear same-URL first (macOS skips refresh otherwise).
-    // MainActor so NSWorkspace + applyToken/isAvailable stay on one thread; sleep still yields.
     @MainActor
     private func setDesktopImage(_ url: URL, on screens: [NSScreen], token: UUID) async -> Bool {
         let options: [NSWorkspace.DesktopImageOptionKey: Any] = [
@@ -350,7 +332,6 @@ final class WallpaperService: ObservableObject {
                         URL(fileURLWithPath: ""), for: screen, options: [:])
                     needsPause = true
                 } catch {
-                    // still try the set below
                 }
             }
         }
@@ -371,13 +352,11 @@ final class WallpaperService: ObservableObject {
 
     func addImages(inNotch: Bool) {
         guard isAvailable else { return }
-        // a picker already up, maybe behind another window, comes forward again
         if let openPanel { bringForward(openPanel, inNotch: inNotch); return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        // match gallery extensions so a pick always gets a cell
         let types = WallpaperSupport.imageExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowedContentTypes = types.isEmpty ? [.image] : types
         panel.message = FeatureStrings.wallpaper(L10n.shared.language).addImagePrompt
@@ -399,7 +378,6 @@ final class WallpaperService: ObservableObject {
         }
     }
 
-    // keeps the island open while a picker is up, like its other choosers
     var isChoosingSource: Bool { openPanel != nil }
 
     func openSystemWallpaperSettings() {
@@ -411,8 +389,6 @@ final class WallpaperService: ObservableObject {
 
     private func present(_ panel: NSOpenPanel, inNotch: Bool, completion: @escaping ([URL]) -> Void) {
         openPanel = panel
-        // keep the menu panel up only while its picker is on screen; the
-        // island stays open through isChoosingSource
         if !inNotch { PanelInteractionState.shared.isPresentingPopoverModal = true }
         panel.begin { [weak self] response in
             if !inNotch { PanelInteractionState.shared.isPresentingPopoverModal = false }
@@ -424,15 +400,11 @@ final class WallpaperService: ObservableObject {
         bringForward(panel, inNotch: inNotch)
     }
 
-    // an inactive app's picker opens behind the front app's window, and the
-    // island never activates the app, so the buttons seemed to do nothing
     private func bringForward(_ panel: NSOpenPanel, inNotch: Bool) {
-        // the island floats above ordinary windows; stand just above it there
         if inNotch, let island = NotchService.shared.presentationWindow {
             panel.level = NSWindow.Level(rawValue: island.level.rawValue + 1)
         }
         NSApp.activate(ignoringOtherApps: true)
-        // activation alone can leave the nonactivating island holding focus
         panel.makeKeyAndOrderFront(nil)
     }
 
@@ -448,12 +420,10 @@ final class WallpaperService: ObservableObject {
                                                    relativeTo: nil)
             else { continue }
             let path = url.standardizedFileURL.path
-            // drop older bookmarks that resolve to the same path (Data blobs differ)
             ownBookmarks.removeAll { existing in
                 resolveBookmark(existing)?.standardizedFileURL.path == path
             }
             ownBookmarks.append(data)
-            // re-adding clears a prior hide of this path (and children if folder)
             excludedOwnPaths.remove(path)
             if exists && isDir.boolValue {
                 excludedOwnPaths = excludedOwnPaths.filter { !$0.hasPrefix(path + "/") }
@@ -470,7 +440,6 @@ final class WallpaperService: ObservableObject {
         removeOwnBookmark(source.bookmark, knownFolder: source.isFolder)
     }
 
-    // gallery X: drop a file bookmark, or hide one image under a folder bookmark
     func removeOwnEntry(_ entry: WallpaperSupport.Entry) {
         guard isAvailable, entry.source == .own else { return }
         let path = entry.id
@@ -480,7 +449,6 @@ final class WallpaperService: ObservableObject {
         }
         excludedOwnPaths.insert(path)
         persistExclusions()
-        // drop in-flight scan so it cannot republish this path
         galleryLifecycle.invalidate()
         entries.removeAll { $0.id == path }
     }
@@ -552,7 +520,6 @@ final class WallpaperService: ObservableObject {
                                  isReachable: exists,
                                  bookmark: data)
             }
-            // resolve failed (unmounted volume, stale bookmark) — still list so user can remove
             return OwnSource(id: id,
                              title: unavailable,
                              isFolder: false,
@@ -563,7 +530,6 @@ final class WallpaperService: ObservableObject {
         pathByFileBookmark = pathMap
     }
 
-    // stable ForEach id from bookmark bytes (index is fallback salt only)
     private func bookmarkIdentity(_ data: Data, index: Int) -> String {
         var hasher = Hasher()
         hasher.combine(data)
@@ -597,7 +563,6 @@ final class WallpaperService: ObservableObject {
         let url: URL
     }
 
-    // resolve once per pass; withoutMounting so a missing network volume cannot stall
     private func resolveOwnBookmarks() -> [ResolvedBookmark] {
         var result: [ResolvedBookmark] = []
         var seen = Set<String>()
@@ -619,7 +584,6 @@ final class WallpaperService: ObservableObject {
     }
 }
 
-// panel thumbs; process lifetime, cleared on uninstall
 enum WallpaperThumbnailCache {
     private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -648,7 +612,6 @@ enum WallpaperThumbnailCache {
         cache.removeAllObjects()
     }
 
-    // bump so in-flight scan/decode loops bail out
     static func beginGeneration() {
         lock.lock()
         generation = UUID()
@@ -681,7 +644,6 @@ enum WallpaperThumbnailCache {
         }
     }
 
-    // call from a background queue only
     static func prefetchSync(_ urls: [URL], maxPixel: Int = 160, generation: UUID? = nil) {
         let gen = generation ?? currentGeneration
         for url in urls {
@@ -690,7 +652,6 @@ enum WallpaperThumbnailCache {
         }
     }
 
-    // cell loads hop here so SwiftUI .task cancellation can drop the result
     static func load(url: URL, maxPixel: Int = 160, generation: UUID) async -> NSImage? {
         if let hit = image(for: url, maxPixel: maxPixel) { return hit }
         return await withCheckedContinuation { continuation in
@@ -713,8 +674,6 @@ enum WallpaperThumbnailCache {
     }
 
     private static func decodeCGThumbnail(url: URL, maxPixel: Int) -> CGImage? {
-        // reading an iCloud placeholder downloads the whole file; show the
-        // placeholder cell instead until apply brings the picture down
         guard !WallpaperService.needsCloudDownload(url) else { return nil }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let options: [CFString: Any] = [

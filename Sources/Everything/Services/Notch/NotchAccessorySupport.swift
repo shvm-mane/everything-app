@@ -30,18 +30,10 @@ enum NotchAccessorySupport {
         }
     }
 
-    /// Phones, tablets, computers and network access points are not
-    /// accessories, and their Bluetooth links come and go without anyone
-    /// reaching for them. Every other class announces a connection,
-    /// including a device that declares no class at all.
     static func announcesConnection(majorClass: UInt32) -> Bool {
         !(0x01...0x03).contains(majorClass)
     }
 
-    /// A name says what an accessory is only until someone renames it. The
-    /// Bluetooth class of device it announces still does, from a speaker or
-    /// a car down to the trackpad that sets a pointer's digitizer bits.
-    /// Major and minor classes as the Bluetooth assigned numbers define them.
     static func symbol(name: String, majorClass: UInt32, minorClass: UInt32) -> String {
         let named = PeripheralBatterySupport.kind(product: name, primaryUsagePage: nil, primaryUsage: nil, usagePairs: [])
         guard named == .device else { return symbol(for: named, name: name) }
@@ -66,14 +58,10 @@ enum NotchAccessorySupport {
     }
 
     static func identity(_ device: PeripheralBatteryDevice) -> String {
-        // The existing sampler coalesces the same physical accessory by name
-        // when its reading moves between HID, system metadata and Bluetooth.
         device.kind.rawValue + ":" + device.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
 
-/// Missing telemetry is not a disconnection or a recharge. A low episode
-/// survives both, until an actual reading reaches the recovery threshold.
 struct NotchAccessoryBatteryState {
     private var lowEpisodes: [String: Bool] = [:]
     private var insertionOrder: [String] = []

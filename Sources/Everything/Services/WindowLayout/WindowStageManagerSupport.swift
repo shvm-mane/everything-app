@@ -4,8 +4,6 @@
 import AppKit
 import CoreGraphics
 
-/// Shared by the green button and Window Layout. Window-server bounds are in
-/// points and need no screen capture; no window titles or images are read.
 enum WindowStageManagerSupport {
     private static let windowManagerDefaults = UserDefaults(suiteName: "com.apple.WindowManager")
     private static let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
@@ -24,10 +22,6 @@ enum WindowStageManagerSupport {
             stripFrames: currentStripFrames())
     }
 
-    /// `stripFrames` is lazy: the default/off paths never query the window server.
-    /// Keep the existing menu-bar and Dock exclusions and remove only the strip's
-    /// side. A hidden/temporarily unavailable strip gets a 75pt fallback, allowing
-    /// a window which already covers it to move out of the way on the first use.
     static func adjustedFrame(visibleFrame: CGRect,
                               screenFrame: CGRect,
                               enabled: Bool,
@@ -44,9 +38,6 @@ enum WindowStageManagerSupport {
                   frame.width >= 16, frame.height >= 32,
                   frame.width <= screenFrame.width / 4,
                   frame.minY >= screenFrame.minY, frame.maxY <= screenFrame.maxY else { return false }
-            // WindowManager also owns desktop overlays and a dragged-window
-            // proxy. Only narrow, on-screen artwork beside the expected edge
-            // can describe this display's recent-apps strip.
             let distance = onRight ? screenFrame.maxX - frame.maxX : frame.minX - screenFrame.minX
             return distance >= -1 && distance <= 24
         }
@@ -74,8 +65,6 @@ enum WindowStageManagerSupport {
     }
 
     private static func currentStripFrames() -> [CGRect] {
-        // Edge-snap previews may ask on each pointer sample. Share a short-lived
-        // snapshot across displays instead of querying on every mouse event.
         let now = ProcessInfo.processInfo.systemUptime
         if now - sampledAt >= 0.25 {
             sampledAt = now

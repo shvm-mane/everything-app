@@ -3,18 +3,10 @@
 
 import SwiftUI
 
-/// The clock keeps the right of the camera. The left shows the timer's mark,
-/// or its explicitly chosen companion: a download, working agents, the next
-/// event's clock or the music playing, each opening its own page. The wings
-/// are as wide as the wider side needs, and both sit at the ends, where the
-/// island shows.
 struct NotchTimerStrip: View {
     @ObservedObject var service: NotchService
-    /// Where the island draws it: its own strip as of the last update, or
-    /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var timer = NotchTimerService.shared
-    // The companion's label reads these.
     @ObservedObject private var downloads = NotchDownloadService.shared
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var usage = AgentUsageService.shared
@@ -31,8 +23,6 @@ struct NotchTimerStrip: View {
         return geometry.compactActivityEdgeInset(boxHeight: iconSize, radius: iconSize / 2)
     }
     private var textInset: CGFloat { NotchTimerSupport.readingInset(geometry) }
-    /// Everything: the bar mirrors the time across the camera: as far from
-    /// its end, and as long as the time's side leaves it.
     private var showsBar: Bool { companion == nil && !timer.session.countsUp && !timer.session.completed }
     private var barWidth: CGFloat {
         max(NotchTimerSupport.barMinimumWidth,
@@ -84,7 +74,6 @@ struct NotchTimerStrip: View {
         .accessibilityHint(FeatureStrings.notch(l10n.language).open)
     }
 
-    /// Share of the countdown still to go, read fresh on every tick.
     private var remainingFraction: Double {
         let session = timer.session
         guard session.duration > 0 else { return 0 }
@@ -103,9 +92,6 @@ struct NotchTimerStrip: View {
                         .foregroundStyle(.orange)
                         .lineLimit(1).minimumScaleFactor(0.65)
                         .modifier(NotchRollingDigits(value: text, countsDown: !timer.session.countsUp, everySecond: false))
-                        // A reading that gains or loses a character, like
-                        // 10m becoming 9m, resizes the wings; the service
-                        // measures the same reading.
                         .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                             DispatchQueue.main.async { service.refreshPresentation() }
                         }
@@ -121,8 +107,6 @@ struct NotchTimerStrip: View {
     }
 }
 
-/// The timer's mark: a short orange bar on a faint orange track that drains
-/// toward the left as the countdown runs.
 struct AppleTimerRing: View {
     let fraction: Double
     let size: CGFloat
@@ -142,9 +126,6 @@ struct AppleTimerRing: View {
     }
 }
 
-/// What shares a strip with a timer or an event, drawn at the strip's left
-/// end: a download's progress, the working agents' marks, the event's dot
-/// and clock or the playing track's cover.
 struct NotchCompanionMark: View {
     let companion: NotchCompactActivity
     let geometry: NotchGeometry
@@ -199,8 +180,6 @@ struct NotchCompanionMark: View {
         NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight, working: working)
     }
 
-    /// The mark's distance from the strip's end, as far from the curve as
-    /// from the strip's top and bottom.
     static func inset(_ companion: NotchCompactActivity, geometry: NotchGeometry) -> CGFloat {
         switch companion {
         case .agents:

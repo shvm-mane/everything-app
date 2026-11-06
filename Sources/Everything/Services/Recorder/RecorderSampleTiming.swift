@@ -12,8 +12,6 @@ enum RecorderSampleTiming {
         return retimed(sampleBuffer, to: target)
     }
 
-    /// Shift timestamps without changing the cadence. A timing entry's duration
-    /// is per sample, even when that entry describes an entire PCM buffer.
     static func retimed(_ sampleBuffer: CMSampleBuffer, to time: CMTime) -> CMSampleBuffer? {
         let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         guard presentation.isNumeric, time.isNumeric else { return nil }

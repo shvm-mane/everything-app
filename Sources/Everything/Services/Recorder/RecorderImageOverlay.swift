@@ -4,27 +4,15 @@
 import CoreGraphics
 import Foundation
 
-/// A picture laid over the recording for a while: a logo, a badge, a mark of
-/// your own.
-///
-/// It names a private copy beside the recording instead of carrying pixels
-/// through undo. Moving or replacing the original cannot change the edit.
 struct RecorderImageOverlay: Codable, Equatable, Identifiable, RecorderTimelineBlock {
-    /// The same nine places a caption can take: one grid to learn, and a
-    /// corner mark stays in its corner whatever shape the video ends up.
     typealias Anchor = RecorderTextOverlay.Anchor
 
     var id: UUID
     var path: String
-    /// In the recording's own time, like everything else on the timeline.
     var start: Double
     var end: Double
     var anchor: Anchor
-    /// How wide the picture is drawn, as a share of the finished frame's
-    /// width. Its own proportions decide the height.
     var size: Double
-    /// How solid the picture is at its most solid, before the ends are eased.
-    /// The picture's own transparency is kept underneath it.
     var opacity: Double
 
     init(id: UUID = UUID(),
@@ -50,8 +38,6 @@ struct RecorderImageOverlay: Codable, Equatable, Identifiable, RecorderTimelineB
     static let defaultSize: Double = 0.18
     static let fade: Double = 0.25
 
-    /// How solid the picture is at a moment: what was chosen, eased at both
-    /// ends so it never appears or vanishes on a single frame.
     func opacity(at time: Double) -> Double {
         opacity * RecorderMotion.overlayOpacity(at: time,
                                                 start: start,
@@ -81,8 +67,6 @@ struct RecorderImageOverlay: Codable, Equatable, Identifiable, RecorderTimelineB
             .sorted { $0.start < $1.start }
     }
 
-    /// The size the picture is drawn at, from its own proportions, never
-    /// larger than the frame it sits on.
     static func drawnSize(source: CGSize, size: Double, canvas: CGSize) -> CGSize? {
         guard source.width.isFinite, source.height.isFinite,
               canvas.width.isFinite, canvas.height.isFinite, size.isFinite,

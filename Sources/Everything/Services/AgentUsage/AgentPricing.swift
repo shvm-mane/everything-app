@@ -3,50 +3,31 @@
 
 import Foundation
 
-/// US dollars per million tokens, from each provider's published API list.
 struct AgentPrice: Equatable {
     let input: Double
     let output: Double
     let cacheRead: Double
-    /// Short-lived cache writes. Providers that do not bill writes separately
-    /// charge the input price.
     let cacheWrite: Double
-    /// One-hour cache writes.
     let cacheWriteLong: Double
-    /// Premium for the fast tier, on every token category, where it is sold.
     var fastMultiplier: Double = 1
-    /// A premium on the whole request once the prompt passes a threshold,
-    /// for the models that charge one.
     var longContext: AgentLongContext?
 }
 
-/// Past `above` prompt tokens, input and cache rates are multiplied by
-/// `input` and output by `output`, on top of any fast tier.
 struct AgentLongContext: Equatable {
     let above: Int
     let input: Double
     let output: Double
 }
 
-/// What one response bills, beyond its model.
 struct AgentBillable: Equatable {
     var tokens = AgentTokens()
-    /// Session totals do not reveal individual prompt sizes. Price these at
-    /// base rates instead of inferring a long-context request from their sum.
     var isAggregate = false
-    /// The part of `tokens.cacheWrite` kept for an hour.
     var longCacheWrite = 0
     var fast = false
-    /// Inference pinned to the United States.
     var domestic = false
     var webSearches = 0
 }
 
-/// Every price the island knows, kept out of the code: a copy ships with the
-/// app, and a newer one published with the project replaces it, so a model
-/// launched after a release gets its API value without an update. Fields a
-/// later list adds are ignored; a list that breaks these rules is refused as a
-/// whole, and the last good one stays.
 struct AgentPriceList: Equatable {
     struct Model: Equatable {
         let id: String
@@ -54,18 +35,14 @@ struct AgentPriceList: Equatable {
     }
 
     struct Plan: Equatable {
-        /// Found inside the plan the agents record, like "max_20x".
         let match: String
         let name: String
         let monthly: Double?
     }
 
-    /// Only a list written for this reader is used; a later, incompatible
-    /// one waits for an app that understands it.
     static let schema = 1
     static let maximumSize = 256 << 10
 
-    /// The day the list was last reviewed; the newer of two lists wins.
     let updated: Date
     let claude: [Model]
     let codex: [Model]
@@ -93,8 +70,6 @@ struct AgentPriceList: Equatable {
                               usOnlyMultiplier: usOnly)
     }
 
-    /// The newer of the list inside the app and the last one downloaded. On
-    /// the same day the download wins, since it may carry a correction.
     static func newer(_ shipped: AgentPriceList?, _ downloaded: AgentPriceList?) -> AgentPriceList? {
         guard let downloaded else { return shipped }
         guard let shipped else { return downloaded }
@@ -111,8 +86,6 @@ struct AgentPriceList: Equatable {
                   let input = number(entry["input"], in: 0...1_000),
                   let output = number(entry["output"], in: 0...1_000),
                   let cacheRead = number(entry["cacheRead"], in: 0...1_000) else { return nil }
-            // Fields left out fall back to plain input pricing, the way
-            // providers without separate cache writes bill them.
             let cacheWrite = entry["cacheWrite"] == nil ? input : number(entry["cacheWrite"], in: 0...1_000)
             let cacheWriteLong = entry["cacheWriteLong"] == nil ? cacheWrite : number(entry["cacheWriteLong"], in: 0...1_000)
             let fast = entry["fastMultiplier"] == nil ? 1 : number(entry["fastMultiplier"], in: 1...10)
@@ -146,22 +119,18 @@ struct AgentPriceList: Equatable {
         return result
     }
 
-    /// Lowercase letters, digits, dots, dashes and underscores: the shape of
-    /// every model and plan the agents record.
     private static func identifier(_ text: String, length: Int) -> Bool {
         (1...length).contains(text.count) && text.unicodeScalars.allSatisfy {
             ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "." || $0 == "-" || $0 == "_"
         }
     }
 
-    /// A finite number inside `range`; a JSON true or false is not one.
     private static func number(_ value: Any?, in range: ClosedRange<Double>) -> Double? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
         let double = number.doubleValue
         return double.isFinite && range.contains(double) ? double : nil
     }
 
-    /// "2026-09-22", read as that day in UTC.
     private static func day(_ text: String) -> Date? {
         let parts = text.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3, (2024...2100).contains(parts[0]) else { return nil }
@@ -173,16 +142,12 @@ struct AgentPriceList: Equatable {
     }
 }
 
-/// Costs are what the same traffic would bill through the API. A plan pays a
-/// flat price instead, so the island presents them as API value.
 enum AgentPricing {
     private static let lock = NSLock()
     private static var installed = AgentPriceList.empty
 
-    /// The list prices come from, safe to read from any thread.
     static var list: AgentPriceList { lock.withLock { installed } }
 
-    /// Makes `list` the one prices come from; false when nothing changes.
     @discardableResult
     static func install(_ list: AgentPriceList) -> Bool {
         lock.withLock {
@@ -192,13 +157,9 @@ enum AgentPricing {
         }
     }
 
-    /// Provider prefixes, snapshot dates and context tags vary by where the
-    /// model runs; the family name in the middle does not.
     static func normalized(_ model: String) -> String {
         var id = model.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if let range = id.range(of: "claude-") { id = String(id[range.lowerBound...]) }
-        // Copilot names Claude point releases with a dot where Anthropic's
-        // own logs and the public price list use a dash.
         if id.hasPrefix("claude-") { id = id.replacingOccurrences(of: ".", with: "-") }
         if let slash = id.lastIndex(of: "/") { id = String(id[id.index(after: slash)...]) }
         for marker in ["@", "["] {
@@ -207,28 +168,19 @@ enum AgentPricing {
         return id
     }
 
-    /// Words that make a variant a model of its own, with its own price.
     static let siblings = ["mini", "nano", "pro", "lite", "research", "search", "audio", "realtime",
                            "transcribe", "tts", "cyber", "image"]
 
-    /// The longest matching family wins, so a point release the list names
-    /// never inherits the price of the version it extends.
     static func price(for model: String, in list: AgentPriceList = AgentPricing.list) -> AgentPrice? {
         let id = normalized(model)
         let table = id.hasPrefix("claude-") ? list.claude : list.codex
         guard let match = table.filter({ matches(id, family: $0.id) })
             .max(by: { $0.id.count < $1.id.count }) else { return nil }
-        // A smaller, larger or specialized sibling the list does not name is
-        // priced very differently from its family; better no figure than a
-        // wrong one.
         let rest = id.dropFirst(match.id.count)
         if siblings.contains(where: { rest.contains($0) }) { return nil }
         return match.price
     }
 
-    /// A family matches at a word boundary: "gpt-5" is not "gpt-5.1", and a
-    /// number after it names another version, so "claude-opus-5" is not a
-    /// later "claude-opus-5-6". A snapshot date after it is the same model.
     private static func matches(_ id: String, family: String) -> Bool {
         guard id.hasPrefix(family) else { return false }
         let rest = id.dropFirst(family.count)
@@ -239,7 +191,6 @@ enum AgentPricing {
     }
 
     static func cost(_ billable: AgentBillable, model: String) -> (cost: Double?, savings: Double) {
-        // Activity-only records establish a date, not unpriced token usage.
         if billable.isAggregate && billable.tokens.total == 0 { return (0, 0) }
         let list = self.list
         guard let price = price(for: model, in: list) else { return (nil, 0) }
@@ -263,17 +214,12 @@ enum AgentPricing {
         return (cost, savings)
     }
 
-    /// Readable model names: "claude-opus-5-5" reads "Opus 5.5" and
-    /// "gpt-6-astra" reads "GPT-6 Astra". Built from the name itself, so a
-    /// model no list knows yet still reads well.
     static func displayName(_ model: String) -> String {
         let id = normalized(model)
         guard !id.isEmpty else { return "" }
         if id.hasPrefix("claude-") {
-            // A router's tag after a colon, like ":thinking", is a mode of the same model.
             let family = id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? id
             var parts = family.dropFirst(7).split(separator: "-").map(String.init)
-            // Snapshot dates and version suffixes add nothing to a name.
             parts.removeAll { $0.count >= 6 && $0.allSatisfy(\.isNumber) }
             parts.removeAll { $0.hasPrefix("v") && $0.dropFirst().first?.isNumber == true }
             parts.removeAll { $0 == "latest" }
@@ -285,9 +231,7 @@ enum AgentPricing {
         }
         guard id.hasPrefix("gpt-") else { return id }
         var parts = id.dropFirst(4).split(separator: "-").map(String.init)
-        // An alias names whatever it points to today.
         parts.removeAll { $0 == "latest" }
-        // A dated snapshot, "-2026-10-01" or "-20261001", is the same model.
         parts.removeAll { $0.count >= 6 && $0.allSatisfy(\.isNumber) }
         if parts.count >= 4, let year = Int(parts[parts.count - 3]), (2000...2100).contains(year),
            parts.suffix(2).allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isNumber) }) {
@@ -299,7 +243,6 @@ enum AgentPricing {
     }
 }
 
-/// Subscriptions, recognized from what the agents keep on disk.
 enum AgentPlans {
     static func claude(organizationType: String?, rateLimitTier: String?,
                        list: AgentPriceList = AgentPricing.list) -> AgentPlan? {
@@ -308,7 +251,6 @@ enum AgentPlans {
         if let plan = list.claudePlans.first(where: { recorded.contains($0.match) }) {
             return AgentPlan(name: plan.name, monthlyPrice: plan.monthly)
         }
-        // A plan newer than the list still shows its own name.
         let name = type.replacingOccurrences(of: "claude_", with: "").replacingOccurrences(of: "_", with: " ")
             .trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? nil : AgentPlan(name: name.capitalized, monthlyPrice: nil)

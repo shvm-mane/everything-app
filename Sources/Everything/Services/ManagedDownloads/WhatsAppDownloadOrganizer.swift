@@ -6,10 +6,6 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Experimental organizer for confirmed WhatsApp downloads. It watches only
-/// the top level of Downloads, waits until a file is stable, then moves it to
-/// the configured folder. File bytes are read only to calculate a local SHA-256
-/// digest used for exact duplicate detection.
 final class WhatsAppDownloadOrganizer: ObservableObject {
     static let shared = WhatsAppDownloadOrganizer()
 
@@ -222,8 +218,6 @@ final class WhatsAppDownloadOrganizer: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         nextCheck = date
-        // A fresh .done stays visible as the green just-finished feedback;
-        // everything else folds into the quiet waiting state.
         if !isBusy, !phase.isDone { phase = .waiting }
     }
 
@@ -240,9 +234,6 @@ final class WhatsAppDownloadOrganizer: ObservableObject {
         timer?.invalidate()
         timer = nil
         nextCheck = nil
-        // A pass already executing keeps its phase untouched: writing .idle
-        // here would unmask the busy guard and let a second pass race the
-        // first, orphaning the first pass's records and undo transaction.
         guard !isBusy else {
             schedule(after: 60)
             return
@@ -520,10 +511,6 @@ final class WhatsAppDownloadOrganizer: ObservableObject {
 
         if WhatsAppDownloadSupport.isSameVolume(source: sourceVolume,
                                                 destination: destinationVolume) {
-            // Same volume: this is a rename, so no byte ever moves and the
-            // digest cannot change. Re-hashing here read a second full copy of
-            // every file - on a multi-gigabyte video, longer than the move.
-            // The cross-volume branch below copies and must still verify.
             try fm.moveItem(at: source, to: destination)
             return [.init(kind: .move, currentPath: destination.path,
                           restorePath: source.path)]

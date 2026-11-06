@@ -6,9 +6,6 @@ import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
-/// The Quit apps window (issue #855): every open app with its own Quit button,
-/// plus Quit all and Quit all except the front app. Every entry point opens
-/// it, so nothing quits in bulk without the list in front of the user first.
 final class QuitAppsPanelController {
     static let shared = QuitAppsPanelController()
 
@@ -22,10 +19,7 @@ final class QuitAppsPanelController {
     private var typedPrefix = ""
     private var lastTypedAt = Date.distantPast
 
-    /// How long a row shows its spinner before an app that is still running
-    /// (it asked to save, or refused) gets its Quit button back.
     private static let quitSettleDelay: TimeInterval = 4
-    /// A pause this long starts a new type-to-jump prefix, as in Finder.
     private static let typeAheadReset: TimeInterval = 1
 
     private init() {}
@@ -71,13 +65,10 @@ final class QuitAppsPanelController {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        // The originating island can stay pinned above the status bar.
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary,
                                     .transient, .ignoresCycle]
 
-        // Centered a little above the middle of the screen under the pointer,
-        // where a launcher's confirmation sits.
         let visible = NSScreen.pointerVisibleFrame
         let origin = CGPoint(x: visible.midX - size.width / 2,
                              y: visible.midY - size.height / 2 + visible.height * 0.12)
@@ -117,7 +108,6 @@ final class QuitAppsPanelController {
         model = nil
     }
 
-    /// Return on the highlight, or a click on a batch button.
     private func activate(_ focus: QuitAppsFocus) {
         switch focus {
         case .row(let pid): quitOne(pid)
@@ -141,14 +131,12 @@ final class QuitAppsPanelController {
 
     private func quitAll(_ scope: QuitAppsScope) {
         let keeping = scope == .allExceptFront ? model?.frontmostPID : nil
-        // A button's own action may still be on the stack; tear the host down after it.
         DispatchQueue.main.async { [weak self] in
             self?.close()
             QuickTogglesService.shared.quitAllApps(keepingPID: keeping)
         }
     }
 
-    /// Keeps the top edge where it is while rows come and go.
     private func fitToContent() {
         guard let panel, let view = panel.contentViewController?.view else { return }
         view.layoutSubtreeIfNeeded()
@@ -171,8 +159,6 @@ final class QuitAppsPanelController {
 
     // MARK: - Keyboard
 
-    /// Every key that reaches the window is handled or swallowed here, so a
-    /// stray key never beeps.
     private func handleKey(_ event: NSEvent) {
         guard let model else { return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -230,8 +216,6 @@ final class QuitAppsPanelController {
     }
 }
 
-/// The open apps the window lists, rebuilt whenever an app launches or quits,
-/// and the one highlight that moves through rows and buttons.
 final class QuitAppsModel: ObservableObject {
     struct Row: Identifiable {
         let pid: pid_t
@@ -254,8 +238,6 @@ final class QuitAppsModel: ObservableObject {
         self.frontmostPID = frontmostPID
     }
 
-    /// The front app, when it has a row and is not a kept app. A kept front app
-    /// makes "Quit all except" the same as Quit all, so it gets no button.
     var exceptFrontName: String? {
         rows.first { $0.isFrontmost && !$0.isKept }?.name
     }
@@ -266,9 +248,6 @@ final class QuitAppsModel: ObservableObject {
             canQuitAll: hasBatchTarget(keepingFrontmost: false))
     }
 
-    /// Opened as "except the front app" while the front app is kept, Quit all
-    /// keeps the same apps and takes the highlight; with no listed front app it
-    /// rests on Cancel, since Quit all could quit the app the user meant to keep.
     var restingButton: QuitAppsButton {
         var scope: QuitAppsScope? = self.scope
         if scope == .allExceptFront, exceptFrontName == nil {
@@ -312,8 +291,6 @@ final class QuitAppsModel: ObservableObject {
     }
 }
 
-/// A non-activating panel that can still take key focus, so the keyboard
-/// reaches it without pulling the front app (the one "except" keeps) backward.
 private final class QuitAppsPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
@@ -404,8 +381,6 @@ private struct QuitAppsView: View {
         .padding(.vertical, 12)
     }
 
-    /// Each button carries the key that works from anywhere; blue marks the
-    /// highlighted one only, so it always says what Return does.
     @ViewBuilder
     private func barButton(_ title: String, keys: String,
                            _ button: QuitAppsButton) -> some View {
@@ -458,10 +433,6 @@ private struct QuitAppsRowView: View {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                // One quit control, on the highlighted row only: the pointer
-                // highlights the row it rests on, so the mouse always finds it,
-                // and Return quits that same row. Laid out on every row so
-                // nothing shifts as the highlight moves.
                 Button(action: quit) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 15))

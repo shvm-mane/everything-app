@@ -3,18 +3,12 @@
 
 import SwiftUI
 
-/// The panel down the side of the editor: three looks to start from, then the
-/// handful of things worth changing. Everything here changes the picture the
-/// preview is already showing, so nothing has to be imagined.
 struct RecorderInspector: View {
     @ObservedObject var model: RecorderEditorModel
     @ObservedObject private var l10n = L10n.shared
     @State private var showsBackdropPopover = false
     @State private var tab: Tab = .look
     @State private var hoveredLook: RecorderEditDocument.Look?
-    /// Typing is one edit, landed when the field is let go. Without this the
-    /// caption would only reach the preview on a Return, and this field takes
-    /// several lines, so Return is a new line and not a commit.
     @FocusState private var textFieldFocused: Bool
 
     private var strings: RecorderFeatureStrings {
@@ -32,8 +26,6 @@ struct RecorderInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                // Selecting a zoom swaps the whole panel to that zoom. The
-                // swap is what teaches the selection model, without a word.
                 if let text = model.selectedText {
                     selectedTextSection(text)
                 } else if let image = model.selectedImage {
@@ -264,12 +256,8 @@ struct RecorderInspector: View {
 
     // MARK: - One zoom
 
-    /// Exactly four rows, and four is the ceiling. A zoom has more knobs than
-    /// this in theory; showing them turns a timeline into a control panel.
     private func selectedZoomSection(_ segment: RecorderTimeline.ZoomSegment) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // The way back has to be a labelled thing, not a bare glyph:
-            // otherwise selecting a zoom feels like a door that locks.
             Button {
                 model.selectZoom(nil)
             } label: {
@@ -417,8 +405,6 @@ struct RecorderInspector: View {
 
     // MARK: - One picture
 
-    /// The picture itself was chosen when the block was made, so what is left
-    /// here is how big it is, how solid it is and where it sits.
     private func selectedImageSection(_ overlay: RecorderImageOverlay) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -486,8 +472,6 @@ struct RecorderInspector: View {
 
     // MARK: - One blur
 
-    /// The area is the whole thing, and it is drawn on the picture rather than
-    /// typed here: a blur that misses by a few pixels is not a blur.
     private var selectedBlurSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -543,9 +527,6 @@ struct RecorderInspector: View {
         }
     }
 
-    /// Nine places instead of a drag: it reads at a glance, needs no gesture
-    /// on the picture, and covers what people actually do with a caption or a
-    /// mark of their own.
     private func anchorGrid(selected: RecorderTextOverlay.Anchor,
                             onSelect: @escaping (RecorderTextOverlay.Anchor) -> Void)
         -> some View {
@@ -573,9 +554,6 @@ struct RecorderInspector: View {
         }
     }
 
-    /// A slider that says what it is set to and goes back to its default on a
-    /// double click. A bare track with no number is the difference between a
-    /// control and a guess.
     private func valueSlider(title: String,
                              value: Double,
                              range: ClosedRange<Double>,

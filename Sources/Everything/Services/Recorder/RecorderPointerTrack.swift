@@ -6,25 +6,10 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Where the pointer went, when it was pressed, and which pointer it was,
-/// stored next to the master.
-///
-/// Packed binary rather than JSON because it is written while a recording is
-/// running: ten minutes at 125 Hz is 75 000 samples, which is a megabyte here
-/// and several as text. Positions are normalized to the recorded area, so a
-/// later crop or a different export size cannot invalidate the track.
 struct RecorderPointerTrack: Equatable {
-
-    /// One pointer image the recording actually showed. Kept as PNG so the
-    /// whole track is one file, and decoded only when something draws it.
     struct CursorShape: Equatable {
         var png: Data
-        /// Where inside the image the pointer points, in the bitmap's own
-        /// pixels from the top-left, which is what the window server reports
-        /// and what AppKit gets wrong for the I-beam.
         var hotSpot: CGPoint
-        /// The bitmap's size, which is also its size in screen points: the
-        /// window server draws the base representation one pixel per point.
         var pointSize: CGSize
 
         var image: CGImage? {
@@ -36,12 +21,7 @@ struct RecorderPointerTrack: Equatable {
     var samples: [RecorderMotion.Sample]
     var clicks: [RecorderMotion.Click]
     var shapes: [CursorShape]
-    /// The pointer size the window server was applying, straight from it
-    /// rather than from a preference, so a large pointer is neither missed
-    /// nor counted twice.
     var systemScale: Double
-    /// Pixels per point of the recorded display, so a pointer measured in
-    /// points can be drawn at the size it really occupied.
     var displayScale: Double
 
     init(samples: [RecorderMotion.Sample] = [],
@@ -64,7 +44,7 @@ struct RecorderPointerTrack: Equatable {
 
     // MARK: - Encoding
 
-    private static let magic: [UInt8] = [0x56, 0x52, 0x50, 0x54] // "VRPT"
+    private static let magic: [UInt8] = [0x56, 0x52, 0x50, 0x54]
     private static let version: UInt16 = 3
     private static let headerSize = 28
     private static let sampleSize = 16
@@ -105,9 +85,6 @@ struct RecorderPointerTrack: Equatable {
         return data
     }
 
-    /// A track written by a recording that crashed mid-flush is truncated, not
-    /// corrupt: whatever whole records are there are kept and the rest is
-    /// dropped, so a crash costs the tail and not the effect.
     static func decoded(_ data: Data?) -> RecorderPointerTrack {
         guard let data, data.count >= headerSize,
               Array(data.prefix(4)) == magic,

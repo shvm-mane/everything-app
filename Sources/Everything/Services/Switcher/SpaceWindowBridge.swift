@@ -4,23 +4,11 @@
 import AppKit
 import ApplicationServices
 
-/// Window-server queries and requests around Spaces, resolved at runtime so a
-/// macOS that drops a symbol degrades to the previous behavior (windows on
-/// other Spaces stay invisible and unreachable) instead of failing to launch.
-///
-/// Accessibility cannot describe a window parked on a Space that is not
-/// visible: the app's window list omits it and direct element access is
-/// refused (measured on macOS 26 and 27). The window server is the only
-/// witness that such a window exists, and the only reliable tell between a
-/// real parked window and a stale leftover surface: real windows normally
-/// belong to at least one Space, leftovers belong to none. Some auxiliary
-/// surfaces share a Space with a real window but explicitly opt out of window
-/// cycling, so their window-server tag is checked separately.
 enum SpaceWindowBridge {
     private typealias ConnectionID = UInt32
 
     private static func symbol(_ name: String) -> UnsafeMutableRawPointer? {
-        dlsym(UnsafeMutableRawPointer(bitPattern: -2) /* RTLD_DEFAULT */, name)
+        dlsym(UnsafeMutableRawPointer(bitPattern: -2) , name)
     }
 
     private static let connection: ConnectionID = {
@@ -43,9 +31,6 @@ enum SpaceWindowBridge {
         return unsafeBitCast(symbol, to: WindowIsOrderedInFunction.self)
     }()
 
-    /// Unlike on-screen visibility, ordering survives a move to another desktop.
-    /// A dismissed surface can retain its desktop assignment without being ordered.
-    /// Keep an unavailable query distinct from an explicit ordered-out answer.
     static func isWindowOrderedIn(_ windowID: CGWindowID) -> Bool? {
         guard connection != 0, let windowIsOrderedIn else { return nil }
         var ordered: UInt8 = 0
@@ -62,24 +47,14 @@ enum SpaceWindowBridge {
         return unsafeBitCast(symbol, to: CopySpacesFunction.self)
     }()
 
-    /// Whether `spaces(of:)` can actually answer in this session. Callers use
-    /// it to tell "this surface belongs to no Space" (the leftover signature)
-    /// apart from "the Space queries are unavailable here", so a macOS that
-    /// drops the private symbol keeps the pre-existing behavior instead of
-    /// misreading every window as a leftover (issue #807).
     static var canResolveSpaces: Bool {
         connection != 0 && copySpacesForWindows != nil
     }
 
-    /// Every Space (user desktops and fullscreen Spaces alike) containing the
-    /// window. Empty for leftover surfaces, and when the query is unavailable.
     static func spaces(of windowID: CGWindowID) -> [UInt64] {
         resolvedSpaces(of: windowID) ?? []
     }
 
-    /// An empty answer confirms a surface belongs to no Space. Nil means the
-    /// query is unavailable or failed for this window; callers deciding whether
-    /// to quit an app must not mistake that uncertainty for a closed window.
     static func resolvedSpaces(of windowID: CGWindowID) -> [UInt64]? {
         guard connection != 0, let copySpacesForWindows else { return nil }
         let mask: Int32 = 0x7
@@ -106,8 +81,6 @@ enum SpaceWindowBridge {
             let currentSpace: UInt64?
         }
 
-        /// With separate Spaces, only the island's display controls visibility.
-        /// A shared Space applies to every display even if its UUID is absent.
         func isFullscreen(on displayID: CGDirectDisplayID, separateSpaces: Bool) -> Bool {
             let candidates = separateSpaces ? displays.filter { $0.displayID == displayID } : displays
             return candidates.contains { display in
@@ -115,21 +88,14 @@ enum SpaceWindowBridge {
             }
         }
 
-        /// Displays in order.
         let displays: [DisplayInfo]
-        /// Space ids in left-to-right order, one row per display.
         var orderedSpacesPerDisplay: [[UInt64]] { displays.map(\.spaces) }
-        /// The Space currently showing on each display.
         var visibleSpaces: Set<UInt64> { Set(displays.compactMap(\.currentSpace)) }
-        /// Native fullscreen Spaces. Managed-display dictionaries use type 4
-        /// for these and type 0 for ordinary desktops on current macOS.
         var fullscreenSpaces: Set<UInt64> {
             displays.reduce(into: []) { $0.formUnion($1.fullscreenSpaces) }
         }
     }
 
-    /// Captures AppKit's display identity while the caller is on main. The
-    /// resulting values are safe to carry to window-enumeration workers.
     static func displayIDsByUUID() -> [String: CGDirectDisplayID] {
         var map: [String: CGDirectDisplayID] = [:]
         for screen in NSScreen.screens {
@@ -142,13 +108,10 @@ enum SpaceWindowBridge {
         return map
     }
 
-    /// Main-thread callers can keep using the AppKit-backed display mapping.
     static func topology() -> Topology? {
         topology(displayIDsByUUID: displayIDsByUUID())
     }
 
-    /// Resolves Space topology using display values captured by the caller.
-    /// This overload does not access AppKit and is safe for worker queues.
     static func topology(displayIDsByUUID: [String: CGDirectDisplayID]) -> Topology? {
         guard connection != 0, let copyManagedDisplaySpaces,
               let displayDicts = copyManagedDisplaySpaces(connection)?
@@ -185,9 +148,6 @@ enum SpaceWindowBridge {
         return unsafeBitCast(symbol, to: MoveWindowsToSpaceFunction.self)
     }()
 
-    /// The Space showing on the display under `pointer`, an AppKit screen
-    /// point. Nil when the Space queries are unavailable, so callers can carry
-    /// on without moving anything rather than guessing at a destination.
     static func visibleSpace(near pointer: CGPoint) -> UInt64? {
         guard let topology = topology() else { return nil }
         let screen = NSScreen.screens.first { NSMouseInRect(pointer, $0.frame, false) } ?? NSScreen.main
@@ -199,9 +159,6 @@ enum SpaceWindowBridge {
         return topology.displays.first?.currentSpace
     }
 
-    /// Brings one window onto the Space the pointer's display is showing. A
-    /// window dropped from another desktop otherwise takes the position it was
-    /// given and stays where nobody can see it.
     @discardableResult
     static func moveToVisibleSpace(_ windowID: CGWindowID, near pointer: CGPoint) -> Bool {
         guard connection != 0,
@@ -213,9 +170,6 @@ enum SpaceWindowBridge {
         return true
     }
 
-    /// Whether the window sits on at least one Space and none of them is
-    /// visible. False when the Space queries are unavailable, so every caller
-    /// falls back to the pre-existing behavior.
     static func isParkedOnHiddenSpace(_ windowID: CGWindowID, visibleSpaces: Set<UInt64>? = nil) -> Bool {
         guard let visible = visibleSpaces ?? topology()?.visibleSpaces else { return false }
         return SpaceHopSupport.isParkedOnHiddenSpace(windowSpaces: spaces(of: windowID),
@@ -224,8 +178,6 @@ enum SpaceWindowBridge {
 
     // MARK: - Window tags
 
-    // The last argument is a set of options, not a window count. Bit 0 asks
-    // for titles, which nothing here reads.
     private typealias WindowQueryFunction =
         @convention(c) (ConnectionID, CFArray, UInt64) -> Unmanaged<CFTypeRef>?
     private typealias WindowQueryResultFunction = @convention(c) (CFTypeRef) -> Unmanaged<CFTypeRef>?
@@ -255,13 +207,8 @@ enum SpaceWindowBridge {
                            tags: unsafeBitCast(tags, to: IteratorTagsFunction.self))
     }()
 
-    /// The window server's tags for each window among `windowIDs` that still
-    /// exists. On macOS 27 `CGSGetWindowTags` reads zeros for any window of
-    /// another app, so the tags come from one batched window query, which
-    /// still answers for every app. Nil when that query is missing.
     private static func windowTags(of windowIDs: [CGWindowID]) -> [CGWindowID: UInt64]? {
         guard connection != 0, let windowQuery else { return nil }
-        // An empty list would answer with unrelated windows.
         guard !windowIDs.isEmpty else { return [:] }
         guard let query = windowQuery.query(connection, windowIDs.map { NSNumber(value: $0) } as CFArray,
                                             0)?.takeRetainedValue(),
@@ -274,16 +221,10 @@ enum SpaceWindowBridge {
         return tags
     }
 
-    /// False when the window server cannot answer, preserving the existing
-    /// cross-Space behavior instead of hiding a legitimate window on a guess.
     static func isExcludedFromWindowCycle(_ windowID: CGWindowID) -> Bool {
         if let tags = windowTags(of: [windowID])?[windowID], tags != 0 {
             return SpaceHopSupport.isExcludedFromWindowCycle(windowTags: tags)
         }
-        // The batched query was measured on macOS 27 only. Without its
-        // answer, or with one of zeros, the per-window read keeps the flag
-        // where it answered before; on macOS 27 it reads zeros for other
-        // apps, so nothing hides.
         guard connection != 0, let getWindowTags else { return false }
         var tags = [UInt32](repeating: 0, count: 2)
         return tags.withUnsafeMutableBufferPointer { buffer in
@@ -296,19 +237,11 @@ enum SpaceWindowBridge {
         }
     }
 
-    /// The windows among `windowIDs` that the window server hid along with
-    /// their app. Nil when the window query is missing or answers without any
-    /// tag, and before macOS 26, where the tag has not been observed, so
-    /// callers keep their earlier behavior.
     static func windowsHiddenWithApp(among windowIDs: [CGWindowID]) -> Set<CGWindowID>? {
         guard #available(macOS 26.0, *), let tags = windowTags(of: windowIDs) else { return nil }
         return SpaceHopSupport.windowsHiddenWithApp(windowTags: tags)
     }
 
-    /// Whether the window server holds the window minimized in the Dock, even
-    /// for an app Accessibility cannot read. Nil when the query is unavailable
-    /// or withholds tags, and before macOS 26, where the tag has not been
-    /// observed. A window absent from a successful query no longer exists.
     static func isMinimized(_ windowID: CGWindowID) -> Bool? {
         guard #available(macOS 26.0, *), let windows = windowTags(of: [windowID]) else { return nil }
         guard let tags = windows[windowID] else { return false }
@@ -324,11 +257,6 @@ enum SpaceWindowBridge {
         return unsafeBitCast(symbol, to: IteratorParentIDFunction.self)
     }()
 
-    /// The window `windowID` is attached to as a child window, such as the
-    /// browser window under its address bar suggestions or the window a
-    /// popover hangs from. Accessibility lists a child window as one more
-    /// window of the app and cannot tell the two apart. Nil for a window
-    /// attached to nothing, and when the window server cannot answer.
     static func parentWindowID(of windowID: CGWindowID) -> CGWindowID? {
         guard connection != 0, let windowQuery, let iteratorParentID,
               let query = windowQuery.query(connection, [NSNumber(value: windowID)] as CFArray,
@@ -366,21 +294,6 @@ enum SpaceWindowBridge {
         return unsafeBitCast(symbol, to: ProcessForPIDFunction.self)
     }()
 
-    /// Asks the window server to bring the process forward with this exact
-    /// window as the one that comes up front, marked as user-initiated. Older
-    /// macOS also travels to the window's Space; current macOS ignores the
-    /// Space part, which is why SpaceHop verifies the outcome and escalates.
-    /// Native apps also receive a lone press to make the window key, aimed
-    /// far past the bottom-right of any window. Wine must never receive this
-    /// press: a game capturing the mouse treats it as a button held down. A
-    /// point just outside the frame lands on the invisible resize border, and
-    /// the repeated focus pass then finished a resize that dragged the
-    /// window's top-left corner to the screen's own. An all-ones (NaN) point
-    /// is turned back into (0, 0) by some apps, which then click whatever sits
-    /// at their top-left corner; a far positive point keeps any such fallback
-    /// on the opposite corner.
-    /// Returns false when the window server did not take the request, so the
-    /// caller can fall back to app-level activation.
     @discardableResult
     static func frontWindow(_ windowID: CGWindowID, ownerPID: pid_t) -> Bool {
         guard let setFrontProcess, let processForPID else { return false }
@@ -396,24 +309,15 @@ enum SpaceWindowBridge {
         guard let postEventRecord else { return false }
         var targetID = windowID
         var record = [UInt8](repeating: 0, count: 0x100)
-        record[0x04] = 0xf8 // declared record length
+        record[0x04] = 0xf8
         record[0x3a] = 0x10
         withUnsafeBytes(of: &targetID) { record.replaceSubrange(0x3c..<0x3c + $0.count, with: $0) }
-        // Window-relative location, far past the bottom-right of any window.
         var farPoint = CGPoint(x: 300_000, y: 300_000)
         withUnsafeBytes(of: &farPoint) { record.replaceSubrange(0x20..<0x20 + $0.count, with: $0) }
-        record[0x08] = 0x01 // left mouse down alone makes the window key
+        record[0x08] = 0x01
         return postEventRecord(&psn, &record) == .success
     }
 
-    /// Hands the keyboard to a window and leaves the stacking order alone,
-    /// with the focus handoff window managers use for this. Within the app
-    /// already in front, the window server moves focus only once the old
-    /// window hears it lost focus and the new one that it gained it. Some apps
-    /// miss the pair when it arrives at once, so the second half waits 40 ms
-    /// without blocking the main thread. If the hover is no longer current
-    /// when it ends, the old window gets its focus back only if it still
-    /// verifiably holds it.
     static func focusWithoutRaise(_ windowID: CGWindowID, ownerPID: pid_t,
                                   replacing focusedWindowID: CGWindowID?,
                                   while isCurrent: @escaping () -> Bool,
@@ -450,15 +354,11 @@ enum SpaceWindowBridge {
         }
     }
 
-    /// Activate the process without ordering any of its windows, then give
-    /// this window keyboard focus. frontWindow's user-generated activation
-    /// and mouse press can raise the window even without an AXRaise action.
-    /// Failure must not fall back to that path when the user disabled raising.
     private static func makeKeyWithoutRaise(_ windowID: CGWindowID, ownerPID: pid_t) -> Bool {
         guard let setFrontProcess, let processForPID, postEventRecord != nil else { return false }
         var psn = ProcessSerialNumber()
         guard processForPID(ownerPID, &psn) == noErr else { return false }
-        let noWindows: UInt32 = 0x400 // kCPSNoWindows
+        let noWindows: UInt32 = 0x400
         guard setFrontProcess(&psn, windowID, noWindows) == .success else { return false }
         return postFocusRecord(windowID, ownerPID: ownerPID, gained: true)
     }
@@ -470,7 +370,7 @@ enum SpaceWindowBridge {
         guard processForPID(ownerPID, &psn) == noErr else { return false }
         var targetID = windowID
         var record = [UInt8](repeating: 0, count: 0x100)
-        record[0x04] = 0xf8 // declared record length
+        record[0x04] = 0xf8
         record[0x08] = 0x0d
         record[0x8a] = gained ? 0x01 : 0x02
         withUnsafeBytes(of: &targetID) { record.replaceSubrange(0x3c..<0x3c + $0.count, with: $0) }
@@ -496,14 +396,9 @@ enum SpaceWindowBridge {
         case left
         case right
 
-        /// System symbolic hotkey ids for "Move left/right a space".
         fileprivate var hotKeyID: Int32 { self == .left ? 79 : 81 }
     }
 
-    /// The two Mission Control overviews, by their system symbolic hotkey ids
-    /// (32 is "Mission Control", 33 is "Application windows"). The window
-    /// server refuses software-simulated touch gestures, so an overview is
-    /// opened the same way the keyboard opens it (issue #1012).
     enum SpaceOverview {
         case missionControl
         case appExpose
@@ -516,16 +411,10 @@ enum SpaceWindowBridge {
         let flags: CGEventFlags
     }
 
-    /// The key combination the system itself has registered for moving one
-    /// Space over, honoring user remaps. Nil when the shortcut is disabled or
-    /// unreadable, in which case no synthetic travel is attempted.
     static func spaceShortcut(_ direction: SpaceDirection) -> SpaceShortcut? {
         registeredShortcut(direction.hotKeyID)
     }
 
-    /// The same lookup for the overviews. Nil when the user switched that
-    /// shortcut off in System Settings, which is the one honest answer: with
-    /// no registered combination there is nothing to press.
     static func overviewShortcut(_ overview: SpaceOverview) -> SpaceShortcut? {
         registeredShortcut(overview.hotKeyID)
     }
@@ -543,8 +432,6 @@ enum SpaceWindowBridge {
                              flags: SpaceHopSupport.eventFlags(fromCarbonModifiers: modifiers))
     }
 
-    /// Replays one press of a Spaces shortcut. The modifiers must match the
-    /// registered combination exactly or the system ignores the press.
     static func pressSpaceShortcut(_ shortcut: SpaceShortcut) {
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: shortcut.keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: shortcut.keyCode, keyDown: false)

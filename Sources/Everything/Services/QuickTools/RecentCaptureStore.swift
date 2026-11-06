@@ -27,8 +27,6 @@ struct RecentCaptureEntry: Codable, Equatable, Identifiable {
     }
 }
 
-/// Queue-confined history storage. Only a readable index permits writes, and
-/// only a committed index permits cleanup of the files it no longer references.
 final class RecentCaptureStore {
     let directoryURL: URL?
     var entries: [RecentCaptureEntry] = []
@@ -56,8 +54,6 @@ final class RecentCaptureStore {
                                                     from: Data(contentsOf: indexURL))
                 persistedEntries = decoded
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-                // A missing index with existing captures is also an unreadable
-                // history, not permission to erase those captures on the next save.
                 let files = try manager.contentsOfDirectory(atPath: directoryURL.path)
                 guard !files.contains(where: ScreenshotSupport.isRecentCaptureCacheFileName) else {
                     return false

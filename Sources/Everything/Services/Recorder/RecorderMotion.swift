@@ -4,34 +4,13 @@
 import CoreGraphics
 import Foundation
 
-/// The maths behind the two effects that make a recording read as produced:
-/// a pointer that glides instead of jittering, and a picture that leans in
-/// when something is clicked.
-///
-/// All of it is pure and offline, which is the whole advantage: the recording
-/// is already finished, so the smoothing can look at the future as well as the
-/// past. A filter that only sees the past buys smoothness with lag, and lag is
-/// exactly what makes a smoothed pointer feel wrong.
 enum RecorderMotion {
-
     // MARK: - Track
 
     struct Sample: Equatable {
-        /// Seconds from the start of the recording.
         var time: Double
-        /// Position inside the recorded area, 0...1, top-left origin. Storing
-        /// it normalized means a later crop or a different export size cannot
-        /// invalidate the track.
         var point: CGPoint
-        /// Which pointer image was on screen, as an index into the track's
-        /// shape table. The pointer changes over text, over a link and at a
-        /// window edge, and a recording that ignores that looks wrong in a way
-        /// people notice immediately without being able to name.
         var shapeIndex: Int
-        /// Whether the system was showing a pointer at all. Hiding it happens
-        /// constantly, while typing and during full-screen video, and it does
-        /// not change which shape is current, so it has to be recorded on its
-        /// own or the export paints a pointer over moments that had none.
         var isPointerVisible: Bool
 
         init(time: Double,
@@ -52,9 +31,6 @@ enum RecorderMotion {
 
     // MARK: - Uniform grid
 
-    /// The samples arrive whenever the sampler ran; the filter needs an even
-    /// spacing. Linear interpolation in time is enough because the input is
-    /// already dense compared to the output rate.
     static func resampled(_ samples: [Sample], frameRate: Int, duration: Double) -> [CGPoint] {
         let count = max(1, Int((duration * Double(max(1, frameRate))).rounded()))
         guard let first = samples.first else {
@@ -86,8 +62,6 @@ enum RecorderMotion {
         return result
     }
 
-    /// Whether a pointer was on screen at each output frame. Nearest in time,
-    /// like the shape.
     static func resampledVisibility(_ samples: [Sample],
                                     frameRate: Int,
                                     duration: Double) -> [Bool] {
@@ -107,8 +81,6 @@ enum RecorderMotion {
         return result
     }
 
-    /// Which pointer image is on screen at each output frame. Nearest in time,
-    /// never interpolated: a shape either is or is not the one being shown.
     static func resampledShapes(_ samples: [Sample], frameRate: Int, duration: Double) -> [Int] {
         let count = max(1, Int((duration * Double(max(1, frameRate))).rounded()))
         guard !samples.isEmpty else { return Array(repeating: 0, count: count) }
@@ -128,8 +100,6 @@ enum RecorderMotion {
 
     // MARK: - Zero-phase smoothing
 
-    /// How far a smoothing preset lets the pointer lag behind the truth, as a
-    /// cutoff in hertz. Lower is calmer.
     enum Smoothing: String, CaseIterable {
         case off, light, smooth, cinematic
 
@@ -147,10 +117,6 @@ enum RecorderMotion {
         Smoothing(rawValue: raw ?? "") ?? .smooth
     }
 
-    /// Running the same one-pole forward and then backward gives zero phase,
-    /// but it also squares the magnitude response, so each pass has to be set
-    /// wider than the cutoff we actually want. The factor is exact:
-    /// 1 / sqrt(sqrt(2) - 1).
     static let filtfiltWidening = 1.553773974
 
     static func onePoleAlpha(cutoff: Double, dt: Double) -> Double {
@@ -158,9 +124,6 @@ enum RecorderMotion {
         return 1 - exp(-2 * .pi * cutoff * dt)
     }
 
-    /// Forward then backward, with the ends padded by the first and last value
-    /// so the backward pass does not drag the start of the clip toward the
-    /// middle of it.
     static func filtfilt(_ values: [Double], alpha: Double) -> [Double] {
         guard values.count > 1, alpha > 0, alpha < 1 else { return values }
         let padding = min(values.count, max(1, Int((3 / alpha).rounded())))
@@ -194,11 +157,6 @@ enum RecorderMotion {
 
     // MARK: - Click anchoring
 
-    /// A plain low-pass rounds corners, so the smoothed pointer is NOT on the
-    /// button at the instant it is pressed, which is the single most visible
-    /// way this effect can look broken. Around every press the path is blended
-    /// back to the truth, and for the whole press-to-release it IS the truth,
-    /// or a dragged thing would come away from the pointer.
     static let clickAnchorWindow: Double = 0.12
 
     static func anchorWeight(at time: Double, clicks: [Click]) -> Double {
@@ -206,9 +164,6 @@ enum RecorderMotion {
         return anchorWeight(at: time, clicks: clicks, cursor: &cursor)
     }
 
-    /// Requires `clicks` in ascending time order and, when `cursor` is
-    /// carried across calls, ascending `time` too. It steps only past a
-    /// release: a press weighs on every moment until its release arrives.
     static func anchorWeight(at time: Double, clicks: [Click], cursor: inout Int) -> Double {
         var weight: Double = 0
         var pressedAt: Double?
@@ -232,8 +187,6 @@ enum RecorderMotion {
             weight = max(weight, smoothstep(1 - distance / clickAnchorWindow))
         }
         cursor = settled
-        // A press with no matching release: the recording ended mid-drag.
-        // Only the last click can be one, so it is read off the list directly.
         if let last = clicks.last, last.isDown, time >= last.time { return 1 }
         return weight
     }
@@ -255,9 +208,6 @@ enum RecorderMotion {
 
     // MARK: - Shaking
 
-    /// Shaking the mouse to find the pointer is a gesture, not noise: a
-    /// low-pass turns it into a blurry wobble. Inside a shake the raw path is
-    /// used untouched.
     static let shakeWindow: Double = 0.1
     static let shakeDistance: Double = 0.015
     static let shakeReversals = 3
@@ -291,16 +241,11 @@ enum RecorderMotion {
         return x * x * (3 - 2 * x)
     }
 
-    /// Second derivative zero at both ends too. This is the one that reads as
-    /// expensive, so it drives the zoom amount.
     static func smootherstep(_ t: Double) -> Double {
         let x = min(1, max(0, t))
         return x * x * x * (10 - 15 * x + 6 * x * x)
     }
 
-    /// How solid something laid over the picture is at a moment, eased at both
-    /// ends so it never appears or vanishes on a single frame. A block too
-    /// short to hold the whole ramp gets a shorter one rather than none.
     static func overlayOpacity(at time: Double,
                                start: Double,
                                end: Double,
@@ -323,17 +268,11 @@ enum RecorderMotion {
         var duration: Double { max(0, end - start) }
     }
 
-    /// Because the recording is already finished, the zoom can start BEFORE
-    /// the click that causes it. That pre-roll is what makes the effect look
-    /// deliberate instead of reactive, and it is impossible to do live.
     static let zoomLeadIn: Double = 0.3
     static let zoomHold: Double = 2.5
     static let zoomMinimumDuration: Double = 0.9
-    /// The press that stops the recording must never cause a zoom.
     static let zoomIgnoreTail: Double = 1.0
     static let zoomEndMargin: Double = 0.8
-    /// Typing after a click belongs to that click's zoom. The wider start
-    /// window covers the natural pause between focusing a field and writing.
     static let typingZoomTail: Double = 1.4
     static let typingZoomContinuation: Double = 8.0
 
@@ -352,7 +291,6 @@ enum RecorderMotion {
             let segment = ZoomSegment(start: max(0.001, press - zoomLeadIn),
                                       end: press + zoomHold)
             if var last = merged.last, segment.start - last.end <= zoomHold {
-                // A burst of clicks is one zoom that holds, not a flicker.
                 last.end = max(last.end, segment.end)
                 merged[merged.count - 1] = last
             } else {
@@ -374,8 +312,6 @@ enum RecorderMotion {
         }
     }
 
-    /// How far into the zoom the picture is at a moment: 0 outside, 1 while it
-    /// holds, eased in and out at the edges.
     static let zoomRampIn: Double = 0.42
     static let zoomRampOut: Double = 0.65
 
@@ -394,10 +330,6 @@ enum RecorderMotion {
 
     // MARK: - Viewport
 
-    /// The zoomed viewport is parameterized by where it sits in its OWN travel
-    /// range rather than by an absolute origin, so it is inside the frame by
-    /// construction: no clamping afterwards, and therefore no visible sticking
-    /// when the pointer reaches an edge.
     static let edgeBand: Double = 0.25
 
     static func travelParameter(focus: Double) -> Double {
@@ -405,10 +337,6 @@ enum RecorderMotion {
         return min(1, max(0, (focus - band) / (1 - 2 * band)))
     }
 
-    /// Travel for a spot somebody aimed at by hand. Deliberately NOT the
-    /// automatic formula: that one has an edge band so following the pointer
-    /// stays calm, and it would quietly move a hand-picked target sitting near
-    /// an edge, which arrives as "it did not zoom where I clicked".
     static func travelParameter(exactFocus focus: Double, zoom: Double) -> Double {
         let visible = 1 / max(1, zoom)
         let span = 1 - visible
@@ -416,7 +344,6 @@ enum RecorderMotion {
         return min(1, max(0, (focus - visible / 2) / span))
     }
 
-    /// Top-left origin of the visible part of the frame, in 0...1.
     static func viewportOrigin(travel: CGPoint, zoom: Double) -> CGPoint {
         let span = max(0, 1 - 1 / max(1, zoom))
         return CGPoint(x: min(1, max(0, travel.x)) * span,
@@ -425,11 +352,6 @@ enum RecorderMotion {
 
     // MARK: - Focus clusters
 
-    /// Aiming at the live pointer makes the picture drift constantly and reads
-    /// as seasickness. Samples are grouped into boxes sized as a fraction of
-    /// what is CURRENTLY visible, and the zoom aims at the centre of the group
-    /// it is in. Wider than tall on purpose: sideways travel reads as normal,
-    /// vertical travel is what turns the stomach.
     static let clusterWidthFraction: Double = 0.5
     static let clusterHeightFraction: Double = 0.7
 
@@ -472,8 +394,6 @@ enum RecorderMotion {
         return focus(at: time, clusters: clusters, cursor: &cursor)
     }
 
-    /// Requires `clusters` in ascending time order and, when `cursor` is
-    /// carried across calls, ascending `time` too.
     static func focus(at time: Double, clusters: [FocusCluster], cursor: inout Int) -> CGPoint {
         guard let first = clusters.first else { return CGPoint(x: 0.5, y: 0.5) }
         var current = cursor == 0 ? first.center : clusters[cursor - 1].center
@@ -486,9 +406,6 @@ enum RecorderMotion {
 
     // MARK: - Spring
 
-    /// A critically damped spring, stepped at a fixed rate. The zoom retargets
-    /// while it is moving, and a spring carries its velocity across a retarget,
-    /// where a fixed-duration curve would have to restart and pop.
     struct Spring: Equatable {
         var value: Double
         var velocity: Double = 0
@@ -506,8 +423,6 @@ enum RecorderMotion {
         }
     }
 
-    /// Runs a spring over a whole timeline in fixed small steps, which keeps
-    /// the result identical no matter what frame rate the export uses.
     static func springed(_ targets: [Double], frameRate: Int) -> [Double] {
         guard targets.count > 1 else { return targets }
         let frameStep = 1.0 / Double(max(1, frameRate))
@@ -528,23 +443,15 @@ enum RecorderMotion {
 
     // MARK: - Standing still
 
-    /// A pointer parked in a corner for the whole video is the thing that
-    /// makes a recording look like a recording. It fades out after a while of
-    /// not moving and comes back before it moves again, which is only possible
-    /// because the whole path is known before any of it is drawn.
     static let idleDelay: Double = 2.5
     static let idleFadeOut: Double = 0.4
     static let idleFadeIn: Double = 0.25
-    /// Below this much travel per frame the pointer counts as parked.
     static let idleTravel: Double = 0.0006
 
     static func pointerOpacity(_ points: [CGPoint], frameRate: Int) -> [Double] {
         guard points.count > 1 else { return Array(repeating: 1, count: max(1, points.count)) }
         let step = 1.0 / Double(max(1, frameRate))
 
-        // How long the pointer has been still at each frame, and how long
-        // until it moves again. Both, because the fade in has to finish
-        // BEFORE the movement starts.
         var stillFor = [Double](repeating: 0, count: points.count)
         for index in 1..<points.count {
             let dx = Double(points[index].x - points[index - 1].x)
@@ -573,9 +480,6 @@ enum RecorderMotion {
 
     // MARK: - Click feedback
 
-    /// The pointer presses in and comes back. It reads as a physical click and
-    /// costs one multiply, and because the recording is finished the press can
-    /// begin before the button actually goes down.
     static let pressPunchWindow: Double = 0.13
     static let pressPunchScale: Double = 0.8
 
@@ -584,8 +488,6 @@ enum RecorderMotion {
         return pressScale(at: time, clicks: clicks, cursor: &cursor)
     }
 
-    /// Requires `clicks` in ascending time order and, when `cursor` is
-    /// carried across calls, ascending `time` too.
     static func pressScale(at time: Double, clicks: [Click], cursor: inout Int) -> Double {
         let weight = anchorWeightForPunch(at: time, clicks: clicks, cursor: &cursor)
         return 1 - (1 - pressPunchScale) * weight
@@ -620,13 +522,10 @@ enum RecorderMotion {
             }
         }
         cursor = settled
-        // A press with no release can only be the last click; read it off the list.
         if let last = clicks.last, last.isDown, time >= last.time { weight = 1 }
         return min(1, weight)
     }
 
-    /// One thin ring, born where the click landed, growing and fading out.
-    /// Returns how far along it is, or nil when there is nothing to draw.
     static let ringDuration: Double = 0.4
     static let ringRadius: Double = 22
 
@@ -635,8 +534,6 @@ enum RecorderMotion {
         return ringProgress(at: time, clicks: clicks, cursor: &cursor)
     }
 
-    /// Requires `clicks` in ascending time order and, when `cursor` is
-    /// carried across calls, ascending `time` too.
     static func ringProgress(at time: Double, clicks: [Click], cursor: inout Int) -> Double? {
         var best: Double?
         var index = cursor
@@ -648,7 +545,6 @@ enum RecorderMotion {
             if elapsed > ringDuration { cursor = index; continue }
             guard click.isDown else { continue }
             let progress = elapsed / ringDuration
-            // A burst of clicks restarts the same ring instead of stacking.
             best = min(best ?? progress, progress)
         }
         return best

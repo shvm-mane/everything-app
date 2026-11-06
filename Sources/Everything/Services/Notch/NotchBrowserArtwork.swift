@@ -4,20 +4,10 @@
 import Foundation
 import ImageIO
 
-/// Finds a cover for a Firefox-family browser, which publishes none to Now
-/// Playing, or a 60-pixel one for YouTube Music. The playing tab's YouTube
-/// thumbnail comes first, found through the browser's saved session. YouTube
-/// Music keeps playing while the tab shows another page, and then the session
-/// holds no video, so Apple's catalog supplies the album art instead. All of
-/// it waits for its option in Settings. Covers stay in memory for the few
-/// most recent tracks, and nothing is written to disk.
 final class NotchBrowserArtwork {
     static let shared = NotchBrowserArtwork()
 
-    /// Firefox saves the session up to fifteen seconds after a change, so a
-    /// track that just started may not carry its title there yet.
     private static let attemptDelays: [TimeInterval] = [0, 2, 5, 10, 18, 30]
-    /// A track whose tab never showed up is not looked up again for a while.
     private static let failureCooldown: TimeInterval = 60
     private static let rememberedCovers = 8
 
@@ -30,10 +20,6 @@ final class NotchBrowserArtwork {
     private var inFlight: String?
     private var generation = UUID()
     private var downloadSession: URLSession?
-    /// The YouTube tabs of the last session file read, or nil when it could
-    /// not be read, so an attempt that finds the same file unchanged decodes
-    /// nothing. Every other tab is dropped as the file is read, and these go
-    /// once no lookup runs. Lookup queue only.
     private var session: (file: URL, modified: Date, size: Int, tabs: [NotchBrowserArtworkSupport.SessionTab]?)?
 
     private struct Lookup {
@@ -42,7 +28,6 @@ final class NotchBrowserArtwork {
         let bundle: String
         let title: String
         let artist: String?
-        /// A session saved after this lists the tab of whatever plays now.
         let started: Date
         let found: () -> Void
     }
@@ -52,10 +37,6 @@ final class NotchBrowserArtwork {
         return lock.withLock { covers[key] }
     }
 
-    /// Starts one lookup per track. `found` runs on the lookup queue once a
-    /// cover is ready for `artwork(for:)`. Repeated readings of the same track
-    /// keep the running lookup and its `found` callback. A reading with
-    /// nothing to look up, or none at all, stops the previous lookup.
     func request(for playback: NotchPlayback?, found: @escaping () -> Void) {
         guard let playback, let key = NotchBrowserArtworkSupport.lookupKey(for: playback),
               let bundle = playback.track.appBundleIdentifier,
@@ -84,8 +65,6 @@ final class NotchBrowserArtwork {
                           started: Date(), found: found))
     }
 
-    /// Stops the download too. A late reply cannot continue a cancelled lookup,
-    /// even when the same track has already started a new one.
     func cancel() {
         let previous = lock.withLock { () -> URLSession? in
             generation = UUID()
@@ -106,8 +85,6 @@ final class NotchBrowserArtwork {
             && lock.withLock { generation == lookup.generation && wanted == lookup.key && inFlight == lookup.key }
     }
 
-    /// Each response returns to the lookup queue and rechecks consent and
-    /// identity before it can decode, retry, download another URL or publish.
     private func load(_ url: URL, accept: String, for lookup: Lookup, completion: @escaping (Data?) -> Void) {
         guard accepts(lookup) else { return finish(lookup, failed: false) }
         let download = NotchBrowserArtworkDownload.load(url, accept: accept) { [self] data in
@@ -132,8 +109,6 @@ final class NotchBrowserArtwork {
 
     private func attempt(_ index: Int, _ lookup: Lookup, askedApple: Bool = false) {
         queue.asyncAfter(deadline: .now() + Self.attemptDelays[index]) { [self] in
-            // A newer track took over, music stopped or the option went off.
-            // A newer track's own request runs its own lookup.
             guard accepts(lookup) else {
                 return finish(lookup, failed: false)
             }
@@ -146,8 +121,6 @@ final class NotchBrowserArtwork {
                 }
                 return
             }
-            // Apple is asked once per lookup, and only when a session that
-            // could be read, saved since the lookup began, shows YouTube Music.
             guard !askedApple, let saved, NotchBrowserArtworkSupport.asksAppleMusic(
                       tabs: saved.tabs, savedAt: saved.modified, lookupStarted: lookup.started),
                   let search = NotchBrowserArtworkSupport.appleMusicSearchURL(
@@ -188,7 +161,6 @@ final class NotchBrowserArtwork {
         lookup.found()
     }
 
-    /// Runs on the lookup queue whenever a lookup ends.
     private func finish(_ lookup: Lookup, failed: Bool) {
         let idle = lock.withLock { () -> Bool in
             guard generation == lookup.generation else { return false }
@@ -196,7 +168,6 @@ final class NotchBrowserArtwork {
             if inFlight == key { inFlight = nil }
             downloadSession = nil
             if failed {
-                // Only failures still inside their cooldown matter.
                 let now = Date()
                 failedAt = failedAt.filter { now.timeIntervalSince($0.value) < Self.failureCooldown }
                 failedAt[key] = now
@@ -206,9 +177,6 @@ final class NotchBrowserArtwork {
         if idle { session = nil }
     }
 
-    /// The YouTube tabs of the browser's newest session file and when it was
-    /// saved, or nil when it cannot be read. The file is decoded again only
-    /// once its date or size changes.
     private func youTubeTabs(bundle: String) -> (modified: Date, tabs: [NotchBrowserArtworkSupport.SessionTab])? {
         guard let file = latestSessionFile(bundle: bundle) else { return nil }
         if let session, session.file == file.url, session.modified == file.modified, session.size == file.size {
@@ -224,8 +192,6 @@ final class NotchBrowserArtwork {
         return tabs.map { (file.modified, $0) }
     }
 
-    /// The running profile keeps rewriting its recovery file, so the newest
-    /// file across the browser's profiles belongs to the window playing now.
     private func latestSessionFile(bundle: String) -> (url: URL, modified: Date, size: Int)? {
         guard let folder = NotchBrowserArtworkSupport.profileFolders[bundle],
               let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -242,7 +208,6 @@ final class NotchBrowserArtwork {
             .max { $0.modified < $1.modified }
     }
 
-    /// Tries each address in turn and keeps the first real image.
     private func download(_ urls: [URL], for lookup: Lookup, completion: @escaping (Data?) -> Void) {
         guard accepts(lookup) else { return finish(lookup, failed: false) }
         guard let url = urls.first else { return completion(nil) }
@@ -255,10 +220,6 @@ final class NotchBrowserArtwork {
         }
     }
 
-    /// The island shrinks a cover to 320 pixels on its long edge before it
-    /// crops a square. A 16:9 thumbnail would keep only 180 pixels of height
-    /// and blur when stretched, so the cover arrives as its centre square.
-    /// For YouTube Music that square is the album art without the side bars.
     private static func squareCover(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
@@ -273,9 +234,6 @@ final class NotchBrowserArtwork {
     }
 }
 
-/// A single ephemeral request with no cookies or cache, bounded while bytes
-/// arrive. The delegate refuses redirects, so a request only ever reaches the
-/// host it names, whether YouTube's thumbnails, Apple's search or Apple's artwork.
 private final class NotchBrowserArtworkDownload: NSObject, URLSessionDataDelegate {
     private var data = Data()
     private var accepted = false

@@ -3,17 +3,9 @@
 
 import Foundation
 
-/// Everything the app update check decides, with no file system, no network
-/// and no processes: version comparison, which findings are real, how the
-/// the sources are merged and when the next background check is due. Kept
-/// pure so `./build.sh --test` can pin the rules that matter.
 enum AppUpdatesSupport {
-
     // MARK: - Model
 
-    /// Where a pending update comes from, which is also what the app can do
-    /// about it: the package manager can install it right here, the store
-    /// can only be opened, and an online finding opens the installed app.
     enum Source: String, Hashable {
         case packageManager
         case appStore
@@ -31,17 +23,12 @@ enum AppUpdatesSupport {
     struct Item: Identifiable, Hashable {
         let id: String
         let source: Source
-        /// Name as the person knows it, from the app bundle when there is one.
         let name: String
         let installedVersion: String
         let latestVersion: String
-        /// Package token, present only for package-manager rows.
         let token: String?
-        /// Path of the app bundle this row stands for, when one was matched.
         let bundlePath: String?
-        /// Store page for this app, present only for store rows.
         let storePage: String?
-        /// Stable across sources, app renames and settings restores on another Mac.
         var bundleID: String? = nil
 
         var canInstallInPlace: Bool { source == .packageManager && token != nil }
@@ -49,7 +36,6 @@ enum AppUpdatesSupport {
         var versionSummary: String { "\(installedVersion) → \(latestVersion)" }
     }
 
-    /// An installed app as the scanner sees it.
     struct InstalledApp: Hashable {
         let name: String
         let bundleID: String
@@ -61,7 +47,6 @@ enum AppUpdatesSupport {
         var updateFeed: AppUpdateFeedSupport.Feed? = nil
     }
 
-    /// One app's current version in the store.
     struct StoreEntry: Hashable {
         let bundleID: String
         let version: String
@@ -69,9 +54,6 @@ enum AppUpdatesSupport {
         let page: String?
     }
 
-    /// The small, stable subset of one public catalog entry needed to match
-    /// an installed bundle without treating that catalog as installation
-    /// ownership.
     struct CatalogEntry: Hashable {
         let token: String
         let version: String
@@ -84,8 +66,6 @@ enum AppUpdatesSupport {
 
     // MARK: - Update rules
 
-    /// One choice per app: skip exactly this release, or stop checking until removed.
-    /// Names are display metadata; neither a path nor a source-specific row ID is portable.
     struct UpdateRule: Codable, Identifiable, Equatable {
         let bundleID: String
         let name: String
@@ -128,8 +108,6 @@ enum AppUpdatesSupport {
 
     // MARK: - Version comparison
 
-    /// Package versions carry a revision after a comma ("3.5.262,260717d");
-    /// only the part in front of it lines up with what an app bundle reports.
     static func versionCore(_ version: String) -> String {
         let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
         var comparable = trimmed
@@ -141,18 +119,11 @@ enum AppUpdatesSupport {
         return String(comparable[comparable.startIndex..<comma])
     }
 
-    /// Versions that carry no version at all. A package pinned to "latest"
-    /// has no number to compare, so it can never be reported honestly as an
-    /// update and is left out instead of nagging forever.
     static func isUncomparable(_ version: String) -> Bool {
         let value = versionCore(version).lowercased()
         return value.isEmpty || value == "latest"
     }
 
-    /// Numeric-aware comparison: each dot-separated part is compared as a
-    /// number when both sides are digits, so 130 beats 129 and leading zeros
-    /// do not lie. A shorter version only loses when the extra parts are not
-    /// all zero, so "1.2" and "1.2.0" are the same release.
     static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
         let left = parts(of: lhs)
         let right = parts(of: rhs)
@@ -181,16 +152,9 @@ enum AppUpdatesSupport {
         if leftDigits && rightDigits {
             return compareDigits(lhs, rhs)
         }
-        // A missing part counts as zero, so "1.2" equals "1.2.0" but loses
-        // to "1.2.1"; a missing part against a word loses (1.2 < 1.2beta is
-        // never claimed, the word side simply wins the tie-break).
         if lhs.isEmpty { return rightDigits && stripLeadingZeros(rhs).isEmpty ? .orderedSame : .orderedAscending }
         if rhs.isEmpty { return leftDigits && stripLeadingZeros(lhs).isEmpty ? .orderedSame : .orderedDescending }
         if lhs == rhs { return .orderedSame }
-        // "9a" against "10" must never fall to plain text, where "9…" would
-        // outrank "10": the number in front decides first. With the numbers
-        // tied, the bare part is the release and the suffixed one is what
-        // came before it, so "5" beats "5beta".
         let leftNumber = String(lhs.prefix(while: \.isNumber))
         let rightNumber = String(rhs.prefix(while: \.isNumber))
         if leftNumber.isEmpty != rightNumber.isEmpty {
@@ -205,13 +169,8 @@ enum AppUpdatesSupport {
                 return leftBare ? .orderedDescending : .orderedAscending
             }
         }
-        // The text tie-break folds case, so two spellings of one release are
-        // equal here. Returning descending for both directions made the
-        // result antisymmetric and left isNewer true against itself.
         let left = lhs.lowercased(), right = rhs.lowercased()
         if left == right { return .orderedSame }
-        // A number after the letters is still a number: as text, "beta10"
-        // sorts before "beta9" and the tenth beta is never offered.
         let leftRuns = runs(of: left), rightRuns = runs(of: right)
         for (a, b) in zip(leftRuns, rightRuns) where a != b {
             if a.allSatisfy(\.isNumber) && b.allSatisfy(\.isNumber) {
@@ -225,7 +184,6 @@ enum AppUpdatesSupport {
         return leftRuns.count < rightRuns.count ? .orderedAscending : .orderedDescending
     }
 
-    /// "beta10" as ["beta", "10"]: stretches of digits and of everything else.
     private static func runs(of part: String) -> [String] {
         var runs: [String] = []
         for character in part {
@@ -238,8 +196,6 @@ enum AppUpdatesSupport {
         return runs
     }
 
-    /// Compared as text after dropping leading zeros, so versions with more
-    /// digits than an integer can hold still sort correctly.
     private static func compareDigits(_ lhs: String, _ rhs: String) -> ComparisonResult {
         let a = stripLeadingZeros(lhs)
         let b = stripLeadingZeros(rhs)
@@ -253,9 +209,6 @@ enum AppUpdatesSupport {
         return String(trimmed)
     }
 
-    /// Positron's bundle shows the version of the editor it is built on
-    /// (Code - OSS "1.134.0"). Its own release and build are in the product
-    /// file beside its code, the numbers the catalog lists as "2026.10.0-297".
     static func productRelease(_ product: Data?) -> (version: String, build: String)? {
         guard let product,
               let fields = try? JSONSerialization.jsonObject(with: product) as? [String: Any],
@@ -266,12 +219,6 @@ enum AppUpdatesSupport {
 
     // MARK: - Package manager source
 
-    /// Turns what the package manager reports into rows a person can act on.
-    ///
-    /// Package receipts can outlive an app that was removed by hand, and
-    /// plenty of apps update themselves without refreshing that receipt.
-    /// A row therefore only survives when its app bundle is still on disk,
-    /// and the version from that bundle is the truth.
     static func packageUpdates(outdated: [HomebrewPackageUpdate],
                                installed: [HomebrewCaskRecord],
                                ignoredTokens: Set<String> = [],
@@ -329,11 +276,6 @@ enum AppUpdatesSupport {
         return candidates.count == 1 ? candidates[0] : nil
     }
 
-    /// App bundles a package might have put in place. Some packages install
-    /// through an installer instead of dropping a bundle, so they declare no
-    /// app at all; for those the catalog name is tried as a bundle name.
-    /// A name that matches nothing is left out because there is no installed
-    /// app to update.
     private static func candidateBundleNames(for record: HomebrewCaskRecord) -> [String] {
         guard record.appFileNames.isEmpty else { return record.appFileNames }
         return record.displayName.isEmpty ? [] : ["\(record.displayName).app"]
@@ -341,9 +283,6 @@ enum AppUpdatesSupport {
 
     // MARK: - App Store source
 
-    /// Bundle identifiers worth asking the store about: store-installed apps
-    /// only, minus anything the package manager already answers for, so no
-    /// app can show up twice and no identifier leaves the Mac needlessly.
     static func appStoreCandidates(apps: [InstalledApp],
                                    coveredPaths: Set<String>) -> [InstalledApp] {
         var seen = Set<String>()
@@ -356,8 +295,6 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// The public store lookup takes several identifiers at once, so a whole
-    /// Mac is a couple of requests instead of one per app.
     static let storeLookupBatchSize = 20
 
     static func storeLookupURL(bundleIDs: [String], country: String?) -> URL? {
@@ -385,8 +322,6 @@ enum AppUpdatesSupport {
         return components?.url
     }
 
-    /// The platform-specific lookup supplies the Mac build and Mac minimum
-    /// OS even for a universal listing whose generic result describes mobile.
     static func storeMetadataResponse(_ data: Data?, statusCode: Int?) -> [String: StoreEntry] {
         guard let data, let statusCode, (200..<300).contains(statusCode),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -416,9 +351,6 @@ enum AppUpdatesSupport {
               let results = root["results"] as? [[String: Any]] else { return [:] }
         var entries: [String: StoreEntry] = [:]
         for result in results {
-            // A bundle-ID lookup can ignore `entity` and return another
-            // platform's listing. Its version and minimum OS then describe
-            // a different binary, so only accept records identified as Mac.
             guard result["kind"] as? String == "mac-software" else { continue }
             guard let bundleID = result["bundleId"] as? String,
                   let version = result["version"] as? String,
@@ -438,14 +370,10 @@ enum AppUpdatesSupport {
         return parseStoreLookup(data)
     }
 
-    /// A successful request can still omit apps unavailable in this catalog
-    /// or region. Only the combined answer can establish complete coverage.
     static func hasStoreCoverage(bundleIDs: [String], entries: [String: StoreEntry]) -> Bool {
         bundleIDs.allSatisfy { entries[$0] != nil }
     }
 
-    /// Keep partial source failures visible without listing apps whose own
-    /// publisher already answered, or repeating one app for several sources.
     static func uncheckedAppNames(_ apps: [InstalledApp], checkedPaths: Set<String>) -> [String] {
         Set(apps.filter { !checkedPaths.contains($0.path) }.map(\.name))
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
@@ -475,9 +403,6 @@ enum AppUpdatesSupport {
 
     static let onlineCatalogURL = URL(string: "https://formulae.brew.sh/api/cask.json")!
 
-    /// Decodes only catalog fields that can prove an exact app-bundle match,
-    /// a comparable version and macOS compatibility. Unknown fields remain
-    /// ignored, while an unknown macOS constraint makes that entry ineligible.
     static func parseOnlineCatalog(_ data: Data) -> [CatalogEntry]? {
         guard let rawEntries = try? JSONDecoder().decode([RawCatalogEntry].self, from: data) else {
             return nil
@@ -514,15 +439,11 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// A missing body, failed HTTP response or malformed document all mean
-    /// incomplete coverage, never an empty-but-successful catalog.
     static func parseOnlineCatalogResponse(_ data: Data?, statusCode: Int?) -> [CatalogEntry]? {
         guard let data, let statusCode, (200..<300).contains(statusCode) else { return nil }
         return parseOnlineCatalog(data)
     }
 
-    /// Apps the online catalog may answer for. Store receipts and anything
-    /// already owned by the package source never cross into this source.
     static func onlineCatalogCandidates(apps: [InstalledApp],
                                         coveredPaths: Set<String>) -> [InstalledApp] {
         apps.filter {
@@ -533,16 +454,6 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// Some catalog versions end in a build after a dash ("3.8-08539"), the
-    /// way others carry one after a comma. A bundle that reports only its
-    /// release ("3.8.0") lines up with the part in front of the dash, unless
-    /// its own build is numbered like the catalog's and is older: that is a
-    /// newer build of the same release ("4.0.4" build 4900 before "4.0.4-4926").
-    ///
-    /// Everything else is compared whole: a bundle with a dash of its own or
-    /// a further number of its own may be reporting that part, a short number
-    /// can be a fix release ("4.10-8" after "4.10-7"), and a dated version
-    /// ("2024-01-15") has no dotted release in front of its last dash.
     static func catalogRelease(_ catalogVersion: String, installedVersion: String,
                                installedBuild: String = "") -> String {
         let catalogVersion = withoutBuildLabel(catalogVersion)
@@ -560,10 +471,6 @@ enum AppUpdatesSupport {
               parts(of: installed).dropFirst(releaseParts.count).allSatisfy({
                   $0.allSatisfy(\.isNumber) && stripLeadingZeros($0).isEmpty
               }) else { return catalogVersion }
-        // Only a build with as many digits as the catalog's counts the same
-        // way; a shorter or longer one ("21", a 13-digit timestamp) is some
-        // other number. A build written out in full ("4.0.4.4900") is this
-        // release followed by its build.
         var ownBuild = installedBuild.trimmingCharacters(in: .whitespacesAndNewlines)
         let ownParts = ownBuild.split(separator: ".", omittingEmptySubsequences: false)
         if ownParts.count == releaseParts.count + 1, ownParts.allSatisfy(isNumber),
@@ -578,11 +485,6 @@ enum AppUpdatesSupport {
         return String(release)
     }
 
-    /// A commit hash after the last dash ("3.6.7-dbc92f97") or build metadata
-    /// after a plus ("3.11.1108+next.727501f") names a build without placing
-    /// it, the way the part after a comma does, so only the version in front
-    /// of it counts. A plain number after a plus ("3.22.3+105") is a build and
-    /// is compared like one after a dash.
     private static func withoutBuildLabel(_ version: String) -> String {
         var version = version
         if let plus = version.firstIndex(of: "+"), version[..<plus].contains(where: \.isNumber) {
@@ -597,26 +499,12 @@ enum AppUpdatesSupport {
         return isHash ? String(version[..<dash]) : version
     }
 
-    /// The version and build a new project starts with, or a version of only
-    /// zeros ("0.0.0") that was never set. A bundle that still carries them
-    /// says nothing about which release it holds, so only a catalog at that
-    /// same version can vouch for it. The build must be exactly 1: one that
-    /// repeats the version ("1.0.0" twice, as Electron apps are built) belongs
-    /// to a real first release.
     static func reportsPlaceholderVersion(_ app: InstalledApp) -> Bool {
         compare(versionCore(app.version), "0") == .orderedSame
             || (compare(versionCore(app.version), "1") == .orderedSame
             && app.buildVersion.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
     }
 
-    /// A bundle whose build is the catalog's own number holds that release,
-    /// whatever version it shows: Sonos shows 17.2.5 and builds 90.0.82050 for
-    /// "90.0-82050", 4K Video Downloader+ shows 26.3 and builds 26.3.5. Only an
-    /// exact match counts, of three or more parts or of one number with five or
-    /// more digits (a date or a build count), or with three or more that the
-    /// bundle also shows ("Build 4215"). A build counter ("2", "183") or a short
-    /// pair ("1.5") never stands in for a release by chance, and a newer catalog
-    /// number is still compared with the version the bundle shows.
     static func buildMatchesCatalog(_ app: InstalledApp, catalogVersion: String) -> Bool {
         let shown = parts(of: versionCore(app.version))
         func isSpecific(_ version: String) -> Bool {
@@ -631,13 +519,6 @@ enum AppUpdatesSupport {
             && compare(build, catalogVersion) == .orderedSame
     }
 
-    /// The bundle's number in the catalog's form. Some catalog versions write
-    /// the build as one more dotted number ("2.19.0.2258" for a bundle that
-    /// shows 2.19.0 and builds 2258). A build with as many digits as that
-    /// number completes the bundle's version, so the same build is current and
-    /// an older one is a newer build of the same release. A build already
-    /// written in that form ("2.19.0.2201") is that number. Otherwise this is
-    /// the version the bundle shows.
     static func installedNumber(_ app: InstalledApp, against release: String) -> String {
         let shown = versionCore(app.version)
         let build = app.buildVersion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -657,13 +538,6 @@ enum AppUpdatesSupport {
         return "\(shown).\(build)"
     }
 
-    /// Whether a catalog number goes past the bundle's only in parts the
-    /// bundle never reports, so the bundle cannot say which of those releases
-    /// it holds: "2026.1" stands for every "2026.1.x.y" an app numbered that
-    /// way ships, "2026.5.1" for every build "2026.5.1.N" whose N has three or
-    /// more digits, and "5.17" for every "5.17-N". One more short dotted part
-    /// ("1.2" before "1.2.1") is the usual next release and still counts, and
-    /// so does a bundle that reports a dash of its own.
     static func catalogOnlyAddsUnreportedParts(_ catalogVersion: String, installedVersion: String) -> Bool {
         let installed = versionCore(installedVersion)
         guard !installed.contains("-"), let installedParts = numericParts(installed) else { return false }
@@ -681,9 +555,6 @@ enum AppUpdatesSupport {
             && compare(release, installed) == .orderedSame
     }
 
-    /// A catalog number the bundle cannot be placed against: a version with
-    /// no number in it ("??.??", "lazer"), a template bundle that does not
-    /// match it, or a newer number that only adds parts the bundle never reports.
     static func cannotCompare(_ app: InstalledApp, with release: String) -> Bool {
         guard versionCore(app.version).contains(where: \.isNumber) else { return true }
         if reportsPlaceholderVersion(app) {
@@ -694,16 +565,11 @@ enum AppUpdatesSupport {
             && catalogOnlyAddsUnreportedParts(release, installedVersion: installed)
     }
 
-    /// "2026.1.4" as its numbers, or nil when any part is not a plain number.
     private static func numericParts(_ version: String) -> [String]? {
         let parts = version.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         return parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } } ? parts : nil
     }
 
-    /// Exact names take priority; a single identity also finds renamed apps
-    /// and installer packages without confusing companion apps with the owner.
-    /// Apps whose version cannot be compared come back on their own, so they
-    /// are named instead of reported as updates or as current.
     static func onlineCatalogFindings(apps: [InstalledApp],
                                       catalog: [CatalogEntry],
                                       operatingSystemVersion: String,
@@ -715,8 +581,6 @@ enum AppUpdatesSupport {
             for name in entry.appNames {
                 entriesByName[name, default: []].append(entry)
             }
-            // An uninstall list can also name companion apps it must quit.
-            // Only a single declared identity can stand in for a filename.
             if entry.bundleIDs.count == 1, let id = entry.bundleIDs.first {
                 entriesByID[id, default: []].append(entry)
             }
@@ -744,7 +608,6 @@ enum AppUpdatesSupport {
                 uncomparableApps.append(app)
                 return nil
             }
-            // Current versions are covered too; absence of a row alone proves nothing.
             if !isUncomparable(app.version) { checkedPaths.insert(app.path) }
             guard isNewer(release, than: installedNumber(app, against: release)) else { return nil }
             return Item(id: "\(Source.onlineCatalog.rawValue):\(app.path)",
@@ -840,8 +703,6 @@ enum AppUpdatesSupport {
                 return []
             }
             quit = strings(.quit)
-            // Installer packages often declare their app only in removal
-            // metadata. Accept a literal app in a standard application folder.
             appNames = strings(.delete).filter {
                 let parent = ($0 as NSString).deletingLastPathComponent
                 return (parent == "/Applications" || parent == "~/Applications")
@@ -850,8 +711,6 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// One list for the panel: apps that can be updated on the spot first,
-    /// then store and online findings, each group alphabetical.
     static func merged(_ groups: [Item]...) -> [Item] {
         var seen = Set<String>()
         let all = groups.flatMap { $0 }.filter { seen.insert($0.id).inserted }
@@ -863,7 +722,6 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// Package tokens for the rows the person ticked, in list order.
     static func tokens(in items: [Item], selection: Set<String>) -> [String] {
         items.filter { selection.contains($0.id) }.compactMap(\.token)
     }
@@ -872,19 +730,12 @@ enum AppUpdatesSupport {
         items.contains { selection.contains($0.id) && $0.source == .appStore }
     }
 
-    /// The page a store hand-off can land on. With one store row ticked that is
-    /// its product page, the same place the row's own button goes; the store
-    /// shows one product at a time, so several rows have no such page and the
-    /// hand-off falls back to the updates page.
     static func singleStorePage(in items: [Item], selection: Set<String>) -> String? {
         let store = items.filter { selection.contains($0.id) && $0.source == .appStore }
         guard store.count == 1 else { return nil }
         return store[0].storePage
     }
 
-    /// Selection kept honest against a list that just changed: rows that are
-    /// gone drop out, and rows that appeared arrive already ticked, which is
-    /// what "update everything" expects without any extra click.
     static func reconciledSelection(previous: Set<String>,
                                     knownIDs: Set<String>,
                                     items: [Item]) -> Set<String> {
@@ -916,21 +767,10 @@ enum AppUpdatesSupport {
         }
     }
 
-    /// A check that came due while the Mac was asleep or off runs shortly
-    /// after launch instead of the instant the app comes up, so starting the
-    /// app never waits on the package manager.
     static let catchUpDelay: TimeInterval = 180
 
-    /// How old a finished check can be before a surface opening again is
-    /// worth a fresh scan. Short enough that coming back from the store shows
-    /// the truth, long enough that flipping between panel and Settings does
-    /// not run the package manager over and over.
     static let staleAfter: TimeInterval = 10 * 60
 
-    /// Whether opening a surface should scan again. The list is a claim about
-    /// the Mac right now, so it re-reads after an update was installed
-    /// somewhere else (the store), after nothing has been scanned in this
-    /// process, and once the last answer is simply old.
     static func shouldRecheck(hasCheckedThisSession: Bool,
                               handoffPending: Bool,
                               lastCheck: Date?,

@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// A short-lived metadata request. The session retains its delegate until
-/// completion, then invalidates; no session or observer survives the check.
 final class AppUpdateFeedLoader: NSObject, URLSessionDataDelegate {
     private var data = Data()
     private var accepted = false

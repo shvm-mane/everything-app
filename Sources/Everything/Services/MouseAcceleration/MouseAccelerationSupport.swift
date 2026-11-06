@@ -71,37 +71,6 @@ struct MouseAccelerationRecoveryJournal: Codable, Equatable {
     }
 }
 
-/// A short settling window after hotplug, never a repeating idle timer.
-struct MouseAccelerationReapplySchedule {
-    private var generation: UUID?
-    private var delays: ArraySlice<TimeInterval> = []
-
-    mutating func restart() -> UUID {
-        let token = UUID()
-        generation = token
-        delays = [0, 0.25, 0.75, 1.5, 2.5]
-        return token
-    }
-
-    func isCurrent(_ token: UUID) -> Bool {
-        generation == token
-    }
-
-    mutating func nextDelay(for token: UUID) -> TimeInterval? {
-        guard isCurrent(token) else { return nil }
-        guard let delay = delays.popFirst() else {
-            cancel()
-            return nil
-        }
-        return delay
-    }
-
-    mutating func cancel() {
-        generation = nil
-        delays = []
-    }
-}
-
 enum MouseAccelerationSupport {
     static let linearScalingKey = "HIDUseLinearScalingMouseAcceleration"
     static let pointerAccelerationTypeKey = "HIDPointerAccelerationType"

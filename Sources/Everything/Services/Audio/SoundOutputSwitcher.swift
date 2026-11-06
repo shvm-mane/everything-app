@@ -5,7 +5,6 @@ import Carbon.HIToolbox
 import Combine
 import Foundation
 
-/// Cycles the system output through the devices selected in the mixer panel.
 final class SoundOutputSwitcher: ObservableObject {
     static let shared = SoundOutputSwitcher()
 
@@ -75,7 +74,7 @@ final class SoundOutputSwitcher: ObservableObject {
                 return noErr
             }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
         }
-        let id = EventHotKeyID(signature: 0x5655_534F, id: 4) // 'VUSO'
+        let id = EventHotKeyID(signature: 0x5655_534F, id: 4)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(shortcut.carbonKeyCode,
                                          shortcut.carbonModifiers,
@@ -95,9 +94,6 @@ final class SoundOutputSwitcher: ObservableObject {
         }
     }
 
-    /// Lets go of the global key while a shortcut field is listening, so the
-    /// user can record the very combination this feature uses. The next
-    /// `syncWithPreferences` takes it back.
     func suspendShortcut() { unregisterHotkey() }
 
     private func unregisterHotkey() {

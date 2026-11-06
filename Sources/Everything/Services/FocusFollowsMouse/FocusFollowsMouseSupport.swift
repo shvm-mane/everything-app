@@ -12,10 +12,6 @@ enum FocusFollowsMouseSupport {
         min(max(milliseconds, delayRange.lowerBound), delayRange.upperBound)
     }
 
-    /// Ask only the native mouse target's app. Visual overlays may sit above
-    /// it without receiving input. Our interactive panels still stop the scan
-    /// before any query: entering our Accessibility tree from a worker can
-    /// deadlock against the main thread.
     static func queryWindow<Result>(in windows: [[String: Any]],
                                     at point: CGPoint,
                                     pointerWindowID: CGWindowID,
@@ -38,9 +34,6 @@ enum FocusFollowsMouseSupport {
             }
             guard (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value == pointerWindowID
             else { continue }
-            // The Dock, the menu bar, a banner and the desktop are not what
-            // hover follows, and neither is the app behind them, since the
-            // pointer is on them and not on it.
             guard let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue,
                   MouseAppExceptionSupport.appWindowLayers.contains(layer)
             else { return nil }
@@ -55,23 +48,11 @@ enum FocusFollowsMouseSupport {
                                focusedWindowSharesRoot: Bool,
                                targetAppIsFrontmost: Bool) -> Bool {
         guard targetAppIsFrontmost else { return true }
-        // Games may not expose focus through Accessibility. Reasserting it can
-        // release their captured pointer, so require a known different window.
         guard let focusedWindowID else { return false }
-        // A sheet or a modal window keeps focus and macOS hands it straight
-        // back, so asking for the window it blocks only flickers. A list of
-        // suggestions or a popover belongs to the window it hangs from, and
-        // moving focus between the two closes it: Chrome's address bar
-        // suggestions never take focus and close once the address bar loses
-        // it (issue #3231).
         return focusedWindowID != targetWindowID && !focusedWindowBlocksTarget
             && !focusedWindowSharesRoot
     }
 
-    /// The window at the top of a chain of child windows, or the window
-    /// itself when it is attached to nothing. A child window can hang from
-    /// another child, as Chrome's suggestions hang from a toolbar overlay
-    /// in full screen, so the chain is followed to its end.
     static func rootWindowID(of windowID: CGWindowID,
                              parentWindowID: (CGWindowID) -> CGWindowID?) -> CGWindowID {
         var root = windowID
@@ -83,9 +64,6 @@ enum FocusFollowsMouseSupport {
         return root
     }
 
-    /// A canceled focus handoff gives focus back to the window it took it
-    /// from only while that app is in front and still reports that window.
-    /// A read that fails or finds no window is unknown, so it restores nothing.
     static func shouldRestoreFocus(to previousWindowID: CGWindowID,
                                    reportedFocusedWindowID: CGWindowID?,
                                    appIsFrontmost: Bool) -> Bool {
@@ -115,10 +93,6 @@ struct FocusFollowsMouseState: Equatable {
         point != nil && phase == .pending
     }
 
-    /// With a window ID, the delay counts time over that window, so moving
-    /// within it keeps a pending lookup or a completed focus. A canceled
-    /// attempt can try again after movement. Without an ID, movement always
-    /// restarts the delay.
     mutating func recordMovement(to point: CGPoint, at time: TimeInterval, windowID: CGWindowID? = nil) {
         defer {
             self.point = point
@@ -153,8 +127,6 @@ struct FocusFollowsMouseState: Equatable {
         return FocusFollowsMouseEvaluation(point: point, generation: generation)
     }
 
-    /// A failed lookup or canceled handoff consumes no successful focus. Wait
-    /// for movement, or preserve movement that arrived while the attempt ran.
     mutating func finishEvaluation(_ evaluation: FocusFollowsMouseEvaluation, succeeded: Bool) {
         guard isCurrent(evaluation) else { return }
         phase = succeeded ? .completed : .cancelled

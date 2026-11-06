@@ -53,13 +53,9 @@ struct NotchNotificationInbox {
 
     mutating func dismiss(_ id: UUID) { items.removeAll { $0.id == id } }
 
-    /// Banners still on screen stay seen, so the next layout pass cannot
-    /// bring back what was just cleared; later arrivals are mirrored as usual.
     mutating func clear() { items.removeAll() }
 }
 
-/// Only labelled notification text belongs in the mirror. Controls, widgets
-/// and editable native fields never become message content.
 enum NotchNotificationSupport {
     struct Text: Equatable {
         let identifier: String
@@ -69,19 +65,12 @@ enum NotchNotificationSupport {
     static let bannerRoles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
     static let stackRoles: Set<String> = ["AXNotificationCenterAlertStack", "AXNotificationCenterBannerStack"]
     static let maximumItems = 50
-    /// A brief grace avoids cutting off short alert tones when closing the
-    /// original banner. This does not observe playback; longer sounds may stop.
     static let nativeCloseGrace: TimeInterval = 1.2
-    /// Moving the window that holds a banner was measured on macOS 27, where
-    /// the center keeps its banners in one window it places again each time
-    /// it shows one. Earlier versions close the original after the grace.
     static var movesNativeWindow: Bool {
         if #available(macOS 27, *) { return true }
         return false
     }
 
-    /// Resolve only an unambiguous installed source. Formatting marks used by
-    /// localized app labels are not part of the application's name.
     static func sourceBundleIdentifier(for names: [String],
                                        applications: [(name: String, bundleIdentifier: String)]) -> String? {
         func label(_ value: String) -> String {
@@ -97,9 +86,6 @@ enum NotchNotificationSupport {
         return matches.count == 1 ? matches.first : nil
     }
 
-    /// Many messages arrive while their app is closed, so installed apps can
-    /// name a source too. A running match wins; otherwise the name must stay
-    /// unambiguous across both lists.
     static func sourceBundleIdentifier(for names: [String],
                                        running: [(name: String, bundleIdentifier: String)],
                                        installed: [(name: String, bundleIdentifier: String)]) -> String? {
@@ -107,9 +93,6 @@ enum NotchNotificationSupport {
             ?? sourceBundleIdentifier(for: names, applications: running + installed)
     }
 
-    /// Native formatted descriptions include the app before the same labelled
-    /// message fields. Remove that exact suffix rather than splitting names or
-    /// message text at commas, which may be part of their content.
     static func applicationLabel(from description: String, content: NotchNotificationContent) -> String? {
         let suffix = ", " + [content.title, content.subtitle, content.body].filter { !$0.isEmpty }.joined(separator: ", ")
         guard description.utf8.count <= 50_000, description.hasSuffix(suffix) else { return nil }
@@ -147,15 +130,12 @@ enum NotchNotificationSupport {
                                             subtitle: texts.count == 3 ? texts[1].value : "",
                                             body: texts[texts.count - 1].value)
         }
-        // Multiple messages in a stack must never be flattened into one sender.
         guard headers.count <= 1, titles.count == 1, bodies.count <= 1, subtitles.count <= 1,
               texts.allSatisfy({ $0.value.utf8.count <= 16_384 }) else { return nil }
         return NotchNotificationContent(app: headers.first ?? "", title: titles[0],
                                         subtitle: subtitles.first ?? "", body: bodies.first ?? "")
     }
 
-    /// Structural view markers are not durable message identities. Opening
-    /// still requires the unchanged native target and notification content.
     static func nativeIdentity(_ identifier: String?) -> String? {
         guard let identifier, identifier.utf8.count <= 2_048,
               identifier.range(of: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
@@ -164,32 +144,19 @@ enum NotchNotificationSupport {
     }
 }
 
-/// The banner beside the camera: the app's icon and title on one side, the
-/// message on the other. Both sides take the width the longer one needs, so
-/// a short message leaves no band of empty black at the ends, while a long
-/// one keeps the widest banner and wraps or truncates within it.
 enum NotchNotificationBannerLayout {
     static let iconSize: CGFloat = 22
     static let spacing: CGFloat = 8
     static let wingRange: ClosedRange<CGFloat> = NotchNotice.minimumWing...190
-    /// The inset from the island's curved end, and a little air so the
-    /// fitted text never truncates where SwiftUI rounds its width.
     static let inset: CGFloat = 16
     static let air: CGFloat = 6
-    /// The fonts the banner draws with, so it is measured in the same ones.
     static let titleFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
     static let messageFont = NSFont.systemFont(ofSize: 11)
 
-    /// A strip tall enough for two lines wraps a long message onto a second.
     static func messageLines(stripHeight: CGFloat) -> Int { stripHeight >= 30 ? 2 : 1 }
 
-    /// The sender and the message each take a side as wide as they need. A
-    /// message that wraps takes the width its lines need once wrapped at the
-    /// widest side, not the whole side.
     static func wings(for content: NotchNotificationContent, wrapsMessage: Bool = false) -> NotchNoticeWings {
         func width(_ text: String, _ font: NSFont) -> CGFloat {
-            // A line or two is all the banner shows, and the widest wing is
-            // reached long before this much text.
             (String(text.prefix(240)) as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
         }
         let title = iconSize + spacing + width(content.compactTitle, titleFont)
@@ -206,8 +173,6 @@ enum NotchNotificationBannerLayout {
     }
 }
 
-/// The held preview is sized from the same fonts and line limits it draws
-/// with, so the island fits the message rather than scrolling or padding it.
 enum NotchNotificationPreviewLayout {
     static let iconSize: CGFloat = 26
     static let headerHeight: CGFloat = 28
@@ -233,8 +198,6 @@ enum NotchNotificationPreviewLayout {
         let measured = (text as NSString).boundingRect(
             with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height
-        // Layout may round a wrapped line differently; a point of slack keeps
-        // the last line inside the island instead of under its edge.
         return min(ceil(measured) + 1, line * CGFloat(max(1, lines)) + 1)
     }
 }

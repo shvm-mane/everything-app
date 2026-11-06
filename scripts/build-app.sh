@@ -110,7 +110,6 @@ cp Resources/now-playing.pl Resources/agent-prices.json Resources/ClaudeThinking
 cp Resources/Info.plist "$STAGE/Contents/Info.plist"
 printf 'APPL????' > "$STAGE/Contents/PkgInfo"
 cp build/AppIcon.icns "$STAGE/Contents/Resources/"
-[[ -d Resources/Images ]] && { mkdir -p "$STAGE/Contents/Resources/Images"; cp Resources/Images/* "$STAGE/Contents/Resources/Images/"; } || true
 xattr -c -r "$STAGE" 2>/dev/null || true
 
 # Sign with a stable identity so Accessibility grants survive rebuilds.

@@ -5,74 +5,25 @@ import AppKit
 import Metal
 import QuartzCore
 
-/// Pushes the built-in XDR display past its regular maximum brightness by
-/// using the panel's HDR headroom for everything on screen.
-///
-/// Mechanism: click-through overlay windows covering the screen (its two
-/// halves, see `ExtraBrightnessSupport.overlayFrames`) each hold a Metal layer
-/// whose compositing filter is "multiply". The layer renders a solid gray
-/// above 1.0 in extended linear sRGB, so the window server multiplies every
-/// pixel beneath it into the extended range the panel reserves for HDR:
-/// whites get brighter, blacks stay black, contrast is preserved. Showing
-/// extended range content is also exactly what makes macOS engage the
-/// panel's headroom, so the overlay bootstraps itself: it starts with a
-/// small boost and ramps up as the reported headroom rises.
-///
-/// Rendering uses public APIs; window placement uses the island's runtime-
-/// resolved private Space helper, with the previous placement as a fallback.
-/// macOS controls the panel: thermal or power pressure can shrink the
-/// headroom at any time and the poll adapts.
-/// The overlay dies with the app, so no display state can outlive a crash.
-/// No windows, timers or observers exist while the feature is off.
 final class ExtraBrightnessService: ObservableObject {
     static let shared = ExtraBrightnessService()
 
-    /// A built-in display with EDR headroom exists (feature can work here).
     @Published private(set) var supported = false
-    /// The boost is currently visible on the panel.
     @Published private(set) var boosting = false
 
-    /// The multiply windows, one per `ExtraBrightnessSupport.overlayFrames`
-    /// piece, and their layers in the same order.
     private var overlayWindows: [NSWindow] = []
     private var overlayLayers: [CAMetalLayer] = []
-    /// A one-pixel corner window without the multiply filter. The multiply
-    /// layer alone does not reliably make macOS engage the panel's headroom,
-    /// but a plain extended range pixel does (verified on this hardware).
-    /// Its layer keeps re-presenting on every poll tick: macOS only sustains
-    /// the headroom while extended range content keeps being presented, and
-    /// revokes it about a second after the last present (the boost visibly
-    /// dropped out on XDR hardware when only the first frame was shown).
     private var triggerWindow: NSWindow?
     private var triggerLayer: CAMetalLayer?
-    /// A Space of the overlay's own (the island's helper), holding every
-    /// window above. On macOS 27 Mission Control drops each window of the
-    /// current desktop that a larger window above covers, see-through or
-    /// not, so any screen-sized overlay on the desktop emptied that desktop's
-    /// thumbnail down to the wallpaper (#3292). Here the overlay belongs to
-    /// no desktop and is never counted. Rebuilt with the windows, which must
-    /// join before they first show. Nil when the symbols are missing: the
-    /// windows then stay on every desktop as before.
     private var overlaySpace: NotchOverlaySpace?
     private var metalDevice: MTLDevice?
     private var commandQueue: MTLCommandQueue?
     private var pollTimer: Timer?
     private var screenObserver: NSObjectProtocol?
     private var workspaceObservers: [NSObjectProtocol] = []
-    /// While the screens sleep the compositor stops recycling drawables and
-    /// nextDrawable would stall the main thread, so presents pause and a
-    /// fresh render happens on wake.
     private var screensAsleep = false
-    /// The factor currently on screen, moved one smoothing step per tick
-    /// toward the instantaneous target (see the ramp constants in
-    /// ExtraBrightnessSupport): the grant wobbles while HDR video plays and
-    /// rendering it raw flashed the whole screen in visible steps.
     private var renderedFactor = 1.0
-    /// Consecutive poll ticks that read no engaged headroom.
     private var disengagedTicks = 0
-    /// The display the overlay was built for. Fullscreen video makes the
-    /// same panel re-announce itself (refresh rate and EDR mode changes);
-    /// those must reuse the live windows, not rebuild them.
     private var overlayDisplayID: UInt32?
 
     private init() {}
@@ -91,8 +42,6 @@ final class ExtraBrightnessService: ObservableObject {
         }
     }
 
-    /// Re-applies a level change immediately instead of waiting for the poll.
-    /// The slider is user feedback, so it bypasses the smoothing ramp.
     func levelDidChange() {
         guard pollTimer != nil else { return }
         renderIfNeeded(immediate: true)
@@ -100,9 +49,6 @@ final class ExtraBrightnessService: ObservableObject {
 
     // MARK: - Detection
 
-    /// The Mac's model identifier (for example Mac16,1), the primary signal
-    /// for a real XDR panel: names and headroom values from NSScreen proved
-    /// unreliable across machines and macOS versions.
     private static let modelIdentifier: String? = {
         var size = 0
         guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return nil }
@@ -111,7 +57,6 @@ final class ExtraBrightnessService: ObservableObject {
         return String(cString: buffer)
     }()
 
-    /// Which sustainable boost curve this panel generation takes.
     private static let panelReference = ExtraBrightnessSupport.panelReference(model: modelIdentifier)
 
     private static func builtInXDRScreen() -> NSScreen? {
@@ -126,16 +71,6 @@ final class ExtraBrightnessService: ObservableObject {
         }
     }
 
-    /// The screen the overlay was built for. Which panel qualifies moves only
-    /// with the display topology, and `didChangeScreenParametersNotification`
-    /// already tracks that into `overlayDisplayID`, so the poll looks the
-    /// display up instead of re-deriving it with `builtInXDRScreen()` four
-    /// times a second. Both walk `NSScreen.screens` reading
-    /// `deviceDescription`; what this drops is the per-screen
-    /// `CGDisplayIsBuiltin` call and, on the built-in panel, `localizedName`
-    /// and `maximumPotentialExtendedDynamicRangeColorComponentValue` through
-    /// `isSupportedPanel` — a small saving on the main thread, and an answer
-    /// that could not have changed since the last screen-change notification.
     private var overlayScreen: NSScreen? {
         guard let overlayDisplayID else { return nil }
         return NSScreen.screens.first { Self.displayID(of: $0) == overlayDisplayID }
@@ -153,12 +88,6 @@ final class ExtraBrightnessService: ObservableObject {
         guard let screen = Self.builtInXDRScreen() else { return }
         showOverlay(on: screen)
         installObserver()
-        // Four presents a second: the headroom grant follows recent extended
-        // range presents and macOS revokes it about a second after they stop,
-        // so this heartbeat keeps a comfortable margin while costing nothing.
-        // The common modes keep it beating while one of the app's menus,
-        // sliders or alerts tracks the mouse; the default mode alone pauses
-        // there, long enough for the grant to lapse.
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.renderIfNeeded()
         }
@@ -227,13 +156,6 @@ final class ExtraBrightnessService: ObservableObject {
         screensAsleep = false
     }
 
-    /// The windows sit in their own Space (or, without it, on every Space), so
-    /// a desktop or fullscreen change normally needs nothing beyond a fresh
-    /// present. Rebuilding stays as the fallback for what can still move the
-    /// ground under it: a different built-in display, or AppKit reporting
-    /// that a desktop-resident window is not there. AppKit never reports
-    /// windows of the own Space as on the active Space, so that check would
-    /// rebuild, and blink the boost, on every switch.
     private func handleActiveSpaceChange() {
         guard pollTimer != nil else { return }
         guard let screen = Self.builtInXDRScreen() else {
@@ -262,8 +184,6 @@ final class ExtraBrightnessService: ObservableObject {
             return
         }
         guard let screen = Self.builtInXDRScreen() else {
-            // Built-in display gone (clamshell): release everything; the
-            // preference stays on and a later screen change brings it back.
             stop(preservingObservers: true)
             return
         }
@@ -271,12 +191,6 @@ final class ExtraBrightnessService: ObservableObject {
             start()
             return
         }
-        // The same panel re-announces itself in storms: an EDR headroom ramp
-        // alone fires this notification over a hundred times in two seconds
-        // (measured), and HDR video starting or going fullscreen ramps the
-        // headroom every time. Rebuilding the overlay for each one blinked
-        // the boost off and on; with the panel and frame unchanged nothing
-        // happens here at all and the poll keeps its own pace.
         if !overlayWindows.isEmpty, overlayDisplayID == Self.displayID(of: screen) {
             let frames = ExtraBrightnessSupport.overlayFrames(for: screen.frame)
             if overlayWindows.map(\.frame) != frames {
@@ -300,19 +214,6 @@ final class ExtraBrightnessService: ObservableObject {
         NSRect(x: screen.frame.maxX - 1, y: screen.frame.minY, width: 1, height: 1)
     }
 
-    /// Neither window list option works for finding the blocked sheet
-    /// directly: `.optionOnScreenOnly` never lists it, because failing to
-    /// reach the screen while this overlay is up is the bug itself, and
-    /// `.optionAll` carries dozens of stale windows AMSUIPaymentViewService
-    /// leaves registered from earlier purchase attempts long after they are
-    /// dismissed (confirmed live: over 60 on a machine used for nothing but
-    /// this repro), so owner name alone over-matches indefinitely.
-    ///
-    /// SecurityAgent owns the Touch ID / password panel for admin prompts
-    /// and is a real running application for as long as its panel is up, so
-    /// it can be checked directly. The Mac App Store's purchase sheet has no
-    /// equally clean signal, so this falls back to the one thing already
-    /// confirmed to fix that case: the Store itself being frontmost.
     private static func systemAuthorizationUIIsActive() -> Bool {
         if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.SecurityAgent").isEmpty {
             return true
@@ -320,23 +221,11 @@ final class ExtraBrightnessService: ObservableObject {
         return NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.AppStore"
     }
 
-    /// The windows belong to every Space and sit out Exposé. Bound to a single
-    /// Space it travelled with that Space: swiping to another desktop slid the
-    /// overlay off screen for the whole animation, taking the boost with it
-    /// until the transition ended and a rebuild brought it back (measured).
-    /// Resident everywhere there is no handoff at all, and the presents that
-    /// hold the panel's headroom never pause. `.canJoinAllApplications` keeps
-    /// the boost from dropping as video enters or leaves full screen; removing
-    /// it was tried against the purchase-sheet bug below and did not help, so
-    /// it stays.
     private static let overlayCollectionBehavior: NSWindow.CollectionBehavior = [
         .ignoresCycle, .fullScreenAuxiliary, .canJoinAllApplications,
         .canJoinAllSpaces, .stationary,
     ]
 
-    /// Desktop and window-overview transitions composite above ordinary
-    /// screen-saver windows, so the multiplier and its headroom trigger stay
-    /// at the display-shield level to remain in the final picture.
     private static let overlayWindowLevel = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
 
     // MARK: - Overlay
@@ -354,8 +243,6 @@ final class ExtraBrightnessService: ObservableObject {
         for frame in ExtraBrightnessSupport.overlayFrames(for: screen.frame) {
             let window = NSWindow(contentRect: frame, styleMask: [.borderless],
                                   backing: .buffered, defer: false)
-            // Above regular windows and the menu bar so the whole picture is
-            // boosted evenly; it ignores clicks, so it is never in the way.
             window.level = Self.overlayWindowLevel
             window.isOpaque = false
             window.backgroundColor = .clear
@@ -363,8 +250,6 @@ final class ExtraBrightnessService: ObservableObject {
             window.ignoresMouseEvents = true
             window.isReleasedWhenClosed = false
             window.animationBehavior = .none
-            // Screenshots and recordings must show the real content, not the
-            // boosted composite (the overlay would wash captures out).
             window.sharingType = .none
             window.collectionBehavior = Self.overlayCollectionBehavior
 
@@ -374,8 +259,6 @@ final class ExtraBrightnessService: ObservableObject {
             layer.wantsExtendedDynamicRangeContent = true
             layer.colorspace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
             layer.isOpaque = false
-            // The window server multiplies everything beneath by this layer's
-            // pixels. A uniform color needs no resolution: two by two is plenty.
             layer.compositingFilter = "multiply"
             layer.drawableSize = CGSize(width: 2, height: 2)
             layer.frame = CGRect(origin: .zero, size: frame.size)
@@ -391,18 +274,12 @@ final class ExtraBrightnessService: ObservableObject {
         overlayDisplayID = Self.displayID(of: screen)
         metalDevice = device
         commandQueue = queue
-        // First frame before the windows show: a rebuild mid-boost must come
-        // up already multiplying, never with an empty (neutral) layer.
         render(factor: renderedFactor, waitUntilScheduled: true)
         overlayWindows.forEach { overlaySpace?.add($0) }
         overlayWindows.forEach { $0.orderFrontRegardless() }
         showTrigger(on: screen, device: device, queue: queue)
     }
 
-    /// The one-pixel plain extended range window that makes macOS engage the
-    /// panel's headroom (the multiply layer alone does not). It sits in the
-    /// bottom right corner of the screen and is kept dim, so at most it reads
-    /// as a faint dot there while the boost is on.
     private func showTrigger(on screen: NSScreen, device: MTLDevice, queue: MTLCommandQueue) {
         triggerWindow?.orderOut(nil)
         triggerWindow = nil
@@ -439,9 +316,6 @@ final class ExtraBrightnessService: ObservableObject {
         window.orderFrontRegardless()
     }
 
-    /// One clear pass of the extended range pixel. Called on every poll tick
-    /// while the boost is on: the headroom grant follows recent presents, so
-    /// a single frame engages it only to lose it a moment later.
     private func presentTrigger(waitUntilScheduled: Bool = false) {
         guard let layer = triggerLayer,
               let queue = commandQueue,
@@ -451,8 +325,6 @@ final class ExtraBrightnessService: ObservableObject {
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        // Comfortably in extended range so the headroom engages, but dim
-        // enough that the single pixel stays unobtrusive.
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 1.8, green: 1.8, blue: 1.8, alpha: 1.0)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.endEncoding()
@@ -461,30 +333,9 @@ final class ExtraBrightnessService: ObservableObject {
         if waitUntilScheduled { commands.waitUntilScheduled() }
     }
 
-    /// Renders the multiply color for the current level and headroom, every
-    /// poll tick. Both layers keep presenting for as long as the boost is on:
-    /// macOS grants the panel's headroom in response to presented extended
-    /// range content and revokes it moments after presents stop, which
-    /// visibly dropped the boost after a second on XDR hardware. Two tiny
-    /// clear passes per tick cost nothing measurable. The rendered factor
-    /// moves one smoothing step per tick (with a grace window over transient
-    /// dropouts), so a grant wobbling under HDR video reads as a gentle
-    /// drift instead of stepped flashes; `immediate` (the level slider)
-    /// snaps straight to the target.
     private func renderIfNeeded(immediate: Bool = false) {
         guard !screensAsleep else { return }
         guard let screen = overlayScreen, !overlayLayers.isEmpty else { return }
-        // SecurityAgent's Touch ID / password panel and the Mac App Store's
-        // PassKit purchase-authorization sheet (used even for free "Get"
-        // installs) both stayed permanently hidden behind this overlay while
-        // it was up, regardless of window level or collection behavior.
-        // `systemAuthorizationUIIsActive()` covers exactly two signals:
-        // SecurityAgent running, or the App Store being frontmost. Nothing
-        // needs the boost while either is true, so stepping out of the way
-        // costs nothing. It does NOT cover a purchase sheet opened from a
-        // third-party app's own in-app purchase flow — that would not make
-        // the App Store frontmost, and neither signal here is confirmed to
-        // catch it; that path is still untested and may still be affected.
         guard !Self.systemAuthorizationUIIsActive() else {
             overlayWindows.forEach { $0.orderOut(nil) }
             triggerWindow?.orderOut(nil)
@@ -514,10 +365,6 @@ final class ExtraBrightnessService: ObservableObject {
         render(factor: renderedFactor)
     }
 
-    /// One clear-only render pass per window, no shaders: each drawable is a
-    /// uniform gray at `factor`, which the compositing filter multiplies with
-    /// the screen. All halves present from one command buffer, or none does,
-    /// so they never show different factors.
     private func render(factor: Double, waitUntilScheduled: Bool = false) {
         let drawables = overlayLayers.compactMap { $0.nextDrawable() }
         guard !drawables.isEmpty, drawables.count == overlayLayers.count,

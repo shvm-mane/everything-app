@@ -4,18 +4,7 @@
 import AppKit
 import QuartzCore
 
-/// Records where the pointer went while a recording runs.
-///
-/// A fixed-cadence sampler on its own thread rather than an event tap, for
-/// three reasons: it needs no permission at all, it costs about a hundred
-/// nanoseconds per sample, and a filter that runs offline wants its input on
-/// an even grid anyway. The presses come from a mouse-only global monitor,
-/// which is exact and, unlike key events, ungated.
-///
-/// Nothing here exists between recordings: the thread, the monitor and the
-/// buffer are all created in `start()` and gone after `stop()`.
 final class RecorderPointerSampler {
-
     private let region: RecorderSupport.Region
     private let displayBounds: CGRect
     private let pauseClock: RecorderPauseClock
@@ -24,9 +13,6 @@ final class RecorderPointerSampler {
     private var clickMonitor: Any?
     private let lock = NSLock()
     private var samples: [RecorderMotion.Sample] = []
-    /// The pointer shape in effect for each sample, kept alongside rather than
-    /// inside it: the seed only becomes an index once the recording is over
-    /// and every shape that appeared is known.
     private var identities: [UInt64] = []
     private var clicks: [RecorderMotion.Click] = []
     private let cursors = RecorderCursorCatalog()
@@ -36,8 +22,6 @@ final class RecorderPointerSampler {
     private var currentIdentity: UInt64 = 0
     private let displayScale: Double
 
-    /// 125 Hz: comfortably above any mouse report rate we care about, and
-    /// still around fourteen microseconds of work per second of recording.
     private static let sampleRate: Double = 125
 
     init(region: RecorderSupport.Region, pauseClock: RecorderPauseClock) {
@@ -64,8 +48,6 @@ final class RecorderPointerSampler {
             return self.generation
         }
 
-        // Mouse-only monitors need no Accessibility grant, and a press is
-        // never coalesced the way a move is, so these timestamps are exact.
         clickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp]
         ) { [weak self] event in
@@ -81,7 +63,6 @@ final class RecorderPointerSampler {
         thread.start()
     }
 
-    /// Stops sampling and hands over what was collected.
     func stop() -> RecorderPointerTrack {
         thread = nil
         if let clickMonitor {
@@ -111,9 +92,6 @@ final class RecorderPointerSampler {
             let now = CACurrentMediaTime()
             if let time = pauseClock.eventTime(now),
                let point = normalizedPointerLocation() {
-                // Two nanoseconds to ask whether the pointer changed, twenty
-                // two microseconds to read the new one. So the question rides
-                // every sample and the answer is fetched only on a change.
                 lock.withLock {
                     guard running, self.generation == generation else { return }
                     let seed = cursors.currentSeed()
@@ -138,10 +116,6 @@ final class RecorderPointerSampler {
         }
     }
 
-    /// The pointer inside the recorded area, 0...1 with a top-left origin.
-    /// `CGEvent(source: nil)?.location` is already in the window server's
-    /// top-left global space, which is the same space the recorded rectangle
-    /// is expressed in, so there is no flipping to get wrong.
     private func normalizedPointerLocation() -> CGPoint? {
         guard let location = CGEvent(source: nil)?.location,
               location.x.isFinite, location.y.isFinite

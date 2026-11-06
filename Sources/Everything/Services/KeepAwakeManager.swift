@@ -7,9 +7,6 @@ import IOKit.ps
 import IOKit.pwr_mgt
 import os
 
-/// Core of the energy feature: manages "keep awake" sessions through IOKit power
-/// assertions, the closed-lid mode (pmset disablesleep, administrator password)
-/// and the battery protection watchdog.
 final class KeepAwakeManager: ObservableObject {
     static let shared = KeepAwakeManager()
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "vorssaint",
@@ -19,9 +16,8 @@ final class KeepAwakeManager: ObservableObject {
     enum SessionTrigger { case manual, automation }
 
     @Published private(set) var isActive = false
-    @Published private(set) var endDate: Date? // nil = indefinite
+    @Published private(set) var endDate: Date?
     @Published private(set) var sessionTrigger: SessionTrigger?
-    /// The preset a manual session started from; nil for an end time or automation.
     @Published private(set) var sessionMinutes: Int?
     @Published private(set) var runningAppBundleIDs: [String] = []
     @Published private(set) var activeAutomationConditions = Set<KeepAwakeAutomationCondition>()
@@ -35,8 +31,6 @@ final class KeepAwakeManager: ObservableObject {
     @Published private(set) var clamshellSetupInProgress = false
     @Published private(set) var clamshellSetupFailed = false
 
-    /// Persistent preference: when on, every keep-awake session also disables
-    /// lid sleep, and ending the session restores it — no per-session setup.
     @Published var clamshellPreferred: Bool {
         didSet {
             guard clamshellPreferred != oldValue else { return }
@@ -56,9 +50,6 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Persistent preference: dims the built-in display to zero while the
-    /// closed-lid mode is actually in effect, restoring the captured
-    /// brightness when the lid opens again.
     @Published var dimScreenOnLidClose: Bool {
         didSet {
             guard dimScreenOnLidClose != oldValue else { return }
@@ -102,21 +93,13 @@ final class KeepAwakeManager: ObservableObject {
     private var savedDisplayBrightness: Double?
     private static let screenLockNotification = Notification.Name("com.apple.screenIsLocked")
     private static let screenUnlockNotification = Notification.Name("com.apple.screenIsUnlocked")
-    /// Guards the closed-lid setup against an infinite retry loop: if `pmset
-    /// disablesleep` keeps failing while the sudoers rule still checks out as
-    /// installed, re-preparing would bounce here forever (and flicker the
-    /// caption). One automatic re-acquire per user attempt, then we give up.
     private var clamshellSetupRetried = false
-    /// A reply to a settings change already waiting for the next run loop turn.
     private var preferenceSyncScheduled = false
 
     private init() {
         clamshellPreferred = UserDefaults.standard.bool(forKey: DefaultsKey.clamshellPreferred)
         dimScreenOnLidClose = UserDefaults.standard.bool(forKey: DefaultsKey.dimScreenOnLidClose)
         refreshPasswordlessStatus()
-        // Every settings write announces itself, including the ones made from
-        // inside this class, so a burst folds into a single reply on the next
-        // turn of the run loop rather than one full pass per write.
         defaultsObserver = NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
             .sink { [weak self] _ in
@@ -130,7 +113,6 @@ final class KeepAwakeManager: ObservableObject {
             }
     }
 
-    /// Refreshes (in the background) whether the closed-lid sudoers rule is installed.
     func refreshPasswordlessStatus() {
         guard !isTerminating, !clamshellRestorePending else { return }
         let generation = clamshellOperationGeneration
@@ -144,15 +126,9 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Clearing permissions, or an uninstall that stopped, restored normal
-    /// sleep directly and left this app running. Discard the old session state
-    /// without asking for the rule again: a rule that is still installed rearms
-    /// the current session, and a removed one is requested by the next session.
     func resumeAfterSystemTeardown() {
         let restorePending = clamshellRestorePending
         if !restorePending { clamshellOperationGeneration &+= 1 }
-        // An installation prompt may already be open. Its existing reply can
-        // finish setup without showing a second authorization request.
         clamshellEnablePending = false
         lidSleepGeneration &+= 1
         lidSleepAttemptsRemaining = 0
@@ -161,9 +137,6 @@ final class KeepAwakeManager: ObservableObject {
         let generation = clamshellOperationGeneration
         let checksSleep = UserDefaults.standard.bool(forKey: DefaultsKey.sleepDisabledFlag)
         DispatchQueue.global(qos: .utility).async {
-            // A session can start while the removal waits for its password and
-            // turn sleep off again through the rule. Only a reading that answered
-            // "on" lets the recovery marker go.
             var sleepRestored = true
             if checksSleep {
                 let report = Shell.run("/usr/bin/pmset", ["-g"])
@@ -176,8 +149,6 @@ final class KeepAwakeManager: ObservableObject {
                 if checksSleep, sleepRestored {
                     UserDefaults.standard.set(false, forKey: DefaultsKey.sleepDisabledFlag)
                 }
-                // A prior restore can still finish with an authorized off. Its
-                // reply rearms this session in order after that operation.
                 guard !restorePending, !self.clamshellRestorePending else { return }
                 self.passwordlessClamshell = configured
                 if configured, self.clamshellPreferred, AppFeature.keepAwake.isAvailable {
@@ -200,8 +171,6 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Keep Awake leaving the hub ends any running session; everything else
-    /// (saved duration, tint, shortcut setting) stays for its return.
     func syncWithFeatures() {
         guard AppFeature.keepAwake.isAvailable else {
             stopAutomationMonitoring()
@@ -218,14 +187,11 @@ final class KeepAwakeManager: ObservableObject {
         syncMouseJiggleTimer()
     }
 
-    /// Called by automation controls so a deliberate preference change can
-    /// resume evaluation after a manually stopped automatic session.
     func automationPreferencesDidChange() {
         automationSuppressedUntilConditionsClear = false
         syncWithPreferences()
     }
 
-    /// `minutes <= 0` activates indefinitely.
     func activate(minutes: Int) {
         automationSuppressedUntilConditionsClear = false
         let minutes = Defaults.sanitizedDefaultDuration(minutes)
@@ -233,7 +199,6 @@ final class KeepAwakeManager: ObservableObject {
         activate(end: end, trigger: .manual)
         sessionMinutes = isActive ? minutes : nil
         guard isActive else { return }
-        // Every entry point records the pick, so each switch restarts the same session.
         UserDefaults.standard.set(minutes, forKey: DefaultsKey.defaultDuration)
         UserDefaults.standard.set(false, forKey: DefaultsKey.keepAwakeSwitchUsesUntil)
     }
@@ -242,16 +207,12 @@ final class KeepAwakeManager: ObservableObject {
         guard date > Date() else { return }
         automationSuppressedUntilConditionsClear = false
         activate(end: date, trigger: .manual)
-        // An end time replaces any running preset, so no duration chip stays selected.
         sessionMinutes = nil
         guard isActive else { return }
         UserDefaults.standard.set(true, forKey: DefaultsKey.keepAwakeSwitchUsesUntil)
         UserDefaults.standard.set(date.timeIntervalSinceReferenceDate, forKey: DefaultsKey.keepAwakeUntilTime)
     }
 
-    /// Restarts the last pick: the saved end time while it is still ahead,
-    /// otherwise the saved duration. A passed end time never rolls to
-    /// tomorrow here, which would silently start a session of almost a day.
     func startLastPick() {
         let defaults = UserDefaults.standard
         let end = Date(timeIntervalSinceReferenceDate: defaults.double(forKey: DefaultsKey.keepAwakeUntilTime))
@@ -324,8 +285,6 @@ final class KeepAwakeManager: ObservableObject {
         sessionPausedForScreenLock = false
         stopBatteryWatch()
         stopMouseJiggleTimer()
-        // An enable can still be on the serialized native queue even though
-        // its main-thread reply has not marked the session active yet.
         if clamshellNeedsRestore {
             disableClamshell(synchronous: reason == .quit)
         } else if reason == .quit, lidSleepAttemptsRemaining > 0 {
@@ -469,10 +428,6 @@ final class KeepAwakeManager: ObservableObject {
     private func setRunningAppsMonitoringEnabled(_ enabled: Bool) {
         if enabled {
             guard runningAppsObservation == nil else { return }
-            // The running-apps list rather than launch and terminate
-            // notifications: macOS posts neither for some background helper
-            // apps nested in another app's bundle, while the list still gains
-            // and loses them (#1468).
             runningAppsObservation = NSWorkspace.shared.observe(\.runningApplications) { [weak self] _, _ in
                 DispatchQueue.main.async {
                     self?.scheduleAutomationEvaluation(after: 0.1)
@@ -568,10 +523,6 @@ final class KeepAwakeManager: ObservableObject {
         )
     }
 
-    /// Whether the automation currently asks for a session, in either match
-    /// mode. Every caller that used to read "any condition matches" has to ask
-    /// this instead: under All, a session that stops being wanted still has a
-    /// non-empty matching set (issue #1587).
     private func automationConditionsHold() -> Bool {
         KeepAwakeAutomationSupport.conditionsSatisfied(
             matching: currentMatchingAutomationConditions(),
@@ -643,9 +594,6 @@ final class KeepAwakeManager: ObservableObject {
               AppFeature.keepAwake.isAvailable,
               !automationSuppressedUntilConditionsClear,
               automaticSessionAllowedByBatteryProtection() else { return false }
-        // The same full match the automation itself would need to start a
-        // session: under All, a timed session must not be handed over on one
-        // condition the automation would never have acted on (issue #1587).
         let matches = currentMatchingAutomationConditions()
         guard KeepAwakeAutomationSupport.conditionsSatisfied(
                 matching: matches,
@@ -721,8 +669,6 @@ final class KeepAwakeManager: ObservableObject {
 
     private func applyClamshellPreference() {
         guard !isTerminating, !clamshellRestorePending else { return }
-        // A fresh user-driven attempt (toggle on, or a new session) gets one
-        // automatic setup retry again.
         clamshellSetupRetried = false
         if passwordlessClamshell {
             if isActive, !sessionPausedForScreenLock {
@@ -774,9 +720,6 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Turns the preference back off and surfaces the error, ending any retry
-    /// loop. Setting `clamshellPreferred` false runs its `didSet`, which clears
-    /// the in-progress/failed flags, so the failure flag is raised afterwards.
     private func markClamshellSetupFailed() {
         clamshellSetupInProgress = false
         guard clamshellPreferred else { return }
@@ -790,15 +733,12 @@ final class KeepAwakeManager: ObservableObject {
         clamshellOperationGeneration &+= 1
         let generation = clamshellOperationGeneration
         clamshellEnablePending = true
-        // Persist before submitting the write: quitting or crashing before
-        // its reply must not leave an unrecorded system-wide sleep override.
         UserDefaults.standard.set(true, forKey: DefaultsKey.sleepDisabledFlag)
         Sudoers.pmsetDisableSleep(true) { ok in
             DispatchQueue.main.async {
                 guard !self.isTerminating, self.clamshellOperationGeneration == generation else { return }
                 self.clamshellEnablePending = false
                 guard ok else {
-                    // Repair the passwordless path once per deliberate attempt.
                     self.passwordlessClamshell = false
                     guard self.isActive, self.clamshellPreferred, !self.sessionPausedForScreenLock else { return }
                     if self.clamshellSetupRetried {
@@ -820,8 +760,6 @@ final class KeepAwakeManager: ObservableObject {
     }
 
     private func disableClamshell(synchronous: Bool) {
-        // A new session waits for an outstanding restore, including its
-        // authorization fallback, so an old off cannot overwrite a new on.
         guard synchronous || !clamshellRestorePending else { return }
         clamshellSetupID = nil
         clamshellSetupInProgress = false
@@ -833,8 +771,6 @@ final class KeepAwakeManager: ObservableObject {
         clamshellEnablePending = false
         clamshellRestorePending = true
         if synchronous {
-            // This drains earlier native writes, including a pending enable.
-            // Complete here: no main-queue callback survives process teardown.
             let ok = Sudoers.pmsetDisableSleep(false)
             finishClamshellRestore(ok: ok, usedPasswordless: true,
                                   generation: generation, synchronous: true)
@@ -846,8 +782,6 @@ final class KeepAwakeManager: ObservableObject {
                         self.finishClamshellRestore(ok: true, usedPasswordless: true,
                                                    generation: generation, synchronous: false)
                     } else {
-                        // Never wait for a prompt on Sudoers' native queue:
-                        // quit drains that queue while running on the main thread.
                         Sudoers.restoreSleepWithAuthorization(
                             prompt: L10n.shared.s.adminPromptClamshellOff,
                             shouldProceed: { !self.isTerminating && self.clamshellOperationGeneration == generation }
@@ -869,8 +803,6 @@ final class KeepAwakeManager: ObservableObject {
         guard clamshellOperationGeneration == generation else { return }
         clamshellRestorePending = false
         if !usedPasswordless { passwordlessClamshell = false }
-        // Keep the recovery marker on failure; never request sleep while the
-        // system-wide override may still be set.
         guard ok else { return }
         UserDefaults.standard.set(false, forKey: DefaultsKey.sleepDisabledFlag)
         if !isTerminating, isActive, clamshellPreferred, !sessionPausedForScreenLock {
@@ -880,12 +812,6 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Clearing `disablesleep` only clears a kernel flag. macOS evaluates the
-    /// lid when it opens or closes, so a lid that shut during the session is
-    /// never looked at again and the Mac stays awake until the battery runs
-    /// out (#1729). Request the sleep that closing the lid would have caused.
-    /// `pmset` returns before powerd has handed the cleared flag to the
-    /// kernel, which refuses sleep until it has, so a refusal is retried.
     private func sleepIfLidAlreadyClosed(attemptsLeft: Int = 10, synchronous: Bool = false,
                                           generation: Int? = nil) {
         let generation = generation ?? lidSleepGeneration
@@ -899,8 +825,6 @@ final class KeepAwakeManager: ObservableObject {
         IOServiceClose(rootDomain)
         guard result != kIOReturnSuccess, attemptsLeft > 1 else { return }
         if synchronous {
-            // The existing bounded retry must finish before quit returns.
-            // Re-read the lid and external protections after every refusal.
             Thread.sleep(forTimeInterval: 0.5)
             sleepIfLidAlreadyClosed(attemptsLeft: attemptsLeft - 1, synchronous: true,
                                     generation: generation)
@@ -923,8 +847,6 @@ final class KeepAwakeManager: ObservableObject {
             kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool
         guard allowsSleep == true else { return false }
 
-        // The kernel does not republish its lid policy for every assertion
-        // change. Read live protections as well, especially display hot-plug.
         var snapshot: Unmanaged<CFDictionary>?
         let result = IOPMCopyAssertionsByProcess(&snapshot)
         let values = snapshot?.takeRetainedValue()
@@ -935,8 +857,6 @@ final class KeepAwakeManager: ObservableObject {
             systemAllowsSleep: allowsSleep, assertions: assertions.values.flatMap { $0 })
     }
 
-    /// If the app died unexpectedly while sleep was disabled, restores normal
-    /// behavior on the next launch.
     func recoverIfNeeded(completion: (() -> Void)? = nil) {
         guard !isTerminating else { return }
         recoverDimmedDisplayIfNeeded()
@@ -944,8 +864,6 @@ final class KeepAwakeManager: ObservableObject {
             finishRecovery(completion)
             return
         }
-        // A manual session may start while launch recovery is asking for
-        // authorization. Its enable must wait until that older off is done.
         clamshellSetupID = nil
         clamshellSetupInProgress = false
         clamshellOperationGeneration &+= 1
@@ -963,8 +881,6 @@ final class KeepAwakeManager: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             let report = Shell.run("/usr/bin/pmset", ["-g"])
             let stillDisabled = SudoersSupport.sleepDisabled(inPmsetOutput: report.output)
-            // An unreadable report is not evidence that a persisted override
-            // has disappeared. Keep its recovery marker unless an off succeeds.
             if report.status == 0, !stillDisabled {
                 DispatchQueue.main.async { finish(true) }
             } else if Sudoers.pmsetDisableSleep(false) {
@@ -990,16 +906,9 @@ final class KeepAwakeManager: ObservableObject {
         syncWithPreferences()
     }
 
-    /// A crash or force quit while the lid was closed can leave the built-in
-    /// panel dimmed with nothing left running to bring it back. Closed-lid
-    /// sleep already recovers its own override the same way: the intent is
-    /// written down before acting, and undone on the next launch.
     private func recoverDimmedDisplayIfNeeded() {
         guard let saved = UserDefaults.standard.object(forKey: DefaultsKey.dimmedDisplaySavedBrightness) as? Double
         else { return }
-        // Set before attempting, not just on failure: if the write does not
-        // report success until later, `syncLidDimmingObserver` still has to
-        // see this as owed right away to arm the lid observer for a retry.
         savedDisplayBrightness = saved
         applyDimmingAction(.restore(saved))
         syncLidDimmingObserver()
@@ -1007,14 +916,6 @@ final class KeepAwakeManager: ObservableObject {
 
     // MARK: - Closed-lid screen dimming
 
-    /// Runs whenever the closed-lid mode or the dimming preference changes.
-    /// An `IOPMrootDomain` general-interest notification is cheaper than
-    /// polling and is already how `BrightnessService` watches the lid for
-    /// its own deferred-restoration case; this registers its own interest
-    /// independently since the two features dim different things for
-    /// different reasons. A restore still owed keeps the observer armed past
-    /// the mode ending, the same way `BrightnessService`'s own deferred
-    /// display restoration outlives whatever asked for it.
     private func syncLidDimmingObserver() {
         let armed = clamshellActive && dimScreenOnLidClose
         if !armed { applyDimmingAction(LidDimmingSupport.restoring(saved: savedDisplayBrightness)) }
@@ -1044,19 +945,12 @@ final class KeepAwakeManager: ObservableObject {
         lidDimmingNotificationPort = port
         IONotificationPortSetDispatchQueue(port, DispatchQueue.main)
         lidClosedForDimming = BrightnessService.lidClosed()
-        // The option can be enabled from an external display while the lid is
-        // already shut. No transition follows registration in that case.
         if armed, lidClosedForDimming == true, savedDisplayBrightness == nil {
             applyDimmingAction(LidDimmingSupport.lidClosed(
                 currentBrightness: LidDisplayDimmer.currentBrightness()))
         }
     }
 
-    /// General interest fires on far more than lid transitions, so the
-    /// current state is compared against what was last seen rather than
-    /// assumed from the notification itself. The armed check also catches a
-    /// callback already queued when the feature was torn down: it lands here
-    /// as a no-op instead of acting on a mode that already ended.
     private func lidStateMayHaveChangedForDimming() {
         guard (clamshellActive && dimScreenOnLidClose) || savedDisplayBrightness != nil else { return }
         let closed = BrightnessService.lidClosed() ?? false
@@ -1085,15 +979,6 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
-    /// Keeps the saved level and its recovery marker until a write actually
-    /// reports success — clearing them on a merely attempted write, the same
-    /// way `BrightnessService`'s deferred restoration never drops a display
-    /// it could not yet bring back, would leave the panel at zero forever if
-    /// it is not in the online list yet (right as the lid opens) or the
-    /// write itself fails. A few retries a half second apart cover that
-    /// startup race; if the panel is still not back after those, whatever
-    /// keeps `syncLidDimmingObserver` armed for an owed restore is what
-    /// finds the next real lid-open event to try again.
     private func attemptDisplayRestore(_ value: Double, attemptsLeft: Int = 6) {
         guard LidDisplayDimmer.setBrightness(value) else {
             Self.log.log("restoring the built-in display to \(value) found no panel yet, \(attemptsLeft - 1) retries left")
@@ -1132,8 +1017,6 @@ final class KeepAwakeManager: ObservableObject {
         deactivate(reason: .battery)
     }
 
-    /// The battery level while battery protection would end any session at
-    /// once (on battery, at or below the limit); nil when a session can run.
     func batteryProtectionPercent() -> Int? {
         let limit = Defaults.sanitizedBatteryLimit(UserDefaults.standard.integer(forKey: DefaultsKey.batteryLimit))
         guard limit > 0,

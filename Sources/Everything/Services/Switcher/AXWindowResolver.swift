@@ -5,8 +5,6 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-/// Resolves an Accessibility window element to its WindowServer id and vice versa.
-/// Exported by ApplicationServices and SkyLight / HIServices; used by macOS window switchers.
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement,
                                    _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -16,7 +14,7 @@ enum AXWindowResolver {
         @convention(c) (CFData) -> Unmanaged<AXUIElement>?
 
     private static let createWithRemoteToken: CreateWithRemoteTokenFunction? = {
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2) /* RTLD_DEFAULT */,
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2) ,
                                  "_AXUIElementCreateWithRemoteToken") else {
             return nil
         }
@@ -32,9 +30,6 @@ enum AXWindowResolver {
     private static let remoteElementIDLimit: UInt64 = 3_000
     static let remoteLookupBudget: TimeInterval = 0.15
 
-    /// Resolves the Accessibility element representing `windowID` within `axApp`.
-    /// Some apps omit off-Space and fullscreen windows from their published list.
-    /// Check main and focused references before opting into remote lookup.
     static func element(for windowID: CGWindowID, in axApp: AXUIElement, pid: pid_t? = nil) -> AXUIElement? {
         var appPID: pid_t = 0
         guard windowID != 0,
@@ -67,9 +62,6 @@ enum AXWindowResolver {
         return resolveRemoteElement(windowID: windowID, pid: pid)
     }
 
-    /// A matching child reports its containing window's id too. Verify the role
-    /// before returning an action target. Each exact object gets its own timeout;
-    /// the matching published reference adds at most one role request.
     private static func actionElement(_ candidate: AXUIElement, matching windowID: CGWindowID) -> AXUIElement? {
         guard AXUIElementSetMessagingTimeout(candidate, 0.35) == .success,
               self.windowID(for: candidate) == windowID,
@@ -77,20 +69,12 @@ enum AXWindowResolver {
         return candidate
     }
 
-    /// Adapts the shared scan for activation, position and minimize callers.
-    /// Restore their ordinary timeout after the short lookup requests.
     private static func resolveRemoteElement(windowID: CGWindowID, pid: pid_t) -> AXUIElement? {
         guard let element = elementsOnHiddenSpace(windowIDs: [windowID], pid: pid)[windowID],
               AXUIElementSetMessagingTimeout(element, 0.35) == .success else { return nil }
         return element
     }
 
-    /// Finds exact AXWindow roots in one bounded scan per app. The undocumented
-    /// token contains pid, a zero word, the Cocoa marker, then the element id.
-    /// Each IPC uses the remaining deadline; an unresponsive app discards the
-    /// batch so callers cannot start title reads against that same stalled app.
-    /// The deadline cannot interrupt a synchronous system call already in flight.
-    /// Partial answers retain short timeouts so title reads can share this budget.
     static func elementsOnHiddenSpace(windowIDs: Set<CGWindowID>, pid: pid_t,
                                       budget: TimeInterval = remoteLookupBudget,
                                       isCancelled: () -> Bool = { false }) -> [CGWindowID: AXUIElement] {
@@ -125,8 +109,6 @@ enum AXWindowResolver {
         return found
     }
 
-    /// A zero timeout restores the global default, so an exhausted budget must
-    /// skip the request. Timeouts apply only to this exact AX object.
     static func prepareForRequest(_ element: AXUIElement, deadline: TimeInterval) -> Bool {
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
         guard remaining > 0 else { return false }

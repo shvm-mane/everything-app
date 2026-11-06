@@ -5,16 +5,14 @@ import Foundation
 import IOKit
 import IOKit.ps
 
-/// One power reading. Every field is optional: a Mac mini has no battery, a
-/// desktop may expose no SMC power key, so the UI shows only what is real.
 struct PowerReading {
-    var systemWatts: Double?       // total the Mac is consuming (SMC PSTR)
-    var adapterWatts: Double?      // adapter input, including connected devices (SMC PDTR or desktop PD0R)
-    var adapterMaxWatts: Double?   // the charger's rated wattage
-    var batteryWatts: Double?      // + charging, - discharging
-    var chargePercent: Int?        // current charge level
-    var timeRemainingSeconds: TimeInterval? // system estimate while discharging
-    var healthPercent: Double?     // max capacity vs design (battery health)
+    var systemWatts: Double?
+    var adapterWatts: Double?
+    var adapterMaxWatts: Double?
+    var batteryWatts: Double?
+    var chargePercent: Int?
+    var timeRemainingSeconds: TimeInterval?
+    var healthPercent: Double?
     var cycleCount: Int?
     var isCharging = false
     var externalConnected = false
@@ -26,17 +24,9 @@ struct PowerReading {
     }
 }
 
-/// Reads power without any special permission. Total system power and adapter
-/// input come from the SMC (the same sensors Activity Monitor's energy tab is
-/// built on); battery flow and the charger's rating come from AppleSmartBattery.
-/// Anything the hardware does not expose stays nil.
 final class PowerSampler {
-    /// Internal-battery presence is immutable for the lifetime of a Mac boot.
-    /// Resolve it once so desktops do not keep probing a service they cannot have.
     static var hasInternalBattery: Bool { batteryPresence.installed }
 
-    /// Apple silicon desktops publish the battery service too, with
-    /// BatteryInstalled false: it reports the power connection, not a battery.
     private static let batteryPresence: (service: Bool, installed: Bool) = {
         let service = IOServiceGetMatchingService(kIOMainPortDefault,
                                                   IOServiceMatching("AppleSmartBattery"))
@@ -54,10 +44,6 @@ final class PowerSampler {
     private var resolvedKeys = false
     private var batteryService: io_service_t = 0
 
-    /// `PSTR` = System Total Power. `PDTR` = DC-In (adapter) Total Power.
-    /// They stay separate because adapter input can include connected devices.
-    /// `PD0R` is the DC-In rail. The Mac Studio (Mac17,15) reports 0 W for PDTR,
-    /// so a Mac without a battery can use the rail as an adapter-input fallback.
     private static let systemPowerKey = "PSTR"
     private static let adapterPowerKey = "PDTR"
     private static let dcInRailPowerKey = "PD0R"
@@ -111,7 +97,6 @@ final class PowerSampler {
             let voltageMv = (props["Voltage"] as? Int) ?? 0
             let amperageMa = (props["Amperage"] as? Int) ?? (props["InstantAmperage"] as? Int) ?? 0
             if voltageMv > 0, amperageMa != 0 {
-                // Power = V x I, signed by the amperage (negative while discharging).
                 reading.batteryWatts = (Double(voltageMv) / 1000.0) * (Double(amperageMa) / 1000.0)
             }
 
@@ -121,9 +106,6 @@ final class PowerSampler {
             }
             if let cycles = props["CycleCount"] as? Int { reading.cycleCount = cycles }
             if let design = batteryInt("DesignCapacity", in: props), design > 0 {
-                // Fallback estimate from IORegistry: a full-charge capacity over
-                // design. NominalChargeCapacity is the smoothed value (closest of
-                // the raw fields); fall back to AppleRawMaxCapacity when absent.
                 let fullCharge = batteryInt("NominalChargeCapacity", in: props)
                     ?? batteryInt("FullChargeCapacity", in: props)
                     ?? batteryInt("AppleRawMaxCapacity", in: props)
@@ -131,10 +113,6 @@ final class PowerSampler {
                     reading.healthPercent = min(100, Double(fullCharge) / Double(design) * 100)
                 }
             }
-            // Prefer the exact "Maximum Capacity" macOS shows in System Information
-            // (a smoothed value no raw ratio reproduces). Cached + off the hot path;
-            // the ratio above stands in until the first reading lands or when macOS
-            // doesn't expose the field.
             MaxCapacityProbe.shared.refreshIfStale()
             if let exact = MaxCapacityProbe.shared.percent {
                 reading.healthPercent = Double(exact)
@@ -174,10 +152,6 @@ final class PowerSampler {
         return dict
     }
 
-    /// Uses the same public power-source field as the established battery
-    /// monitor users are likely to compare against. A negative value means the
-    /// system is still calculating, so the UI keeps that state instead of
-    /// substituting a more volatile private estimate.
     private func timeToEmptyMinutes() -> Int? {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue()

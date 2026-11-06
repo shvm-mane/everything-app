@@ -7,8 +7,6 @@ private enum NotchCaptureControl: Hashable {
     case collapse, close, tool(ScreenCaptureTool), systemAudio, microphone
 }
 
-/// The same selection model drives keyboard shortcuts and the screen overlay.
-/// Only the controls change their destination; capture remains in its owner.
 struct NotchCaptureControlsView: View {
     @ObservedObject var options: ScreenCaptureSelectionOptions
     let service: NotchService
@@ -43,8 +41,6 @@ struct NotchCaptureControlsView: View {
         .onDisappear { options.hasFocusedControl = false }
     }
 
-    /// Beside the camera the title and the buttons keep to their own side,
-    /// as the open island's header does; otherwise one row holds both.
     @ViewBuilder private var header: some View {
         if layout.cameraGap > 0 {
             HStack(spacing: 0) {
@@ -65,7 +61,6 @@ struct NotchCaptureControlsView: View {
         }
     }
 
-    /// The layout measures this title with the same font.
     private var title: some View {
         Text(FeatureStrings.screenshot(l10n.language).screenCaptureTitle)
             .font(Font(NotchCaptureControlsLayout.titleFont as CTFont))
@@ -75,7 +70,6 @@ struct NotchCaptureControlsView: View {
     private var actions: some View {
         HStack(spacing: NotchCaptureControlsLayout.buttonSpacing) {
             if options.offersRepeatLastRegion {
-                // A narrow side of the camera keeps only the key.
                 ViewThatFits(in: .horizontal) {
                     Label("R", systemImage: "rectangle.dashed")
                         .padding(.horizontal, 8)

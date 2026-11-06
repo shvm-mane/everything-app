@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// Only the notification reader's native operations cross this boundary. Missing
-/// attributes are optional; a failed read throws so a partial tree cannot authorize
-/// an action or silently become a complete inbox snapshot.
 protocol NotchNotificationAccess {
     associatedtype Element
     func windows() throws -> [Element]
@@ -20,8 +17,6 @@ protocol NotchNotificationAccess {
     func same(_ lhs: Element, _ rhs: Element) -> Bool
 }
 
-/// The production traversal and action sequence also run against synthetic trees.
-/// The service confines this object and its native adapter to one serial queue.
 final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
     struct Snapshot { let items: [NotchSystemNotification] }
     enum ActionResult { case handedOff, openedApplication, unavailable, uncertain }
@@ -43,10 +38,7 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
     private let nativeCloseTitle: String
     private let displays: () -> [CGRect]
     private var targets: [Target] = []
-    /// Windows moved off screen, with the place the center had given them.
     private var hiddenWindows: [(window: Access.Element, origin: CGPoint)] = []
-    /// Windows that also hold an alert the reader could not take apart. The
-    /// island never showed it, so such a window stays in sight.
     private var untakenWindows: [Access.Element] = []
     private var liveIDs = Set<UUID>()
     private var ambiguousIdentities = Set<String>()
@@ -73,12 +65,9 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
 
     var hidesWindows: Bool { !hiddenWindows.isEmpty }
 
-    /// A focused center is not a passive banner surface. Its existing
-    /// notifications must not be imported as newly received messages.
     func read() -> Snapshot? {
         beginRead()
         guard let focused = fetch({ try access.hasFocusedWindow() }) else { return nil }
-        // Someone opened the center. Nothing it lays out may stay off screen.
         guard !focused else { showNative(); return nil }
         guard let windows = fetch({ try access.windows() }), windows.count <= 32 else { return nil }
         var roots: [(root: Access.Element, window: Access.Element, transient: Bool)] = []
@@ -138,12 +127,7 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
     }
 
     func closeNative(_ id: UUID) -> Bool {
-        // Closing persistent alerts can stop alarms. Only transient banners
-        // may be replaced automatically; validate their current container too.
         guard allowsNativeClose(), read() != nil else { return false }
-        // The refresh can spend nearly the whole traversal on a large stack.
-        // Validation gets a budget of its own so a busy center does not leave
-        // the banner open; a check it cannot finish still closes nothing.
         beginRead()
         guard let target = validatedTarget(id), target.transient,
               let action = NotchNotificationSupport.closeAction(in: actions(target.root), title: nativeCloseTitle),
@@ -151,15 +135,9 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
         return access.perform(action, on: target.root)
     }
 
-    /// Moves the windows holding banners the island shows off screen. Unlike
-    /// closing, the originals keep playing their sound and still reach the
-    /// center when they expire. A window that also holds a persistent alert
-    /// or a banner the island passed over stays in place, or comes back.
-    /// Returns the shown banners that could not be hidden.
     func hideNative(_ shown: Set<UUID>) -> Set<UUID> {
         guard allowsNativeClose() else { showNative(); return [] }
         beginRead()
-        // The open center keeps its banners in the same window as its list.
         guard let focused = fetch({ try access.hasFocusedWindow() }) else { return [] }
         guard !focused else { showNative(); return [] }
         var groups: [(window: Access.Element, targets: [Target])] = []
@@ -176,14 +154,10 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
                   group.targets.allSatisfy({ $0.transient && shown.contains($0.item.id) }) else {
                 show(group.window); continue
             }
-            // Every message in the window must still be the one the island took.
             guard group.targets.allSatisfy({ validatedTarget($0.item.id) != nil }), usable else { continue }
             if hide(group.window) == false { failed.formUnion(group.targets.map(\.item.id)) }
         }
-        // Also once its banners are gone and only such an alert is left.
         for window in untakenWindows { show(window) }
-        // An emptied window is left to the center, which places it again
-        // before showing anything else. Forget the ones it placed or removed.
         hiddenWindows.removeAll { record in
             !groups.contains { access.same($0.window, record.window) }
                 && [.onScreen, .gone].contains(placement(of: record.window))
@@ -191,24 +165,17 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
         return failed
     }
 
-    /// Puts back every window this reader moved. Stopping or turning the
-    /// option off runs this after the reader is no longer allowed to read.
     func showNative() {
         for window in hiddenWindows.map(\.window) { show(window) }
     }
 
-    /// False when the window cannot be moved. A pass that ran out of time
-    /// tries again on the next one instead of closing the banner.
     private func hide(_ window: Access.Element) -> Bool? {
         let screens = displays().reduce(CGRect.null) { $0.union($1) }
         guard !screens.isNull, let read = fetch({ try access.frame(window) }), usable else { return nil }
         guard let frame = read else { return false }
-        // Already out of sight.
         guard frame.intersects(screens) else { return true }
         let away = CGPoint(x: screens.minX - frame.width - 1_000, y: screens.minY - frame.height - 1_000)
         guard access.move(window, to: away) else { return false }
-        // A window that ignores the move, or lands on a display anyway, goes
-        // back to where it was, and its banners are closed instead.
         guard let moved = fetch({ try access.frame(window) }) ?? nil, !moved.intersects(screens) else {
             _ = access.move(window, to: frame.origin)
             return false
@@ -218,9 +185,6 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
         return true
     }
 
-    /// Only windows this reader moved come back, and only while the center
-    /// has not placed them again itself. A window it cannot read right now
-    /// stays on the list for the next attempt.
     private func show(_ window: Access.Element) {
         guard let index = hiddenWindows.firstIndex(where: { access.same($0.window, window) }) else { return }
         switch placement(of: window) {
@@ -233,8 +197,6 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
 
     private enum Placement { case onScreen, offScreen, gone, unknown }
 
-    /// Reads outside the traversal budget, so putting windows back never
-    /// depends on the reader still being allowed to run.
     private func placement(of window: Access.Element) -> Placement {
         let screens = displays().reduce(CGRect.null) { $0.union($1) }
         guard !screens.isNull else { return .unknown }
@@ -287,9 +249,6 @@ final class NotchNotificationReaderCore<Access: NotchNotificationAccess> {
     private func findStackCards(_ node: Access.Element, depth: Int, transient: Bool, into roots: inout [(root: Access.Element, transient: Bool)]) {
         guard usable else { return }
         if let card = content(node), !card.body.isEmpty || !card.app.isEmpty {
-            // Modern stacks can be a structural wrapper around one complete
-            // card. Descend only when the entire message is preserved; selecting
-            // a title-only subgroup would lose its sender/body boundary.
             let completeChildren = children(node).filter { content($0) == card }
             if completeChildren.isEmpty { roots.append((node, transient)) }
             else {

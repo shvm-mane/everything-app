@@ -4,13 +4,6 @@
 import CoreGraphics
 import Foundation
 
-// The companion is a small friend who lives in the Dynamic Island: a colored
-// shape with two ink eyes and no mouth, or a little robot. It rests beside
-// the camera when the closed island has nothing else to show, passes by now
-// and then, and is the Command Bar's face when the bar comes out of the
-// island. The code calls it the mascot, because "companion" already names
-// the second activity sharing the closed island.
-
 enum NotchMascotStyle: String, CaseIterable, Identifiable {
     case minimal, robot
 
@@ -23,7 +16,6 @@ enum NotchMascotShape: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// sRGB components, so the model needs no AppKit.
 struct NotchMascotColor: Equatable {
     let red: CGFloat
     let green: CGFloat
@@ -32,21 +24,16 @@ struct NotchMascotColor: Equatable {
 
     var cgColor: CGColor { CGColor(srgbRed: red, green: green, blue: blue, alpha: alpha) }
 
-    /// The eyes, a soft black that still reads on the black island's edge.
     static let ink = NotchMascotColor(red: 0.07, green: 0.07, blue: 0.08)
-    /// The robot's face plate, where its lit eyes sit.
     static let visor = NotchMascotColor(red: 0.09, green: 0.09, blue: 0.11)
     static let shine = NotchMascotColor(red: 1, green: 1, blue: 1, alpha: 0.55)
 }
 
-/// The colors it comes in, in the order of the rainbow after white, so the
-/// swatches in Settings read as one row.
 enum NotchMascotPalette: String, CaseIterable, Identifiable {
     case pearl, lemon, peach, rose, lilac, sky, mint
 
     var id: String { rawValue }
 
-    /// The body's lit top.
     var light: NotchMascotColor {
         switch self {
         case .pearl: return NotchMascotColor(red: 0.99, green: 0.98, blue: 0.96)
@@ -59,7 +46,6 @@ enum NotchMascotPalette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The body's shaded bottom, and the robot's antenna and bolts.
     var shade: NotchMascotColor {
         switch self {
         case .pearl: return NotchMascotColor(red: 0.84, green: 0.85, blue: 0.90)
@@ -83,26 +69,22 @@ struct NotchMascotLook: Equatable {
 
 enum NotchMascotMood: String, CaseIterable, Identifiable {
     case idle, happy, wink, love, sleepy, determined, surprised, searching, thinking, confused
-    /// Wide awake, while Keep Awake holds the Mac up.
     case alert
 
     var id: String { rawValue }
 }
 
-/// Which side of the camera the companion rests on.
 enum NotchMascotSide: String, CaseIterable, Identifiable {
     case left, right
 
     var id: String { rawValue }
 }
 
-/// How often the companion strolls through the island.
 enum NotchMascotVisitFrequency: String, CaseIterable, Identifiable {
     case rare, normal, frequent
 
     var id: String { rawValue }
 
-    /// How long it waits between visits, in seconds.
     var delay: ClosedRange<TimeInterval> {
         switch self {
         case .rare: return 600...1200
@@ -112,36 +94,20 @@ enum NotchMascotVisitFrequency: String, CaseIterable, Identifiable {
     }
 }
 
-/// A short reaction to something the island saw happen.
 enum NotchMascotReaction: String, CaseIterable {
-    /// Something finished well: an agent's task, a download, a file dropped in.
     case celebrate
-    /// Plugged in to charge, or petted.
     case love
-    /// A timer ran out.
     case surprised
-    /// A screenshot: a hard blink, as a camera's flash.
     case flash
-    /// Something failed.
     case confused
-    /// The Mac was unlocked: it wakes up glad to see you.
     case wakeUp
-    /// Keep Awake let go: a yawn.
     case yawn
-    /// Keep Awake took hold, or the microphone opened: wide eyes and a hop.
     case perk
-    /// An event the island counted down to began: wide eyes and two quick
-    /// hops, time to go.
     case bounce
-    /// The microphone went quiet: eyes shut a moment as it ducks.
     case hush
-    /// A timer started: a determined look and a little nod.
     case ready
-    /// Music started: smiling eyes and a bob to the beat.
     case groove
 
-    /// About how long it plays, so the companion stays out for all of it
-    /// when it comes out over an activity to play it.
     var length: TimeInterval {
         switch self {
         case .celebrate: return 1.0
@@ -160,15 +126,12 @@ enum NotchMascotReaction: String, CaseIterable {
     }
 }
 
-/// What the Settings preview can act out: a visit, and the moments the
-/// island reacts to, each with the reaction it brings.
 enum NotchMascotMoment: String, CaseIterable, Identifiable {
     case visit, timerStarted, timeIsUp, music, agents, eventStarts, downloadFinished, downloadFailed, screenshot,
          micMuted, keepAwake, charging, lowBattery, unlocked
 
     var id: String { rawValue }
 
-    /// Nil for a visit, which is a stroll rather than a reaction.
     var reaction: NotchMascotReaction? {
         switch self {
         case .visit: return nil
@@ -188,8 +151,6 @@ enum NotchMascotMoment: String, CaseIterable, Identifiable {
         }
     }
 
-    /// What it plays once the first reaction is over, for a moment told in
-    /// two beats: an AI agent getting to work, then done.
     var followUp: NotchMascotReaction? {
         self == .agents ? .celebrate : nil
     }
@@ -214,17 +175,12 @@ enum NotchMascotMoment: String, CaseIterable, Identifiable {
     }
 }
 
-/// One reaction, as the island publishes it for the companion to play.
 struct NotchMascotReactionEvent: Equatable {
     let id: UUID
     let reaction: NotchMascotReaction
-    /// When it was published, on the media clock.
     let start: CFTimeInterval
 }
 
-/// Keeps reactions short and rare. None comes within `spacing` of the last,
-/// the same one does not come back within `repeatInterval`, and one the
-/// companion cannot show waits for it at most `patience`.
 struct NotchMascotReactionGate {
     static let spacing: TimeInterval = 2.5
     static let repeatInterval: TimeInterval = 30
@@ -232,7 +188,6 @@ struct NotchMascotReactionGate {
 
     private(set) var last: (reaction: NotchMascotReaction, time: TimeInterval)?
 
-    /// Whether `reaction` may play at `time`, remembering it when it may.
     mutating func admits(_ reaction: NotchMascotReaction, at time: TimeInterval) -> Bool {
         if let last {
             if time - last.time < Self.spacing { return false }
@@ -243,29 +198,15 @@ struct NotchMascotReactionGate {
     }
 }
 
-/// How the Command Bar comes out of the island.
 enum NotchCommandBarStyle: String, CaseIterable, Identifiable {
-    /// A drop falls from the island's lower edge and opens into the bar.
     case droplet
-    /// The bar opens inside the open island.
     case island
 
     var id: String { rawValue }
 }
 
-/// Where the Command Bar shows when it opens.
-enum CommandBarPresentation: Equatable {
-    /// Its own window, as it always has.
-    case window
-    /// A window below the island, reached by a falling drop.
-    case droplet
-    /// Inside the open island.
-    case island
-}
-
 enum NotchMascotEye: Equatable {
     case open, closed, happy, heart, sleepy, wide, squint
-    /// The lid slants down toward the other eye.
     case determined
 
     var blinks: Bool { self == .open || self == .wide || self == .squint }
@@ -274,12 +215,9 @@ enum NotchMascotEye: Equatable {
 struct NotchMascotExpression: Equatable {
     var left: NotchMascotEye
     var right: NotchMascotEye
-    /// Where the eyes look, in shares of the companion's size. Y grows downward.
     var gaze: CGPoint = .zero
-    /// The head's lean in radians, clockwise on screen.
     var tilt: CGFloat = 0
 
-    /// Open eyes blink now and then. Closed, curved or heart eyes do not.
     var blinks: Bool { left.blinks && right.blinks }
 }
 
@@ -301,14 +239,10 @@ extension NotchMascotMood {
     }
 }
 
-/// Where the face sits on each body, in shares of the companion's size from
-/// its top left corner.
 struct NotchMascotFaceLayout: Equatable {
     let leftEye: CGPoint
     let rightEye: CGPoint
-    /// An open eye's width and height.
     let eyeSize: CGSize
-    /// The soft highlight on the body: its center, radii and lean.
     let shineCenter: CGPoint
     let shineRadii: CGSize
     let shineAngle: CGFloat
@@ -347,10 +281,7 @@ extension NotchMascotLook {
     }
 }
 
-/// Outlines in a square of `size` points, from its top left corner.
 enum NotchMascotGeometry {
-    /// Every eye is drawn with this many curves, so any eye can turn into
-    /// any other one point at a time.
     static let eyeCurveCount = 24
 
     static func body(_ shape: NotchMascotShape, size: CGFloat) -> CGPath {
@@ -367,7 +298,6 @@ enum NotchMascotGeometry {
             path.addCurve(to: point(0.5, 0.10), control1: point(0.14, 0.36), control2: point(0.29, 0.10))
             path.closeSubpath()
         case .squircle:
-            // A superellipse: flatter sides than a rounded rectangle, no corner seam.
             let count = 72
             for index in 0..<count {
                 let angle = CGFloat(index) / CGFloat(count) * 2 * .pi
@@ -385,7 +315,6 @@ enum NotchMascotGeometry {
         return path
     }
 
-    /// The robot's head, ears, antenna and face plate.
     struct Robot {
         let head: CGPath
         let ears: CGPath
@@ -394,10 +323,6 @@ enum NotchMascotGeometry {
         let visor: CGPath
     }
 
-    /// How far below the middle of its box the figure's own middle sits, as
-    /// a share of the box. The box keeps room above a minimal body for the
-    /// robot's antenna, so a body placed by its box would sit a little low
-    /// wherever it is meant to be centred.
     static func figureOffset(_ look: NotchMascotLook) -> CGFloat {
         let bounds: CGRect
         if look.style == .robot {
@@ -427,7 +352,6 @@ enum NotchMascotGeometry {
                      visor: rounded(rect(0.20, 0.44, 0.60, 0.38), 0.15))
     }
 
-    /// The highlight, an ellipse leaning with the body's curve.
     static func shine(_ face: NotchMascotFaceLayout, size: CGFloat) -> CGPath {
         var transform = CGAffineTransform(translationX: face.shineCenter.x * size, y: face.shineCenter.y * size)
             .rotated(by: face.shineAngle)
@@ -436,8 +360,6 @@ enum NotchMascotGeometry {
                       transform: &transform)
     }
 
-    /// An eye's outline around `center`. `size` is an open eye's width and
-    /// height, and the right eye mirrors the left one.
     static func eye(_ eye: NotchMascotEye, size: CGSize, center: CGPoint, right: Bool) -> CGPath {
         let points = eyePoints(eye, size: size, right: right).map {
             CGPoint(x: $0.x + center.x, y: $0.y + center.y)
@@ -445,8 +367,6 @@ enum NotchMascotGeometry {
         return smoothClosedPath(points)
     }
 
-    /// The eye's outline as `eyeCurveCount` points, from the top of its
-    /// middle line, clockwise on screen.
     static func eyePoints(_ eye: NotchMascotEye, size: CGSize, right: Bool) -> [CGPoint] {
         let width = max(0.5, size.width), height = max(0.5, size.height)
         var outline: [CGPoint]
@@ -466,7 +386,6 @@ enum NotchMascotGeometry {
         case .sleepy:
             outline = lid(width: width * 1.25, top: height * 0.02, depth: height * 0.38)
         case .determined:
-            // The left eye's lid falls toward the nose, on its right.
             outline = clipBelow(stadium(width: width, height: height, center: .zero),
                                 from: CGPoint(x: -width / 2, y: -height * 0.30),
                                 to: CGPoint(x: width / 2, y: height * 0.02))
@@ -479,7 +398,6 @@ enum NotchMascotGeometry {
 
     private static let dense = 96
 
-    /// A capsule standing on its round ends, or lying on them when wider.
     private static func stadium(width: CGFloat, height: CGFloat, center: CGPoint) -> [CGPoint] {
         let radius = min(width, height) / 2
         let rect = CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
@@ -511,7 +429,6 @@ enum NotchMascotGeometry {
         }
     }
 
-    /// Eyes shut with a smile: a band bent upward, round at both ends.
     private static func arch(span: CGFloat, rise: CGFloat, thickness: CGFloat, top: CGFloat) -> [CGPoint] {
         let half = max(0.1, span / 2 - thickness / 2)
         let lift = max(0.1, rise)
@@ -527,7 +444,6 @@ enum NotchMascotGeometry {
         for step in 0...steps {
             points.append(onArc(-reach + CGFloat(step) / CGFloat(steps) * reach * 2, radius + thickness / 2))
         }
-        // The right end's round cap, from the outer arc to the inner one.
         let rightEnd = onArc(reach, radius)
         for step in 1..<12 {
             let angle = reach + CGFloat(step) / 12 * .pi
@@ -545,7 +461,6 @@ enum NotchMascotGeometry {
     }
 
     private static func heart(width: CGFloat, height: CGFloat, center: CGPoint) -> [CGPoint] {
-        // The classic heart curve, 32 wide and about 29 tall, with y up.
         let raw: [CGPoint] = (0..<dense).map { index in
             let t = CGFloat(index) / CGFloat(dense) * 2 * .pi
             let x = 16 * pow(sin(t), 3)
@@ -560,7 +475,6 @@ enum NotchMascotGeometry {
         }
     }
 
-    /// A drowsy eye: the lid's flat edge on top, the eye's round bottom below.
     private static func lid(width: CGFloat, top: CGFloat, depth: CGFloat) -> [CGPoint] {
         let half = width / 2
         var points: [CGPoint] = []
@@ -576,10 +490,8 @@ enum NotchMascotGeometry {
         return points
     }
 
-    /// The part of a convex outline below the line from `from` to `to`.
     private static func clipBelow(_ points: [CGPoint], from: CGPoint, to: CGPoint) -> [CGPoint] {
         func side(_ point: CGPoint) -> CGFloat {
-            // Positive below the line, with y growing downward.
             (to.x - from.x) * (point.y - from.y) - (to.y - from.y) * (point.x - from.x)
         }
         var clipped: [CGPoint] = []
@@ -598,20 +510,15 @@ enum NotchMascotGeometry {
 
     // MARK: Resampling
 
-    /// `count` points evenly spaced along the outline, starting where its top
-    /// crosses the middle line and going clockwise on screen. Every eye then
-    /// has its points in the same places, which is what lets one become another.
     static func resample(_ outline: [CGPoint], count: Int) -> [CGPoint] {
         guard outline.count >= 3, count >= 3 else { return outline }
         var points = outline
-        // Clockwise on screen, with y growing downward, is a positive area.
         var area: CGFloat = 0
         for index in points.indices {
             let a = points[index], b = points[(index + 1) % points.count]
             area += a.x * b.y - b.x * a.y
         }
         if area < 0 { points.reverse() }
-        // The start: the highest place where the outline crosses x = 0.
         var start: (index: Int, point: CGPoint)?
         for index in points.indices {
             let a = points[index], b = points[(index + 1) % points.count]
@@ -645,7 +552,6 @@ enum NotchMascotGeometry {
         return result
     }
 
-    /// A closed curve through every point, one cubic per point.
     static func smoothClosedPath(_ points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
         let count = points.count
@@ -665,39 +571,19 @@ enum NotchMascotGeometry {
     }
 }
 
-/// One stroll of the companion through the closed island.
 struct NotchMascotVisit: Equatable {
     enum Kind: Equatable {
-        /// From its resting place, around the island and back.
         case lap
-        /// In at one end and out at the other, over what the island shows.
         case pass
-        /// Back from the Command Bar's drop: out from behind the camera to its place.
         case home
-        /// Out from behind the camera over what the island shows, to play
-        /// a reaction where it would rest, and back behind the camera.
         case cameo(NotchMascotReaction)
-        /// The last seconds of a countdown, this long: out over the timer's
-        /// mark to watch the reading run out, and back behind the camera.
         case countdown(TimeInterval)
-        /// A countdown it watched was paused: back behind the camera.
         case retreat
-        /// Switched off: a glad hop where it rests and away behind the
-        /// camera, before the wings it rested in fold.
         case farewell
-        /// Moved to the camera's other side: from where it rested, behind
-        /// the camera, across, and out to its new place.
         case cross
-        /// Switched on: out from behind the camera to its place as the wings
-        /// open, or in at a capsule's near end.
         case arrive
-        /// Still where it rested as an activity took its place: it plays a
-        /// reaction right there and goes behind the camera, rather than
-        /// leaving its place only to come back out for it.
         case linger(NotchMascotReaction)
 
-        /// It ends out of sight, past the strip's end or behind the camera,
-        /// so it can cross an activity's strip and leave nothing behind.
         var endsOutOfSight: Bool {
             switch self {
             case .pass, .cameo, .countdown, .retreat, .farewell, .linger: return true
@@ -705,7 +591,6 @@ struct NotchMascotVisit: Equatable {
             }
         }
 
-        /// It stands over the timer's mark only, and the reading stays in view.
         var watchesTimer: Bool {
             switch self {
             case .countdown, .retreat: return true
@@ -713,11 +598,6 @@ struct NotchMascotVisit: Equatable {
             }
         }
 
-        /// Over an activity beside a camera it takes only the wing it stands
-        /// in, and the other side reads on: the timer's mark while it watches
-        /// a countdown, or its own wing as it reacts, with the music's bars
-        /// playing on or an arriving activity reading at once. Only a stroll
-        /// from end to end takes the whole strip.
         var takesOnlyItsWing: Bool {
             switch self {
             case .countdown, .retreat, .cameo, .linger: return true
@@ -725,8 +605,6 @@ struct NotchMascotVisit: Equatable {
             }
         }
 
-        /// The reaction it comes out for, played as it lands or at once
-        /// where it already stands.
         var reaction: NotchMascotReaction? {
             switch self {
             case .cameo(let reaction), .linger(let reaction): return reaction
@@ -738,49 +616,30 @@ struct NotchMascotVisit: Equatable {
     let id: UUID
     let kind: Kind
     let greeting: NotchMascotMood
-    /// When it began, on the media clock, so a strip drawn again meanwhile
-    /// picks it up where it is.
     let start: CFTimeInterval
 
     var duration: TimeInterval { NotchMascotMotion.duration(of: kind) }
 }
 
-/// Where the companion can walk in a closed strip, in points from the
-/// strip's top left corner.
 struct NotchMascotTrack: Equatable {
     var width: CGFloat
     var height: CGFloat
-    /// The companion's square.
     var size: CGFloat
-    /// Its center while resting.
     var rest: CGFloat
-    /// The camera: walking there, it is behind it.
     var hidden: ClosedRange<CGFloat>?
-    /// The height of its center.
     var baseline: CGFloat
-    /// The top of the island over it: the screen's edge, or a capsule's.
     var ceiling: CGFloat = 0
-    /// It rests right of the camera, and every stroll runs the other way.
     var mirrored = false
-    /// How many times larger than the island it is drawn, so the few points
-    /// it keeps from edges grow with it in the Settings preview.
     var scale: CGFloat = 1
 
-    /// How high a hop of `share` of its size lifts it, kept clear of the
-    /// island's top so it never brushes the screen's edge or a capsule's.
     func hop(_ share: CGFloat) -> CGFloat {
         min(size * share, max(scale, baseline - size / 2 - ceiling - (hidden == nil ? 1 : 2) * scale))
     }
 
-    /// Where it stands just out of sight behind the camera, `margin` points
-    /// past the camera's edge on its side.
     func behindCamera(_ hidden: ClosedRange<CGFloat>, margin: CGFloat) -> CGFloat {
         hidden.lowerBound + size / 2 + margin * scale
     }
 
-    /// The same track `scale` times larger, for the Settings preview, which
-    /// shows the island bigger than it is. The companion is drawn with shapes,
-    /// so it stays sharp at any size.
     func scaled(by scale: CGFloat) -> NotchMascotTrack {
         NotchMascotTrack(width: width * scale, height: height * scale, size: size * scale, rest: rest * scale,
                          hidden: hidden.map { ($0.lowerBound * scale)...($0.upperBound * scale) },
@@ -788,7 +647,6 @@ struct NotchMascotTrack: Equatable {
                          scale: self.scale * scale)
     }
 
-    /// The same track with its resting place on the camera's left.
     var leftSide: NotchMascotTrack {
         guard mirrored else { return self }
         var left = self
@@ -797,27 +655,19 @@ struct NotchMascotTrack: Equatable {
         return left
     }
 
-    /// Where it says hello across the strip: past the camera, as far from it
-    /// as it rests, or toward a capsule's far end.
     var farSpot: CGFloat {
         guard let hidden else { return min(width - size * 0.8, rest + width * 0.22) }
         return hidden.upperBound + (hidden.lowerBound - rest)
     }
 }
 
-/// The companion's walk, sampled densely enough for Core Animation to play
-/// as given: where it is, how high a hop lifts it, how much a landing
-/// squashes it and where it looks.
 struct NotchMascotPath: Equatable {
     var keyTimes: [Double] = []
     var x: [CGFloat] = []
     var lift: [CGFloat] = []
-    /// Positive squashes it flat, negative stretches it tall.
     var squash: [CGFloat] = []
-    /// Where its eyes look across, in shares of its size.
     var gaze: [CGFloat] = []
     var duration: TimeInterval = 0
-    /// When its greeting face shows, in seconds from the start.
     var greeting: ClosedRange<TimeInterval> = 0...0
 }
 
@@ -825,15 +675,10 @@ enum NotchMascotMotion {
     static let lapDuration: TimeInterval = 3.6
     static let passDuration: TimeInterval = 3.4
     static let homeDuration: TimeInterval = 0.62
-    /// A cameo lands where it would rest this long after it starts, and its
-    /// reaction plays from there.
     static let cameoArrival: TimeInterval = 0.5
-    /// It is back behind the camera as its exit ends, so the visit ends there.
     static let cameoExit: TimeInterval = 0.32
     static let farewellDuration: TimeInterval = 0.78
     static let crossDuration: TimeInterval = 1.24
-    /// The closed island crossfades an activity arriving out of the companion
-    /// at rest, and one leaving back into it, over this long.
     static let restCrossfade: TimeInterval = 0.2
 
     static func duration(of kind: NotchMascotVisit.Kind) -> TimeInterval {
@@ -850,32 +695,18 @@ enum NotchMascotMotion {
         }
     }
 
-    /// How long before a countdown runs out the companion comes to watch it.
     static let countdownLead: TimeInterval = 5
-    /// It stays past the end for a beat, under the notice that takes over.
     static let countdownLinger: TimeInterval = 0.1
 
-    /// How long a cameo stays where it landed: its reaction and a beat after it.
     static func cameoHold(_ reaction: NotchMascotReaction) -> TimeInterval { reaction.length + 0.3 }
 
-    /// When a reaction's visit gives back what it covered, from its start.
-    /// Beside a camera it is behind the camera before it is halfway home, so
-    /// the strip starts back as it sets off. In a capsule it walks out past
-    /// the end, which it passes a little before its walk is over, so what it
-    /// covered starts back a quarter of the way out and is mostly there as
-    /// it goes. Later, the island stood empty for a few frames. Nil for a
-    /// visit that comes out for no reaction.
     static func handBack(of kind: NotchMascotVisit.Kind, floats: Bool) -> TimeInterval? {
         guard let reaction = kind.reaction else { return nil }
         let arrival = kind == .linger(reaction) ? 0 : cameoArrival
         return arrival + cameoHold(reaction) + (floats ? cameoExit / 4 : 0)
     }
 
-    /// A stroll of `kind`. Resting right of the camera, it walks the left
-    /// side's stroll seen in a mirror.
     static func path(for kind: NotchMascotVisit.Kind, on track: NotchMascotTrack) -> NotchMascotPath {
-        // A countdown is watched from the camera's left, over the timer's
-        // mark, whichever side it rests on: the reading is on the right.
         switch kind {
         case .countdown(let total): return countdown(on: track.leftSide, total: total)
         case .retreat: return retreat(on: track.leftSide)
@@ -910,8 +741,6 @@ enum NotchMascotMotion {
         case jump(to: CGFloat)
     }
 
-    /// From its resting place behind the camera to the other side, a hello,
-    /// out at the far end and back in at the near one to rest again.
     static func lap(on track: NotchMascotTrack) -> NotchMascotPath {
         let size = track.size
         let offstageRight = track.width + size
@@ -934,7 +763,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// In at the near end, a hello on that side, behind the camera, out at the far end.
     static func pass(on track: NotchMascotTrack) -> NotchMascotPath {
         let size = track.size
         var steps: [Step] = [.stay(0.20), .hop(to: track.rest, 0.42, height: track.hop(0.26)), .stay(0.88, bounces: 2)]
@@ -952,10 +780,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// Back from the drop that rose into the island behind the camera: out
-    /// from behind it with a little hop to its place, still wearing the face
-    /// it left the bar with until it lands. A capsule has no camera, so it
-    /// lands where it rests.
     static func home(on track: NotchMascotTrack) -> NotchMascotPath {
         guard let hidden = track.hidden else {
             var path = sample([.stay(0.08), .hop(to: track.rest, 0.36, height: track.hop(0.2))],
@@ -969,9 +793,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// Out from behind the camera to where it would rest, `hold` there for
-    /// its reaction, and back behind the camera. A capsule has no camera, so
-    /// it comes in at the near end and leaves at the far one.
     static func cameo(on track: NotchMascotTrack, hold: TimeInterval) -> NotchMascotPath {
         let size = track.size
         let duration = cameoArrival + hold + cameoExit
@@ -980,15 +801,12 @@ enum NotchMascotMotion {
                            .walk(to: track.width + size, cameoExit)],
                           start: -size, track: track, duration: duration)
         }
-        // Just out of sight, so it shows the moment it moves and is gone as it lands.
         let behind = track.behindCamera(hidden, margin: 1)
         return sample([.stay(0.06), .hop(to: track.rest, cameoArrival - 0.06, height: track.hop(0.2)), .stay(hold),
                        .hop(to: behind, cameoExit, height: track.hop(0.16))],
                       start: behind, track: track, duration: duration)
     }
 
-    /// Where it rests, `hold` for its reaction, and then behind the camera
-    /// as a cameo leaves, or out at a capsule's far end.
     static func linger(on track: NotchMascotTrack, hold: TimeInterval) -> NotchMascotPath {
         let duration = hold + cameoExit
         guard let hidden = track.hidden else {
@@ -999,9 +817,6 @@ enum NotchMascotMotion {
                       start: track.rest, track: track, duration: duration)
     }
 
-    /// The last `total` seconds of a countdown: out from behind the camera
-    /// over the timer's mark, eyes on the reading, a small hop with every
-    /// second that goes, and back behind the camera just after it runs out.
     static func countdown(on track: NotchMascotTrack, total: TimeInterval) -> NotchMascotPath {
         let size = track.size
         let duration = total + countdownLinger + cameoExit
@@ -1011,7 +826,6 @@ enum NotchMascotMotion {
         let behind = track.behindCamera(hidden, margin: 1)
         var steps: [Step] = [.stay(0.06), .hop(to: track.rest, cameoArrival - 0.06, height: track.hop(0.2))]
         var time = cameoArrival
-        // The reading changes on every whole second left; it hops just as it does.
         let ticks = stride(from: total.rounded(.up) - 1, through: 1, by: -1)
             .map { total - $0 }
             .filter { $0 - 0.15 > time + 0.1 }
@@ -1023,7 +837,6 @@ enum NotchMascotMotion {
         steps.append(.stay(max(0, total + countdownLinger - time)))
         steps.append(.hop(to: behind, cameoExit, height: track.hop(0.16)))
         var path = sample(steps, start: behind, track: track, duration: duration)
-        // Its eyes stay on the reading while it watches.
         path.gaze = zip(path.keyTimes, path.gaze).map { keyTime, gaze in
             let time = keyTime * duration
             return time >= cameoArrival && time <= total + countdownLinger ? 0.07 : gaze
@@ -1031,9 +844,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// Switched on: as it comes back from the Command Bar's drop beside a
-    /// camera. A capsule has no camera to come out from, and no drop rose
-    /// into it, so it hops in at the near end instead of appearing in place.
     static func arrive(on track: NotchMascotTrack) -> NotchMascotPath {
         guard track.hidden == nil else { return home(on: track) }
         var path = sample([.stay(0.06), .hop(to: track.rest, 0.46, height: track.hop(0.3))],
@@ -1042,10 +852,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// To this side of the camera from the other: from where it rested
-    /// there, into the camera's far edge, across behind it, and out with a
-    /// wink to its place on this side. A capsule has no sides, so it only
-    /// hops where it rests.
     static func cross(on track: NotchMascotTrack) -> NotchMascotPath {
         guard let hidden = track.hidden else { return home(on: track) }
         let size = track.size
@@ -1058,9 +864,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// Switched off: a glad little hop where it rests, then away behind the
-    /// camera, out of sight before the wings fold. A capsule has no camera,
-    /// so it walks out past the far end.
     static func farewell(on track: NotchMascotTrack) -> NotchMascotPath {
         let size = track.size
         guard let hidden = track.hidden else {
@@ -1077,7 +880,6 @@ enum NotchMascotMotion {
         return path
     }
 
-    /// Back behind the camera from where it watched a countdown.
     static func retreat(on track: NotchMascotTrack) -> NotchMascotPath {
         guard let hidden = track.hidden else {
             return sample([.stay(cameoExit)], start: -track.size, track: track, duration: cameoExit)
@@ -1092,7 +894,6 @@ enum NotchMascotMotion {
         var path = NotchMascotPath()
         var time: TimeInterval = 0
         var position = start
-        // A landing's squash eases out over the start of the next step.
         var landing: (squash: CGFloat, time: TimeInterval) = (0, 0)
         func add(_ x: CGFloat, lift: CGFloat, squash: CGFloat, gaze: CGFloat) {
             let recovery = landing.squash * CGFloat(max(0, 1 - (time - landing.time) / 0.14))
@@ -1106,8 +907,6 @@ enum NotchMascotMotion {
         for step in steps {
             switch step {
             case .jump(let target):
-                // Off stage at both ends, and in no time: two frames at the
-                // same moment, so no frame ever draws it on the way across.
                 position = target
                 add(position, lift: 0, squash: 0, gaze: 0.05)
             case .stay(let length, let bounces):
@@ -1125,7 +924,6 @@ enum NotchMascotMotion {
                 for frame in 1...frames {
                     let share = CGFloat(frame) / CGFloat(frames)
                     time += length / Double(frames)
-                    // Eased along the ground, a parabola above it.
                     let eased = share * share * (3 - 2 * share)
                     let squash: CGFloat = share < 0.2 ? -0.12 * (1 - share / 0.2) : share > 0.88 ? 0.14 * (share - 0.88) / 0.12 : 0
                     add(from + (target - from) * eased, lift: height * 4 * share * (1 - share),
@@ -1140,14 +938,12 @@ enum NotchMascotMotion {
                 for frame in 1...frames {
                     let share = CGFloat(frame) / CGFloat(frames)
                     time += length / Double(frames)
-                    // Little steps: a small bob on each.
                     let bob = abs(sin(share * .pi * 3)) * track.hop(0.06)
                     add(from + (target - from) * share, lift: bob, squash: 0, gaze: 0.05 * direction)
                 }
                 position = target
             }
         }
-        // The last step lands, and it stays for whatever time is left.
         if time < duration {
             time = duration
             add(position, lift: 0, squash: 0, gaze: 0)
@@ -1160,30 +956,15 @@ enum NotchMascotMotion {
 }
 
 enum NotchMascotSupport {
-    /// Turned on in Settings, the companion says hello almost at once.
     static let welcomeDelay: TimeInterval = 1.5
-    /// Music starting brings it out to bob along at most this often, so
-    /// pressing play again and again does not keep calling it out.
     static let grooveInterval: TimeInterval = 600
-    /// It waits this long after the music starts, until the song's strip has
-    /// settled, before it comes out over it.
     static let grooveDelay: TimeInterval = 1.2
-    /// An AI agent getting to work where it rests has it hand the island over
-    /// with a ready face at most this often, since agents start many turns.
     static let agentStartInterval: TimeInterval = 600
 
-    /// Hiding when idle, it goes into the island this long after it last did
-    /// anything, before it would doze off where it rests, even late at night.
     static let hideDelay: TimeInterval = 30
-    /// Busy just then, or under the pointer, it tries again this much later.
     static let hideRetry: TimeInterval = 3
-    /// How it goes into the island to hide: a yawn where it rests, then in
-    /// behind the camera, or out at a capsule's far end.
     static let hideAway = NotchMascotVisit.Kind.linger(.yawn)
 
-    /// How it takes a countdown running out: startled by a plain timer's
-    /// ring, glad at the end of a focus session, and ready to go again when
-    /// a break is over.
     static func timerReaction(finishing phase: NotchTimerPhase) -> NotchMascotReaction {
         switch phase {
         case .focus: return .celebrate
@@ -1192,44 +973,30 @@ enum NotchMascotSupport {
         }
     }
 
-    /// How it takes the Mac's power changing: glad when the charger goes in,
-    /// cheering once the battery is full, and tired when it runs low.
     static func powerReaction(pluggedIn: Bool, charged: Bool, low: Bool) -> NotchMascotReaction? {
         pluggedIn ? .love : charged ? .celebrate : low ? .yawn : nil
     }
 
-    /// Whether the event the island counted down to, as `before`, began as
-    /// the countdown became `after` at `now`: it perks up then. Only just
-    /// begun, so a Mac that slept through the start, or an event moved or
-    /// removed before it, is no news.
     static func eventBegan(from before: NotchCalendarCountdown?, to after: NotchCalendarCountdown?,
                            at now: Date) -> Bool {
         guard let before, !before.ongoing else { return false }
         let since = now.timeIntervalSince(before.event.start)
-        // Its refresh may come a second early.
         guard since >= -2, since < 60 else { return false }
         guard let after else { return true }
         return after.event.id != before.event.id || after.ongoing
     }
     static let greetings: [NotchMascotMood] = [.happy, .wink, .love]
 
-    /// A blink comes this long after the previous one, twice as long in Low
-    /// Power Mode, where it blinks less.
     static func blinkInterval(lowPower: Bool) -> ClosedRange<TimeInterval> {
         lowPower ? 5.2...12.8 : 2.6...6.4
     }
 
-    /// The share of blinks at rest its eyes wander to one side before:
-    /// about once in twenty seconds, enough to look about without fidgeting.
     static let glanceChance = 0.25
 
-    /// After this many blinks at rest its eyes grow heavy: about three minutes
-    /// by day, under a minute late at night.
     static func blinksBeforeSleep(hour: Int) -> Int {
         hour >= 22 || hour < 6 ? 12 : 36
     }
 
-    /// Installed on the Features page, switched on, and in an island that is on.
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         AppFeature.notchMascot.isAvailable(in: defaults) && NotchSupport.isEnabled(in: defaults)
             && defaults.bool(forKey: DefaultsKey.notchMascotEnabled)
@@ -1239,14 +1006,10 @@ enum NotchMascotSupport {
         isEnabled(in: defaults) && defaults.bool(forKey: DefaultsKey.notchMascotVisits)
     }
 
-    /// Whether it comes out to react to what the island sees, and watches a
-    /// countdown run out.
     static func reacts(in defaults: UserDefaults = .standard) -> Bool {
         isEnabled(in: defaults) && defaults.bool(forKey: DefaultsKey.notchMascotReactions)
     }
 
-    /// Whether it hides in the island once nothing has happened for a
-    /// while, and comes out only to visit or to react.
     static func hidesWhenIdle(in defaults: UserDefaults = .standard) -> Bool {
         isEnabled(in: defaults) && defaults.bool(forKey: DefaultsKey.notchMascotHidesWhenIdle)
     }
@@ -1266,47 +1029,35 @@ enum NotchMascotSupport {
             palette: NotchMascotPalette(rawValue: defaults.string(forKey: DefaultsKey.notchMascotPalette) ?? "") ?? .pearl)
     }
 
-    /// How the Command Bar comes out of the island, or nil when it opens in
-    /// its own window as it always has.
     static func commandBarStyle(in defaults: UserDefaults = .standard) -> NotchCommandBarStyle? {
         guard isEnabled(in: defaults), AppFeature.commandBar.isAvailable(in: defaults),
               defaults.bool(forKey: DefaultsKey.notchCommandBar) else { return nil }
         return NotchCommandBarStyle(rawValue: defaults.string(forKey: DefaultsKey.notchCommandBarStyle) ?? "") ?? .droplet
     }
 
-    /// What the bar's face shows for what is typed. Results get a hop of
-    /// their own on arrival, and afterward the eyes simply stay open on them.
     static func commandBarMood(query: String, hasResults: Bool, searching: Bool) -> NotchMascotMood {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .idle }
         if searching { return .thinking }
         return hasResults ? .idle : .confused
     }
 
-    /// Whether the face's change is worth a little celebration: results
-    /// turning up after a wait, or after nothing matched. The first letters
-    /// typed find something every time, so that is no news.
     static func celebrates(from old: NotchMascotMood, to new: NotchMascotMood, query: String,
                            hasResults: Bool) -> Bool {
         (old == .thinking || old == .confused) && new == .idle && hasResults
             && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Where its eyes go while something is typed: along the text beside
-    /// it, a little further as the text grows. Nil when the field is empty.
     static func readingGaze(for query: String) -> CGPoint? {
         guard !query.isEmpty else { return nil }
         return CGPoint(x: 0.07 + 0.04 * min(1, CGFloat(query.count) / 28), y: 0.01)
     }
 
-    /// Where its eyes go for a pointer at `pointer`, with its center at
-    /// `center`: toward it, more the farther it is, within its face.
     static func pointerGaze(from center: CGPoint, to pointer: CGPoint, size: CGFloat) -> CGPoint {
         guard size > 0 else { return .zero }
         let dx = (pointer.x - center.x) / (size * 3), dy = (pointer.y - center.y) / (size * 2)
         return CGPoint(x: max(-1, min(1, dx)) * 0.08, y: max(-1, min(1, dy)) * 0.05)
     }
 
-    /// Visits come every few minutes, never on a fixed beat.
     static func nextVisitDelay(_ frequency: NotchMascotVisitFrequency = visitFrequency(),
                                random: Double = Double.random(in: 0...1)) -> TimeInterval {
         let range = frequency.delay
@@ -1317,15 +1068,10 @@ enum NotchMascotSupport {
         greetings[min(greetings.count - 1, max(0, Int(random * Double(greetings.count))))]
     }
 
-    /// The companion's square in a closed strip of `height`, with or without
-    /// a capsule's margins around its body.
     static func size(stripHeight: CGFloat, floats: Bool) -> CGFloat {
         floats ? max(10, min(18, stripHeight - 6)) : max(12, min(20, stripHeight - 12))
     }
 
-    /// Where it rests in a strip with a camera: inside a wing, a little way
-    /// from the camera, so it sits beside it and never under it. A capsule
-    /// has no camera, so it rests in the middle whatever the side.
     static func track(stripWidth: CGFloat, stripHeight: CGFloat, wing: CGFloat,
                       cameraWidth: CGFloat, floats: Bool, bodyHeight: CGFloat,
                       side: NotchMascotSide = .left) -> NotchMascotTrack {
@@ -1344,17 +1090,10 @@ enum NotchMascotSupport {
                                 mirrored: side == .right)
     }
 
-    /// Room a wing keeps beyond the companion for it to come out in, so it
-    /// stays clear of the strip's rounded end.
     static let wingRoom: CGFloat = 10
 
-    /// Its size in a notice it stands in, in place of the notice's symbol.
     static let noticeSize: CGFloat = 18
 
-    /// Where it comes out over an activity's closed strip of `size`, drawn
-    /// with `strip`: through a capsule, or in the wing on its side of the
-    /// camera. Nil when that wing has no room for it, as when the menus
-    /// leave none and the activity hangs below the camera instead.
     static func track(overActivity strip: NotchGeometry, size: CGSize,
                       side: NotchMascotSide = .left) -> NotchMascotTrack? {
         if strip.floats {

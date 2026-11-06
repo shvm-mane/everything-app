@@ -4,9 +4,6 @@
 import Darwin
 import Foundation
 
-/// A Claude Code configuration directory, already set up by its owner.
-/// An empty path keeps Claude's usual login: explicitly setting its default
-/// directory would select a different Keychain entry and .claude.json file.
 struct ClaudeAccountProfile: Equatable, Identifiable {
     var directory = ""
     var id: String { directory }
@@ -37,8 +34,6 @@ struct ClaudeAccountProfile: Equatable, Identifiable {
         (isDefault ? home : configurationURL(home: home)).appending(path: ".claude.json")
     }
 
-    /// Never silently fall back to the default account if a chosen folder
-    /// disappears. Only metadata is inspected; credentials belong to Claude.
     func isAvailable(home: URL) -> Bool {
         guard !isDefault else { return true }
         guard directory.hasPrefix("/"), directory.utf8.count <= 4_096 else { return false }
@@ -62,8 +57,6 @@ struct ClaudeAccountProfile: Equatable, Identifiable {
         return folders.map { $0.appending(path: "projects", directoryHint: .isDirectory) }
     }
 
-    /// Only account metadata and the usage timestamp survive decoding, in
-    /// memory. No email, account identifier or token enters the usage archive.
     func read(home: URL) -> Reading {
         guard isAvailable(home: home),
               let size = try? profileURL(home: home).resourceValues(forKeys: [.fileSizeKey]).fileSize,
@@ -93,10 +86,7 @@ struct ClaudeAccountProfile: Equatable, Identifiable {
         return String((name.hasPrefix(".claude-") ? String(name.dropFirst(8)) : name).prefix(80))
     }
 
-    /// Common profile locations only; arbitrary folders are chosen explicitly.
     static func discover(home: URL) -> [Self] {
-        // URL enumeration can resolve a symlink in the home path. Preserve
-        // its spelling: Claude keys its sign-in to the config directory.
         let names = (try? FileManager.default.contentsOfDirectory(atPath: home.path)) ?? []
         let candidates = names.filter { $0 == ".claude" || $0.hasPrefix(".claude-") }
             .map { home.appending(path: $0, directoryHint: .isDirectory) }

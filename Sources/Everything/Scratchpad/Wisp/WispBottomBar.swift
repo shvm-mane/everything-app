@@ -8,14 +8,12 @@ struct BottomBar: View {
     let onCycleFontSize: () -> Void
     let themePreference: ThemePreference
     let onCycleTheme: () -> Void
-    /// Something in the help overlay is new to this user.
     let hasUnseenTips: Bool
     let onHelpClick: () -> Void
 
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        // Everything: just the count (or a brief notice), bottom right.
         HStack(spacing: 12) {
             Spacer()
             if saveFailed {
@@ -23,8 +21,6 @@ struct BottomBar: View {
                     .foregroundStyle(.orange)
                     .help("The scratchpad can't write to its storage folder. Your text is still here — pick another folder in Settings.")
             }
-            // The notice stands in for the count briefly, so the footer
-            // never grows a second line of chrome.
             ZStack(alignment: .trailing) {
                 if let notice {
                     Text(notice)
@@ -45,29 +41,11 @@ struct BottomBar: View {
         .padding(.bottom, 4)
     }
 
-    private var themeIconName: String {
-        switch themePreference {
-        case .light: return "sun.max"
-        case .dark: return "moon"
-        case .system: return "circle.lefthalf.filled"
-        }
-    }
-
-    private var themeButtonHelp: String {
-        switch themePreference.next {
-        case .light: return "Switch to light theme"
-        case .dark: return "Switch to dark theme"
-        case .system: return "Follow system appearance"
-        }
-    }
-
     private var wordsLabel: String {
         wordCount == 1 ? "1 word" : "\(wordCount) words"
     }
 }
 
-/// Chrome controls sit at tertiary until hovered, then lift a step, so
-/// they read as quiet text until the pointer shows they're buttons.
 struct QuietButton<Content: View>: View {
     let action: () -> Void
     let help: String

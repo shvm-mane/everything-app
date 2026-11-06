@@ -4,7 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// Reusable controls for screenshot tool order and shortcut assignments.
 struct ScreenshotToolOrderControls: View {
     @ObservedObject private var l10n = L10n.shared
     @Binding var orderRaw: String
@@ -136,9 +135,6 @@ struct ScreenshotToolOrderControls: View {
     private func shortcutRecorder(for tool: ScreenshotSupport.Tool) -> some View {
         let binding = ScreenshotSupport.Tool.activeBindings(
             from: bindingsRaw, capsLockOn: keyboard.capsLockOn)[tool]
-        // The position digit is a title, not a shortcut: the field shows it
-        // as its empty state so nothing else (Delete, reset) treats it as a
-        // recorded key.
         let label = ScreenshotSupport.Tool.shortcutLabel(
             for: tool, orderRaw: orderRaw, bindingsRaw: bindingsRaw, enabled: true,
             capsLockOn: keyboard.capsLockOn)
@@ -174,9 +170,6 @@ struct ScreenshotToolOrderControls: View {
         }
     }
 
-    /// A digit moves the tool and skips every conflict check. Anything else
-    /// has to be free before it is saved; a rejection leaves the previous
-    /// binding in place and says who owns the key.
     private func assign(_ shortcut: GlobalShortcut?, to tool: ScreenshotSupport.Tool,
                         capsLockOn: Bool = false) {
         let digit = shortcut.flatMap { ScreenshotSupport.Tool.shortcutDigit($0, capsLockOn: capsLockOn) }
@@ -213,8 +206,6 @@ struct ScreenshotToolOrderControls: View {
     }
 }
 
-/// Only visible editor/shortcut controls observe keyboard context. Saved
-/// preferences stay unchanged; badges reflect which bindings can work now.
 final class ScreenshotShortcutContext: ObservableObject {
     @Published private(set) var capsLockOn = false
     private var flagsMonitor: Any?

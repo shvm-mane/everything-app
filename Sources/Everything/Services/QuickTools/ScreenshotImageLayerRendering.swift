@@ -14,8 +14,6 @@ enum ScreenshotImageLayerRendering {
         context.restoreGState()
     }
 
-    /// The base with the images drawn over it. `region`, in whole canvas
-    /// pixels, keeps only that part of the canvas.
     static func composite(base: CGImage, images: [ScreenshotSupport.Annotation],
                           region: CGRect? = nil) -> CGImage? {
         if images.isEmpty && region == nil { return base }
@@ -27,7 +25,6 @@ enum ScreenshotImageLayerRendering {
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        // The region's top-left pixel lands on the bitmap's.
         context.translateBy(x: -crop.minX, y: crop.maxY - bounds.height)
         context.draw(base, in: bounds)
         context.translateBy(x: 0, y: CGFloat(base.height))
@@ -39,14 +36,7 @@ enum ScreenshotImageLayerRendering {
 }
 
 extension ScreenshotRenderer {
-    /// Samples for the blur areas the capture's own samples cannot serve:
-    /// areas over pasted images, which paint the images below them too, and
-    /// areas kept at their size from before a canvas expansion. A sample
-    /// carries random noise, so each one is made once for its style, level,
-    /// reference size and the images below, and every redraw after that
-    /// reuses it while other marks change. All of them go with the capture.
     final class ImageLayerCache {
-        /// Holding the asset keeps its identity from being reused by a newer one.
         private struct Layer: Equatable {
             let asset: ScreenshotSupport.ImageAsset
             let rect: CGRect
@@ -63,8 +53,6 @@ extension ScreenshotRenderer {
         private final class Entry {
             let key: Key
             let sources: BlurSources
-            /// The last redraw that used it. A new entry starts outside any,
-            /// so its first use begins its erase fills' pass too.
             var pass = -1
 
             init(key: Key, sources: BlurSources) {
@@ -78,18 +66,12 @@ extension ScreenshotRenderer {
         private var entries: [Entry] = []
         private var pass = 0
 
-        /// Whether an area paints from the capture's own samples: no pasted
-        /// image lies below it, and it kept no size from before an expansion.
-        /// Erasing reads the pixels themselves, so only images change it.
         static func usesCapture(_ annotation: ScreenshotSupport.Annotation,
                                 below images: [ScreenshotSupport.Annotation]) -> Bool {
             if annotation.blurStyle == .erase { return images.isEmpty }
             return images.isEmpty && annotation.renderReferenceSize == nil
         }
 
-        /// The images among `preceding` that show in an area: those inside
-        /// it and those close enough to its edge for its paint to read.
-        /// Images farther away leave it as it is, so moving one keeps its sample.
         static func images(below annotation: ScreenshotSupport.Annotation,
                            among preceding: [ScreenshotSupport.Annotation],
                            textRuns: [CGRect]?, imageSize: CGSize) -> [ScreenshotSupport.Annotation] {
@@ -99,11 +81,6 @@ extension ScreenshotRenderer {
             return preceding.filter { $0.rect.intersects(read) }
         }
 
-        /// What an area's paint is made from: the area and the pixels past its
-        /// edge that the paint reads. Erasing reads a strip of up to 8 px
-        /// around each run it fills, and a text only run can reach past the
-        /// area. A mosaic block on the edge spans up to two blocks of pixels
-        /// past it, and a blur spreads about one block more.
         static func readRect(of annotation: ScreenshotSupport.Annotation,
                              textRuns: [CGRect]?, imageSize: CGSize) -> CGRect {
             let area = annotation.rect.standardized
@@ -120,10 +97,6 @@ extension ScreenshotRenderer {
             }
         }
 
-        /// Starts a redraw. An erase sample holds a copy of the canvas its
-        /// area reads, so it goes as soon as a redraw no longer uses it.
-        /// Mosaics and blurs are small and stay until there are many, so
-        /// moving an image back finds the same noise again.
         func beginPass(base: CGImage?) {
             if self.base !== base {
                 self.base = base
@@ -142,11 +115,7 @@ extension ScreenshotRenderer {
             let layers = images.compactMap { image in
                 image.imageAsset.map { Layer(asset: $0, rect: image.rect) }
             }
-            // Recognition reads only the capture, so a text only area covers
-            // the part of each image below it as text it could not read.
             let textRuns = original.textRuns.map { $0 + layers.map(\.rect) }
-            // An erase sample keeps only the part of the canvas its area
-            // reads, so moving the area makes a new one.
             var region: CGRect?
             if style == .erase, let base {
                 let bounds = CGRect(x: 0, y: 0, width: base.width, height: base.height)

@@ -3,14 +3,8 @@
 
 import SwiftUI
 
-/// The next timed event, or the one under way, stays readable beside the
-/// camera and moves below a physical notch when the menu bar cannot spare
-/// two useful wings. Paired with another activity, that activity's mark
-/// takes the title's side and the event keeps its dot and clock.
 struct NotchCalendarStrip: View {
     @ObservedObject var service: NotchService
-    /// Where the island draws it: its own strip as of the last update, or
-    /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var calendar = NotchCalendarService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -20,8 +14,6 @@ struct NotchCalendarStrip: View {
     private var usesFullRow: Bool { geometry.compactActivityUsesFooter || geometry.compactActivityWingWidth == 0 }
 
     var body: some View {
-        // An event ending moves the countdown on, or clears it, before the
-        // strip has left.
         NotchStripHold(calendar.countdown, shows: service.compactActivity == .calendar) { content($0) }
     }
 
@@ -67,8 +59,6 @@ struct NotchCalendarStrip: View {
     }
 
     private func fullRow(_ countdown: NotchCalendarCountdown, title: String, remaining: String) -> some View {
-        // The row below the camera ends in the island's deep lower corners;
-        // a fixed margin left the dot and the clock on their curve.
         HStack(spacing: 6) {
             Self.dot(countdown.event)
             Text(title)
@@ -95,8 +85,6 @@ struct NotchCalendarStrip: View {
             .frame(width: geometry.compactActivityWingWidth, alignment: .trailing)
             .clipped()
             Color.clear.frame(width: geometry.compactActivityCameraGap)
-            // The start or end time fills the side the clock alone left
-            // mostly empty; a wing narrowed by the menus keeps just the clock.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: NotchCalendarSupport.stripClockSpacing) {
                     Self.clock(remaining, ongoing: countdown.ongoing)
@@ -112,8 +100,6 @@ struct NotchCalendarStrip: View {
         }
     }
 
-    /// Both sides sit at the ends, as a timer's pair does, and each opens
-    /// its own page. Below a crowded notch the row splits the same way.
     private func paired(_ countdown: NotchCalendarCountdown, companion: NotchCompactActivity, title: String,
                         remaining: String, now: Date) -> some View {
         let footer = geometry.compactActivityUsesFooter
@@ -149,7 +135,6 @@ struct NotchCalendarStrip: View {
         return title.isEmpty ? untitled : title
     }
 
-    /// The event's dot and its clock, as the island draws them beside another activity.
     static func clockMark(_ countdown: NotchCalendarCountdown, remaining: String) -> some View {
         HStack(spacing: NotchCalendarSupport.stripClockSpacing) {
             dot(countdown.event)
@@ -164,8 +149,6 @@ struct NotchCalendarStrip: View {
             .accessibilityHidden(true)
     }
 
-    /// Time left in an event under way takes the agenda's "happening now"
-    /// color, so it never reads as a wait for the next one.
     private static func clock(_ remaining: String, ongoing: Bool) -> some View {
         Text(remaining)
             .font(.system(size: 13, weight: .medium)).monospacedDigit()
@@ -175,7 +158,6 @@ struct NotchCalendarStrip: View {
     }
 }
 
-/// One control for the event: what it is, the time left and where it leads.
 private struct NotchCountdownAccessibility: ViewModifier {
     let label: String
     let value: String

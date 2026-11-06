@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// Pure helpers for the Kill Process feature: protected system processes and
-/// safety boundaries.
 enum KillProcessSupport {
     static func numberComesBefore(_ lhs: Double,
                                   _ rhs: Double,
@@ -25,10 +23,6 @@ enum KillProcessSupport {
         return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
     }
 
-    /// Every descendant of `root` from a flat parent table, breadth first so
-    /// the caller can reverse it and kill deepest first. A pid is visited
-    /// once, so a self-parenting or circular row cannot loop, and the total
-    /// is capped well above any real process tree.
     static func descendants(of root: pid_t, parents: [(pid: pid_t, ppid: pid_t)]) -> [pid_t] {
         var children: [pid_t: [pid_t]] = [:]
         for row in parents {
@@ -58,8 +52,6 @@ enum KillProcessSupport {
         return normalized
     }
 
-    /// Protects kernel, launchd, vital window/session infrastructure, and the
-    /// app's own process from being terminated.
     static func isProtected(pid: pid_t, name: String = "", path: String = "") -> Bool {
         if pid <= 1 || pid == ProcessInfo.processInfo.processIdentifier { return true }
         let lowerName = name.trimmingCharacters(in: .whitespaces).lowercased()

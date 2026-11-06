@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// A brief percentage overlay for every brightness route. The disabled
-/// feature owns no window, observer or timer.
 enum BrightnessOSD {
     private static var panel: NSPanel?
     private static var host: NSHostingController<BrightnessOSDView>?
@@ -22,8 +20,6 @@ enum BrightnessOSD {
         if NotchSupport.routes(.brightness), NotchService.shared.showBrightness(brightness) {
             return
         }
-        // A display mirroring another has no screen of its own; the overlay
-        // goes on the screen the mirror set shares, in hardware or software.
         let sharedScreenID = CGDisplayPrimaryDisplay(displayID)
         let mirroredID = CGDisplayMirrorsDisplay(displayID)
         guard let screen = NSScreen.screens.first(where: {
@@ -31,9 +27,6 @@ enum BrightnessOSD {
             return number == displayID || number == sharedScreenID || number == mirroredID
         }) else { return }
 
-        // One hosting controller for the panel's lifetime: a slider drag
-        // shows dozens of updates a second, and rebuilding the SwiftUI host
-        // for each would burn CPU for no visual difference.
         let panel = ensurePanel()
         let host: NSHostingController<BrightnessOSDView>
         if let existing = Self.host {
@@ -60,9 +53,6 @@ enum BrightnessOSD {
                 panel.animator().alphaValue = 1
             }
         } else {
-            // A dismiss fade may be mid-flight; replacing the animation on
-            // the same key is the only way to stop it from dragging the
-            // fresh show back to zero.
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0
                 panel.animator().alphaValue = 1
@@ -76,7 +66,6 @@ enum BrightnessOSD {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
-    /// Releases the window entirely; the disabled feature owns no panel.
     static func teardown() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { teardown() }
@@ -130,8 +119,6 @@ enum BrightnessOSD {
     }
 }
 
-/// Kept separate from the transient panel so the mandatory UI preview can
-/// host and inspect the exact shipped surface.
 struct BrightnessOSDView: View {
     let brightness: Double
 

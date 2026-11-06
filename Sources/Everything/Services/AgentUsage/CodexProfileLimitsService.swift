@@ -9,14 +9,11 @@ struct CodexProfileLimitsState: Equatable, Identifiable {
     var profile: CodexAccountProfile
     var limits: AgentLimits?
     var plan: String?
-    /// Waiting for its turn or being checked.
     var checking = false
     var failure: CodexAccountUsageError?
-    /// When the last check began; nil until one has.
     var attempted: Date?
     var id: String { profile.id }
 
-    /// An expired window is unknown, not a freshly replenished allowance.
     func currentLimits(at now: Date) -> AgentLimits? {
         guard var limits else { return nil }
         limits.windows.removeAll { $0.resetsAt.map { $0 <= now } ?? false }
@@ -25,8 +22,6 @@ struct CodexProfileLimitsState: Equatable, Identifiable {
 
     func isDue(at now: Date) -> Bool {
         guard let attempted else { return true }
-        // Only a window that renewed after the reading asks sooner, so a
-        // Codex that answers with a past renewal is not asked every minute.
         let renewed = limits.map { reading in
             reading.windows.contains { $0.resetsAt.map { $0 > reading.observedAt && $0 <= now } ?? false }
         } ?? false
@@ -34,17 +29,12 @@ struct CodexProfileLimitsState: Equatable, Identifiable {
     }
 }
 
-/// The limits of each Codex home the person added, kept apart from the
-/// provider-wide reading of the logs and in memory only. One home is checked
-/// at a time: when the AI page shows them and they are due, or when a card
-/// or Settings asks, and never while the island is away or Codex is off.
 final class CodexProfileLimitsService: ObservableObject {
     typealias Reader = (CodexAccountProfile, _ searchPath: String?, BoundedProcessCancellation)
         -> Result<CodexAccountReading, CodexAccountUsageError>
     static let shared = CodexProfileLimitsService()
 
     @Published private(set) var states: [CodexProfileLimitsState] = []
-    /// Asks the due homes again while the page shows any; nil otherwise.
     private(set) var timer: Timer?
 
     private let queue = DispatchQueue(label: "com.vorssaint.codex-profile-limits", qos: .utility)
@@ -52,13 +42,8 @@ final class CodexProfileLimitsService: ObservableObject {
     private let reader: Reader?
     private let loginShellPath: () -> String?
     private var running: (id: String, cancellation: BoundedProcessCancellation)?
-    /// Checks waiting their turn. Those the person asked for still run after
-    /// the page closes; the page's own wait for it to show again.
     private var waiting: [(id: String, asked: Bool)] = []
     private var visible = false
-    /// A Terminal window's PATH, asked of the login shell only when the
-    /// person checks again for a Codex that was not found, as on the Resets
-    /// card: that runs their shell's startup files.
     private var shellPath: String?
 
     init(defaults: UserDefaults = .standard, reader: Reader? = nil,
@@ -68,20 +53,16 @@ final class CodexProfileLimitsService: ObservableObject {
         self.loginShellPath = loginShellPath
     }
 
-    /// Only while an account card can show: a hidden Limits card asks nothing.
     var isEnabled: Bool {
         NotchAgentSupport.isEnabled(in: defaults) && NotchAgentSupport.showsCodexAccounts(in: defaults)
     }
 
-    /// Follows the saved homes and whether Codex is on. Asks only what is
-    /// due, and only while the page shows.
     func synchronize() {
         if !isEnabled { cancelChecks() }
         let wanted = CodexAccountProfile.decode(defaults.string(forKey: DefaultsKey.notchAgentsCodexProfiles) ?? "")
         if states.map(\.profile) != wanted {
             let previous = states
             states = wanted.map { profile in
-                // A renamed home keeps its reading and its check.
                 guard var state = previous.first(where: { $0.id == profile.id && $0.profile.directory == profile.directory })
                 else { return CodexProfileLimitsState(profile: profile) }
                 state.profile = profile
@@ -99,14 +80,11 @@ final class CodexProfileLimitsService: ObservableObject {
         if visible { refresh() }
     }
 
-    /// A Settings preview shows what is known without asking.
     func pageDidAppear(preview: Bool = false) {
         if !preview { visible = true }
         synchronize()
     }
 
-    /// A check under way finishes and keeps its time, so looking at the page
-    /// again does not start it over.
     func pageDidDisappear() {
         visible = false
         syncTimer()
@@ -116,15 +94,12 @@ final class CodexProfileLimitsService: ObservableObject {
         for index in states.indices where dropped.contains(states[index].id) { states[index].checking = false }
     }
 
-    /// The island is away, the section stops or Codex is off: nothing runs.
     func pause() {
         visible = false
         cancelChecks()
         syncTimer()
     }
 
-    /// Queues the homes that are due, or, when the person asks, `id` or every
-    /// home. One already waiting or under way is not asked twice.
     func refresh(id: String? = nil, force: Bool = false, now: Date = Date()) {
         guard isEnabled, visible || force else { return }
         for index in states.indices where id == nil || states[index].id == id {
@@ -177,8 +152,6 @@ final class CodexProfileLimitsService: ObservableObject {
         case .failure(.cancelled):
             state.attempted = nil
         case .failure(let failure):
-            // Another sign-in may be behind the home now. A check that could
-            // not finish leaves the last reading standing.
             if failure == .needsSignIn || failure == .invalidProfile {
                 state.limits = nil
                 state.plan = nil
@@ -192,7 +165,6 @@ final class CodexProfileLimitsService: ObservableObject {
         guard running != nil || !waiting.isEmpty else { return }
         if let running {
             running.cancellation.cancel()
-            // Asked again once checks can run.
             if let index = states.firstIndex(where: { $0.id == running.id }) { states[index].attempted = nil }
         }
         running = nil

@@ -4,59 +4,37 @@
 import Darwin
 import Foundation
 
-/// A banked reset: one renewal of the Codex session and weekly limits at
-/// once, kept on the account until it is used or expires.
 struct AgentCodexReset: Equatable, Identifiable {
     let id: String
     let expiresAt: Date?
 }
 
-/// The account's banked resets, as Codex reads them.
 struct AgentCodexResetSummary: Equatable {
     let available: Int
-    /// Soonest to expire first. The account can list fewer than it has, or
-    /// none when only the count is known.
     let resets: [AgentCodexReset]
-    /// The limits read in the same request, newer than any log.
     let limits: AgentLimits?
     let checkedAt: Date
 
     var nextExpiry: Date? { resets.lazy.compactMap(\.expiresAt).min() }
 }
 
-/// Codex's own server, started for one short conversation at a time, answers
-/// for the account. It signs in with Codex's credentials, which Vorssaint
-/// never reads, and hears only the questions asked here.
 enum AgentCodexServer {
     enum Failure: Error, Equatable {
-        /// Neither the Codex app nor its command-line tool is on this Mac.
         case missing
-        /// Codex is signed out, or signed in with a key or a cloud account,
-        /// which have no plan and so no resets.
         case needsSignIn
-        /// A Codex from before resets could be read from outside it.
         case outdated
-        /// No answer that says what happened: it stopped, ran out of time or
-        /// answered in words this version does not know.
         case unreachable
-        /// It answered with an error of its own. For a use, that includes its
-        /// request to the account timing out, which may still have spent one.
         case refused
     }
 
-    /// What using a reset did, in the server's words.
     enum Outcome: String, Equatable {
         case reset, nothingToReset, noCredit, alreadyRedeemed
     }
 
-    /// The maker's desktop apps, which carry the tool inside and keep it current.
     static let appIdentifiers = ["com.openai.codex", "com.openai.chat"]
     static let checkTimeout: TimeInterval = 20
     static let redeemTimeout: TimeInterval = 30
 
-    /// Where the tool can be: inside the desktop app, in its current layout
-    /// and its earlier one, then where the official installer, Homebrew and
-    /// npm put it, then along a shell's PATH when one was asked for.
     static func candidates(apps: [URL], home: URL, searchPath: String? = nil) -> [URL] {
         let bundled = apps.flatMap { app in
             ["Contents/Resources/codex-cli/bin/codex", "Contents/Resources/codex"].map {
@@ -76,15 +54,10 @@ enum AgentCodexServer {
         }
     }
 
-    /// A Terminal window's PATH, which runs the person's shell startup files:
-    /// asked only when they look again for a Codex that was not found.
     static func loginShellPath() -> String? {
         HomebrewEnvironment.loginShellExports(shellPath: HomebrewCommandBuilder.currentShellPath)["PATH"]
     }
 
-    /// An app opened from Finder has only the system folders on its PATH,
-    /// and a tool installed with npm needs `node`, which sits beside it or
-    /// on the shell's PATH.
     static func environment(for executable: URL, searchPath: String?,
                             base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
         var environment = base
@@ -97,8 +70,6 @@ enum AgentCodexServer {
 
     // MARK: Conversations
 
-    /// The account's resets and limits. An account without a plan has no
-    /// resets, so its limits are not asked for either.
     static func check(_ executable: URL, environment: [String: String]) -> Result<AgentCodexResetSummary, Failure> {
         guard let conversation = AgentCodexConversation(executable, environment: environment,
                                                         timeout: checkTimeout) else { return .failure(.unreachable) }
@@ -112,9 +83,6 @@ enum AgentCodexServer {
             .flatMap { _ in conversation.summary() }
     }
 
-    /// Uses one reset, the one `credit` names or else the account's next,
-    /// and reads the account again, which a lost reply may have changed too.
-    /// The same `key` for a second try of one use never spends two.
     static func redeem(_ executable: URL, environment: [String: String], credit: String?,
                        key: String) -> (outcome: Result<Outcome, Failure>, summary: AgentCodexResetSummary?) {
         guard let conversation = AgentCodexConversation(executable, environment: environment,
@@ -133,13 +101,10 @@ enum AgentCodexServer {
 
     // MARK: Answers
 
-    /// Nil while the account has a plan.
     static func signInFailure(_ result: [String: Any]) -> Failure? {
         (result["account"] as? [String: Any])?["type"] as? String == "chatgpt" ? nil : .needsSignIn
     }
 
-    /// Nil for a Codex that does not report resets at all; one that reports
-    /// none leaves the count at zero.
     static func summary(_ result: [String: Any], now: Date) -> AgentCodexResetSummary? {
         guard result.keys.contains("rateLimitResetCredits") else { return nil }
         let credits = result["rateLimitResetCredits"] as? [String: Any]
@@ -156,7 +121,6 @@ enum AgentCodexServer {
                                       checkedAt: now)
     }
 
-    /// The main allowance's windows, as a log names them.
     static func limits(_ result: [String: Any], observed: Date) -> AgentLimits? {
         var snapshot = (result["rateLimitsByLimitId"] as? [String: Any])?["codex"] as? [String: Any]
         if snapshot == nil, let single = result["rateLimits"] as? [String: Any],
@@ -175,8 +139,6 @@ enum AgentCodexServer {
         (result["outcome"] as? String).flatMap(Outcome.init(rawValue:))
     }
 
-    /// The server words its refusals: a question it does not know is an
-    /// unknown variant to it, and a signed-out account needs authentication.
     static func failure(_ error: Any?) -> Failure {
         let error = error as? [String: Any]
         let message = (error?["message"] as? String ?? "").lowercased()
@@ -187,17 +149,14 @@ enum AgentCodexServer {
     }
 }
 
-/// Codex's JSON-RPC protocol on the shared bounded CLI transport.
 final class AgentCodexConversation: AgentCLIConversation {
     private var lastID = 0
     init?(_ executable: URL, environment: [String: String], timeout: TimeInterval,
           cancellation: BoundedProcessCancellation? = nil) {
-        // Account metadata does not need plugins or marketplace updates.
         super.init(executable, arguments: ["-c", "features.plugins=false", "app-server"],
                    environment: environment, timeout: timeout, cancellation: cancellation)
     }
 
-    /// Introduces the app, as every conversation must begin.
     func start() -> Result<Void, AgentCodexServer.Failure> {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         let client: [String: Any] = ["name": "vorssaint", "title": "EVERYTHING", "version": version]
@@ -212,7 +171,6 @@ final class AgentCodexConversation: AgentCLIConversation {
         let id = lastID
         guard send(["id": id, "method": method, "params": params]) else { return .failure(.unreachable) }
         while let message = next() {
-            // Notifications and the server's own requests are not the answer.
             guard message["method"] == nil, (message["id"] as? NSNumber)?.intValue == id else { continue }
             if let result = message["result"] as? [String: Any] { return .success(result) }
             return .failure(AgentCodexServer.failure(message["error"]))

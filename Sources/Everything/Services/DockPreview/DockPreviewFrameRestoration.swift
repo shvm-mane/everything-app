@@ -3,8 +3,6 @@
 
 import AppKit
 
-/// Captured before the temporary Dock preference can change any window bounds.
-/// Keep all visible windows so moving between Dock icons retains the same baseline.
 struct DockPreviewFrameRestoration {
     private let windows: [[String: Any]]
     private let screens: [Screen]
@@ -42,8 +40,6 @@ struct DockPreviewFrameRestoration {
         guard heldVisibleFrame != screen.visibleFrame,
               !heldVisibleFrame.contains(original) else { return nil }
 
-        // Activation is immediate. Repair only after the work area has recovered,
-        // and only if this exact window still owns focus and was Dock-constrained.
         return {
             Self.restore(item, original: original, screen: screen,
                          heldVisibleFrame: heldVisibleFrame, isCurrent: isCurrent, attempt: 0)

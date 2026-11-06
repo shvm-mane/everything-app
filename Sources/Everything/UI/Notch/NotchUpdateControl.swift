@@ -3,8 +3,6 @@
 
 import SwiftUI
 
-/// The same offer and progress as the menu panel, kept inside the island's
-/// existing header so it cannot displace or resize the active tool.
 struct NotchUpdateControl: View {
     @ObservedObject private var updates = UpdateService.shared
     let action: () -> Void

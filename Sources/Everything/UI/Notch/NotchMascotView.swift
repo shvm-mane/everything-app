@@ -6,43 +6,27 @@ import QuartzCore
 import SwiftUI
 
 extension Notification.Name {
-    /// A file is being dragged toward the island while it shows where to drop it.
     static let notchMascotDragMoved = Notification.Name("NotchMascotDragMoved")
-    /// An activity takes the place of the companion resting in the closed island.
     static let notchMascotRestYields = Notification.Name("NotchMascotRestYields")
 }
 
-/// A one-off motion the companion plays over its face.
 enum NotchMascotCue: Equatable {
-    /// Results turned up: a hop with smiling eyes.
     case celebrate
-    /// The eyes dart about, searching.
     case glance
-    /// Something was typed: the eyes go to it for a moment, in shares of
-    /// its size, then come back. Nil looks ahead again at once.
     case look(CGPoint?)
 }
 
-/// The companion, drawn with shape layers. Every motion is a Core Animation
-/// animation: the app says where it goes once and the render server draws
-/// the way there, with no timer or redraw in the app. Even the blinks chain
-/// through Core Animation, each one starting from the end of the last.
-/// `root` is its square, and its parent must lay out from the top, as a
-/// flipped view does.
 final class NotchMascotRig: NSObject {
     let root = CALayer()
     private(set) var look = NotchMascotLook.standard
     private(set) var size: CGFloat = 0
     private(set) var mood = NotchMascotMood.idle
-    /// Whether it blinks now and then and, after a long rest, grows sleepy.
     private(set) var idles = false
     var reduceMotion = false
 
     private let hopper = CALayer()
     private let squasher = CALayer()
     private let tilter = CALayer()
-    /// Where the eyes are drawn to beyond the face it keeps: the text being
-    /// typed, or the pointer over the island.
     private let attention = CALayer()
     private let ears = CAShapeLayer()
     private let antenna = CAShapeLayer()
@@ -55,15 +39,10 @@ final class NotchMascotRig: NSObject {
     private let leftEye = CAShapeLayer()
     private let rightEye = CAShapeLayer()
     private var blinks = 0
-    /// It grew sleepy on its own after a long rest, rather than being shown
-    /// so, and anything that happens wakes it.
     private var dozed = false
-    /// When its eyes last went after something: a pointer, a drag or typing.
     private var attended: CFTimeInterval = -.infinity
-    /// When the visit it plays is over, on the media clock.
     private var visitEnds: CFTimeInterval = 0
     private var blinkRelay: NotchMascotAnimationRelay?
-    /// Blinks wait until a visit has gone by.
     private var blinksResume: CFTimeInterval = 0
     private var configured = false
 
@@ -95,8 +74,6 @@ final class NotchMascotRig: NSObject {
 
     // MARK: Look
 
-    /// Draws the companion at `size` points with `look`. Nothing moves, and a
-    /// new look at the same size cross-fades in, as a choice in Settings does.
     func configure(look: NotchMascotLook, size: CGFloat, contentsScale scale: CGFloat) {
         guard !configured || look != self.look || size != self.size || scale != root.contentsScale else { return }
         let restyled = configured && look != self.look && size == self.size && !reduceMotion
@@ -235,9 +212,6 @@ final class NotchMascotRig: NSObject {
         CATransaction.commit()
     }
 
-    /// Turns to `mood` at `time` on the media clock and keeps it there, for
-    /// a face set ahead of a moment, such as a drop landing. The face it
-    /// keeps on its own stays as it was.
     func turn(to mood: NotchMascotMood, at time: CFTimeInterval) {
         guard size > 0 else { return }
         let from = self.mood.expression, to = mood.expression
@@ -265,7 +239,6 @@ final class NotchMascotRig: NSObject {
         }
     }
 
-    /// Back to its own face at rest, with every motion taken off.
     func reset(to mood: NotchMascotMood) {
         stopBlinking()
         for layer in [root, hopper, squasher, tilter, attention, face, leftEye, rightEye] { layer.removeAllAnimations() }
@@ -278,17 +251,13 @@ final class NotchMascotRig: NSObject {
 
     // MARK: Attention
 
-    /// Whether a stroll is moving it, with eyes for the way ahead.
     var isVisiting: Bool { root.animation(forKey: "visit") != nil && CACurrentMediaTime() < visitEnds }
 
-    /// Whether a visit under way has it standing at `stand` just now, where
-    /// ending the visit leaves it without a jump.
     func stands(at stand: CGPoint) -> Bool {
         guard let position = root.presentation()?.position else { return false }
         return abs(position.x - stand.x) < 0.5 && abs(position.y - stand.y) < 0.5
     }
 
-    /// Ends a visit under way where it stands, and it blinks again.
     func endVisit() {
         for layer in [root, squasher, face] { layer.removeAnimation(forKey: "visit") }
         root.removeAnimation(forKey: "visitFade")
@@ -297,20 +266,13 @@ final class NotchMascotRig: NSObject {
         syncBlinking()
     }
 
-    /// Lets go of the last frame a visit that ended out of sight held, once
-    /// the island has nothing more for it.
     func clearFinishedVisit() {
         guard root.animation(forKey: "visit") != nil, CACurrentMediaTime() >= visitEnds else { return }
         for layer in [root, squasher, face] { layer.removeAnimation(forKey: "visit") }
         root.removeAnimation(forKey: "visitFade")
     }
-    /// It grew sleepy on its own after a long rest.
     var isDozing: Bool { dozed }
 
-    /// Turns its eyes toward `target`, in shares of its size, on top of the
-    /// face it keeps. With `hold`, they stay that long and come back, so
-    /// keys typed in a row keep them there. Without it, they stay. Each turn
-    /// starts where the eyes are, never where the last one meant to go.
     func attend(to target: CGPoint, hold: TimeInterval? = nil) {
         guard size > 0, !reduceMotion else { return }
         attended = CACurrentMediaTime()
@@ -338,7 +300,6 @@ final class NotchMascotRig: NSObject {
         CATransaction.commit()
     }
 
-    /// Its eyes come back to the face it keeps, after `delay`.
     func lookAhead(after delay: TimeInterval = 0) {
         guard size > 0 else { return }
         let from = attention.presentation()?.transform ?? attention.transform
@@ -400,8 +361,6 @@ final class NotchMascotRig: NSObject {
         squasher.add(squash, forKey: "squash")
     }
 
-    /// The robot's antenna bulb goes dark while it sleeps and lights again as
-    /// it wakes.
     private func lightBulb(_ lit: Bool, animated: Bool) {
         guard look.style == .robot else { return }
         let color = (lit ? look.palette.light : look.palette.shade).cgColor
@@ -418,7 +377,6 @@ final class NotchMascotRig: NSObject {
         CATransaction.commit()
     }
 
-    /// Lit already, the bulb shows dark a moment longer, then lights.
     private func relightBulb(after delay: TimeInterval) {
         guard look.style == .robot else { return }
         let dark = look.palette.shade.cgColor
@@ -429,7 +387,6 @@ final class NotchMascotRig: NSObject {
         bulb.add(light, forKey: "light")
     }
 
-    /// A reaction lights the robot's bulb up with a soft glow for as long as it plays.
     private func glowBulb(for duration: TimeInterval) {
         guard look.style == .robot else { return }
         let glow = CAKeyframeAnimation(keyPath: "shadowOpacity")
@@ -439,8 +396,6 @@ final class NotchMascotRig: NSObject {
         bulb.add(glow, forKey: "glow")
     }
 
-    /// Positive flattens it on the ground, negative stretches it up, and its
-    /// bottom stays where it was.
     private func squashed(_ amount: CGFloat) -> CATransform3D {
         let scaleX = 1 + amount * 0.8, scaleY = 1 - amount
         let bottom = size * 0.42
@@ -476,7 +431,6 @@ final class NotchMascotRig: NSObject {
         }
     }
 
-    /// A slow stretch up and back, as a yawn or waking up.
     private func stretch(beginTime: CFTimeInterval, duration: TimeInterval) {
         let stretch = CAKeyframeAnimation(keyPath: "transform")
         stretch.values = [squashed(0), squashed(-0.12), squashed(-0.12), squashed(0.05), squashed(0)]
@@ -491,12 +445,8 @@ final class NotchMascotRig: NSObject {
 
     // MARK: Reactions
 
-    /// A short reaction to something the island saw happen, over the face it
-    /// keeps. `lift` is how high a hop may take it where it stands. With
-    /// Reduce Motion it only changes face.
     func react(_ reaction: NotchMascotReaction, lift: CGFloat) {
         guard size > 0 else { return }
-        // Whatever it is, it wakes up for it.
         if dozed, reaction != .wakeUp { setMood(.idle, animated: !reduceMotion) }
         blinks = 0
         let now = CACurrentMediaTime()
@@ -525,7 +475,6 @@ final class NotchMascotRig: NSObject {
             flashFace(.surprised, duration: 0.9)
             hop(height: lift * 0.7)
         case .flash:
-            // Squeezed shut, then wide open, as a camera's flash goes off.
             let blink = CAKeyframeAnimation(keyPath: "transform.scale.y")
             blink.values = [1, 0.06, 0.06, 1.18, 1]
             blink.keyTimes = [0, 0.18, 0.42, 0.7, 1]
@@ -537,8 +486,6 @@ final class NotchMascotRig: NSObject {
             flashFace(.confused, duration: 1.2)
             wobble()
         case .wakeUp:
-            // Heavy eyes, a stretch, and a glad face. A robot's bulb lights
-            // up again as it stretches.
             if dozed {
                 setMood(.idle, animated: false)
                 relightBulb(after: 0.35)
@@ -553,8 +500,6 @@ final class NotchMascotRig: NSObject {
             flashFace(.alert, duration: 1)
             hop(height: lift * 0.55)
         case .bounce:
-            // Time to go: two quick hops, the second lower, and a small
-            // rebound, squashing as it lands and stretching to leave again.
             flashFace(.alert, duration: reaction.length)
             let height = max(1, lift * 0.6)
             let bounce = CAKeyframeAnimation(keyPath: "transform.translation.y")
@@ -572,7 +517,6 @@ final class NotchMascotRig: NSObject {
             squash.duration = 0.95
             squasher.add(squash, forKey: "squash")
         case .hush:
-            // Eyes shut for a moment as it ducks, then back.
             let shut = CAKeyframeAnimation(keyPath: "transform.scale.y")
             shut.values = [1, 0.1, 0.1, 1]
             shut.keyTimes = [0, 0.22, 0.78, 1]
@@ -587,7 +531,6 @@ final class NotchMascotRig: NSObject {
             pauseBlinking(for: 1, from: nil)
         case .ready:
             flashFace(.determined, duration: 1)
-            // A nod: down a little, up past where it was, and settled.
             let nod = CAKeyframeAnimation(keyPath: "transform")
             nod.values = [squashed(0), squashed(0.1), squashed(-0.06), squashed(0)].map { NSValue(caTransform3D: $0) }
             nod.keyTimes = [0, 0.3, 0.65, 1]
@@ -595,8 +538,6 @@ final class NotchMascotRig: NSObject {
             nod.beginTime = now + 0.12
             squasher.add(nod, forKey: "nod")
         case .groove:
-            // It hears the music: smiling eyes, a bob on every beat and a
-            // lean one way and the other, landing a little squashed.
             flashFace(.happy, duration: reaction.length)
             let beats = 4
             let height = max(1, lift * 0.45)
@@ -633,8 +574,6 @@ final class NotchMascotRig: NSObject {
         }
     }
 
-    /// Shows another face for a moment and comes back to its own, without
-    /// changing the face it keeps.
     private func flashFace(_ mood: NotchMascotMood, duration: TimeInterval, beginTime: CFTimeInterval? = nil,
                            key: String = "flash") {
         let expression = mood.expression
@@ -642,8 +581,6 @@ final class NotchMascotRig: NSObject {
         for (layer, eye, base, right) in [(leftEye, expression.left, own.left, false), (rightEye, expression.right, own.right, true)] {
             let face = CAKeyframeAnimation(keyPath: "path")
             let back = eyePath(base, right: right), to = eyePath(eye, right: right)
-            // One shown now leaves from the eyes on screen, heavy from a doze
-            // or shut mid-blink, rather than from its own face for a frame.
             let from = beginTime == nil ? layer.presentation()?.path ?? back : back
             face.values = [from, to, to, back]
             face.keyTimes = [0, 0.15, 0.85, 1]
@@ -657,30 +594,19 @@ final class NotchMascotRig: NSObject {
 
     // MARK: Visits
 
-    /// Plays a stroll that began at `start` on the media clock, from where it
-    /// should be now. `baseline` is the height of its center in its parent.
-    /// With Reduce Motion it does not walk, and greets at `stand` instead.
-    /// `holdsEnd` keeps it where the visit ends, out of sight, until what
-    /// comes next takes over: the timer that ends a visit can fire a frame
-    /// late, and it stood in its place for that frame.
     func playVisit(_ path: NotchMascotPath, greeting: NotchMascotMood, baseline: CGFloat, stand: CGPoint,
                    start: CFTimeInterval, holdsEnd: Bool = false) {
         guard size > 0, path.duration > 0, path.x.count == path.keyTimes.count else { return }
         let now = CACurrentMediaTime()
-        // One that already ended out of sight still holds its last frame
-        // for a strip drawn after it, until the island moves on.
         guard now < start + path.duration || (holdsEnd && !reduceMotion) else { return }
         visitEnds = start + path.duration
         if reduceMotion {
-            // No stroll: it fades in where it would greet, says hello and fades out.
             let still = CAKeyframeAnimation(keyPath: "position")
             still.values = [NSValue(point: stand), NSValue(point: stand)]
             still.duration = path.duration
             still.beginTime = start
             root.add(still, forKey: "visit")
             if root.position != stand {
-                // Staying on from where it stood, as to react over an
-                // activity, it only fades out at the end.
                 let inPlace = abs((path.x.first ?? .infinity) - stand.x) < 0.5
                 let fade = CAKeyframeAnimation(keyPath: "opacity")
                 fade.values = [inPlace ? 1 : 0, 1, 1, 0]
@@ -719,19 +645,16 @@ final class NotchMascotRig: NSObject {
         look.beginTime = start
         look.isAdditive = true
         face.add(look, forKey: "visit")
-        // Its eyes are for the way ahead while it walks.
         lookAhead()
         if path.greeting.upperBound > path.greeting.lowerBound {
             flashFace(greeting, duration: path.greeting.upperBound - path.greeting.lowerBound,
                       beginTime: start + path.greeting.lowerBound)
         }
-        // No blink while it walks, as the face it shows is the greeting's.
         pauseBlinking(for: start + path.duration - now, from: nil)
     }
 
     // MARK: Blinking
 
-    /// Blinks wait while the layer is out of sight, and `visible` resumes them.
     func setIdles(_ idles: Bool, visible: Bool) {
         let wanted = idles && visible
         guard wanted != self.idles else { return }
@@ -742,7 +665,6 @@ final class NotchMascotRig: NSObject {
         } else { syncBlinking() }
     }
 
-    /// Wakes it from a long rest. A face shown sleepy on purpose stays.
     func wake(animated: Bool) {
         blinks = 0
         if dozed { setMood(.idle, animated: animated) }
@@ -759,8 +681,6 @@ final class NotchMascotRig: NSObject {
         blinkRelay = nil
         leftEye.removeAnimation(forKey: "blink")
         rightEye.removeAnimation(forKey: "blink")
-        // A glance on its way goes with the blink it led to; one under way
-        // finishes, so the eyes never jump.
         if let glance = attention.animation(forKey: "idleGlance"), glance.beginTime > CACurrentMediaTime() {
             attention.removeAnimation(forKey: "idleGlance")
         }
@@ -774,8 +694,6 @@ final class NotchMascotRig: NSObject {
         syncBlinking()
     }
 
-    /// One blink, a few seconds from now. It starts the next one when it ends,
-    /// so blinking costs a short animation every few seconds and nothing in between.
     private func scheduleBlink() {
         let now = CACurrentMediaTime()
         let interval = NotchMascotSupport.blinkInterval(lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
@@ -786,11 +704,7 @@ final class NotchMascotRig: NSObject {
         blink.keyTimes = twice ? [0, 0.2, 0.4, 0.58, 0.78, 1] : [0, 0.45, 1]
         blink.duration = twice ? 0.44 : 0.17
         blink.beginTime = now + delay
-        // Reduce Motion: the eyes close and open without a motion between.
         if reduceMotion { blink.calculationMode = .discrete }
-        // Now and then its eyes wander to one side, and the blink comes as
-        // they find their way back, as eyes do. Not while they follow
-        // something, which would pull them apart.
         if !twice, !reduceMotion, now - attended > 3, Double.random(in: 0...1) < NotchMascotSupport.glanceChance {
             let away = CATransform3DMakeTranslation((Bool.random() ? 1 : -1) * size * 0.12, 0, 0)
             let glance = CAKeyframeAnimation(keyPath: "transform")
@@ -799,7 +713,6 @@ final class NotchMascotRig: NSObject {
             glance.timingFunctions = [CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.3, 1),
                                       CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeInEaseOut)]
             glance.duration = 1.3
-            // On top of wherever the eyes look, so nothing else is undone.
             glance.isAdditive = true
             glance.beginTime = blink.beginTime - 1.1
             attention.add(glance, forKey: "idleGlance")
@@ -817,7 +730,6 @@ final class NotchMascotRig: NSObject {
         guard finished, relay === blinkRelay, idles else { return }
         blinkRelay = nil
         blinks += 1
-        // A long rest makes its eyes heavy, and it stops blinking then.
         if mood == .idle, blinks >= NotchMascotSupport.blinksBeforeSleep(hour: Calendar.current.component(.hour, from: Date())) {
             setMood(.sleepy, animated: true)
             dozed = true
@@ -827,8 +739,6 @@ final class NotchMascotRig: NSObject {
     }
 }
 
-/// Core Animation keeps its delegate alive. This one keeps only a weak
-/// reference, so a companion taken off screen is let go even with a blink pending.
 private final class NotchMascotAnimationRelay: NSObject, CAAnimationDelegate {
     weak var target: NotchMascotRig?
 
@@ -839,8 +749,6 @@ private final class NotchMascotAnimationRelay: NSObject, CAAnimationDelegate {
     }
 }
 
-/// Holds the companion in a view. It draws only through its layers and never
-/// takes a click: what it stands on decides what a click does.
 final class NotchMascotHostView: NSView {
     let mascot = NotchMascotRig()
     private let stage = CALayer()
@@ -849,14 +757,8 @@ final class NotchMascotHostView: NSView {
     private var idlesWhenVisible = false
     private var playedVisit: UUID?
     private var lastCueID = 0
-    /// The face last asked for. Asked again, it changes nothing: a companion
-    /// grown sleepy on its own stays so until something new happens.
     private var requestedMood: NotchMascotMood?
-    /// Where it stands, its center, or nil for the middle of the view, and
-    /// where it can be seen, nil everywhere. Kept for when the view is resized.
     private var placement: (center: CGPoint?, visible: [CGRect]?) = (nil, nil)
-    /// A resting companion's eyes follow the pointer over the island, and
-    /// the pointer wakes it from a long rest.
     var followsPointer = false {
         didSet {
             guard followsPointer != oldValue else { return }
@@ -866,12 +768,9 @@ final class NotchMascotHostView: NSView {
     }
     private var pointerArea: NSTrackingArea?
     private var playedReaction: UUID?
-    /// A fresh reaction for a strip not yet in its window.
     private var waitingReaction: (event: NotchMascotReactionEvent, lift: CGFloat)?
-    /// The pointer resting on it for a moment is a pat on the head.
     private var pettingWork: DispatchWorkItem?
     private var lastPetting: CFTimeInterval = 0
-    /// A cameo's reaction, waiting for it to land.
     private var cameoWork: DispatchWorkItem?
 
     override init(frame frameRect: NSRect) {
@@ -896,7 +795,6 @@ final class NotchMascotHostView: NSView {
         cameoWork?.cancel()
     }
 
-    /// In the island's drop hint, its eyes follow a file dragged anywhere on screen.
     var followsDrag = false {
         didSet {
             guard followsDrag != oldValue else { return }
@@ -916,10 +814,6 @@ final class NotchMascotHostView: NSView {
         mascot.attend(to: NotchMascotSupport.pointerGaze(from: mascot.root.position, to: point, size: mascot.size))
     }
 
-    /// Resting in the closed island, it fades out in the first half of the
-    /// crossfade an arriving activity brings, and the strip comes in over the
-    /// second. SwiftUI fades a hosted view out over the whole crossfade
-    /// whatever its transition says, which left it half seen over the text.
     var yieldsToActivities = false {
         didSet {
             guard yieldsToActivities != oldValue else { return }
@@ -943,8 +837,6 @@ final class NotchMascotHostView: NSView {
         fade.fillMode = .forwards
         fade.isRemovedOnCompletion = false
         root.add(fade, forKey: "yield")
-        // The view is gone once the crossfade is over. One still on screen
-        // after it comes back.
         DispatchQueue.main.asyncAfter(deadline: .now() + NotchMascotMotion.restCrossfade * 2) { [weak self] in
             self?.layer?.removeAnimation(forKey: "yield")
         }
@@ -989,7 +881,6 @@ final class NotchMascotHostView: NSView {
         follow(event)
     }
 
-    /// The pointer coming back wakes it, with a stretch from a doze.
     private func greetPointer() {
         if mascot.isDozing, !mascot.isVisiting { mascot.react(.wakeUp, lift: 0) } else { mascot.wake(animated: true) }
     }
@@ -1006,8 +897,6 @@ final class NotchMascotHostView: NSView {
         mascot.lookAhead(after: 0.25)
     }
 
-    /// A second of the pointer resting on it brings out the hearts, at most
-    /// once in a while. One work item waits per pat, nothing ticks.
     private func notePetting(at point: CGPoint) {
         let center = mascot.root.position
         let reach = mascot.size / 2 + 3
@@ -1022,7 +911,6 @@ final class NotchMascotHostView: NSView {
             self.pettingWork = nil
             self.lastPetting = CACurrentMediaTime()
             self.mascot.react(.love, lift: 0)
-            // A soft tick under a finger on the trackpad, as the hearts come.
             if NotchSupport.usesHapticFeedback() {
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
             }
@@ -1031,8 +919,6 @@ final class NotchMascotHostView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
-    /// Plays a reaction the island published, once, and only while it is
-    /// fresh: a strip drawn after its moment, as the island closes, keeps still.
     func react(_ event: NotchMascotReactionEvent?, lift: CGFloat) {
         guard let event, event.id != playedReaction else { return }
         playedReaction = event.id
@@ -1045,8 +931,6 @@ final class NotchMascotHostView: NSView {
         mascot.react(event.reaction, lift: lift)
     }
 
-    /// Moves come only while the pointer moves over it: nothing runs while
-    /// it rests, and each look is one short animation from where the eyes are.
     private func follow(_ event: NSEvent) {
         guard !mascot.isVisiting else { return }
         let point = convert(event.locationInWindow, from: nil)
@@ -1088,8 +972,6 @@ final class NotchMascotHostView: NSView {
         applyPlacement()
     }
 
-    /// Grows or shrinks it about the middle of this view, as from one size
-    /// of it to another.
     func scale(from start: CGFloat, to end: CGFloat, duration: CFTimeInterval,
                timing: CAMediaTimingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)) {
         CATransaction.begin()
@@ -1107,15 +989,11 @@ final class NotchMascotHostView: NSView {
         CATransaction.commit()
     }
 
-    /// Where it stands, its center in this view or nil for the middle, and
-    /// where it can be seen: nil everywhere, or only inside `visible`.
     func place(at center: CGPoint?, visible: [CGRect]?) {
         placement = (center, visible)
         applyPlacement()
     }
 
-    /// Its box's offset from the figure's own middle, so that what a caller
-    /// centres, at rest or on a visit, is the body that shows.
     private var figureShift: CGFloat { NotchMascotGeometry.figureOffset(mascot.look) * mascot.size }
 
     private func applyPlacement() {
@@ -1124,7 +1002,6 @@ final class NotchMascotHostView: NSView {
         let visible = placement.visible
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        // Bounds and position rather than a frame, which a scaled stage has none of.
         stage.bounds = CGRect(origin: .zero, size: bounds.size)
         stage.position = CGPoint(x: bounds.midX, y: bounds.midY)
         if mascot.root.position != center { mascot.root.position = center }
@@ -1146,16 +1023,12 @@ final class NotchMascotHostView: NSView {
         mascot.play(cue)
     }
 
-    /// Plays `visit` once. A cameo's reaction plays as it lands, `lift`
-    /// being how high a hop may take it there.
     func playVisit(_ visit: NotchMascotVisit?, path: @autoclosure () -> NotchMascotPath, baseline: CGFloat,
                    stand: CGPoint, lift: CGFloat) {
         let shift = figureShift
         let baseline = baseline - shift
         let stand = CGPoint(x: stand.x, y: stand.y - shift)
         guard let visit else {
-            // Ended early while it stands in its place, as when what it
-            // reacted over went away: it stays there rather than leave.
             if mascot.isVisiting, mascot.stands(at: stand) { mascot.endVisit() }
             else if !mascot.isVisiting { mascot.clearFinishedVisit() }
             return
@@ -1167,8 +1040,6 @@ final class NotchMascotHostView: NSView {
         mascot.playVisit(path(), greeting: visit.greeting, baseline: baseline, stand: stand, start: visit.start,
                          holdsEnd: visit.kind.endsOutOfSight)
         guard let reaction = visit.kind.reaction else { return }
-        // A strip drawn again after it landed picks the visit up there, and
-        // does not play the reaction late. Lingering, it is already there.
         let arrival = visit.kind == .linger(reaction) ? 0 : NotchMascotMotion.cameoArrival
         let wait = visit.start + arrival - CACurrentMediaTime()
         guard wait > -0.2 else { return }
@@ -1181,19 +1052,14 @@ final class NotchMascotHostView: NSView {
     }
 }
 
-/// The companion on its own, centred in its frame: the Command Bar's face
-/// and the Settings preview.
 struct NotchMascotView: NSViewRepresentable {
     var look: NotchMascotLook
     var mood: NotchMascotMood = .idle
     var size: CGFloat
     var idles = true
-    /// A one-off motion, played whenever `cueID` changes.
     var cue: NotchMascotCue? = nil
     var cueID = 0
-    /// Its eyes follow a file being dragged toward the island.
     var followsDrag = false
-    /// A reaction it plays once, as it first shows: a notice's.
     var reaction: NotchMascotReaction? = nil
 
     func makeNSView(context: Context) -> NotchMascotHostView {
@@ -1202,7 +1068,6 @@ struct NotchMascotView: NSViewRepresentable {
         view.configure(look: look, size: size, mood: mood, idles: idles,
                        reduceMotion: context.environment.accessibilityReduceMotion, animated: false)
         if let reaction {
-            // Small in a notice, it hops a little higher for its size to read.
             view.react(NotchMascotReactionEvent(id: UUID(), reaction: reaction, start: CACurrentMediaTime()),
                        lift: size * 0.32)
         }
@@ -1221,21 +1086,14 @@ struct NotchMascotView: NSViewRepresentable {
     }
 }
 
-/// The companion in a closed strip: resting beside the camera, or strolling
-/// through on a visit. It is hidden behind the camera as it passes.
 struct NotchMascotTrackView: NSViewRepresentable {
     var look: NotchMascotLook
     var track: NotchMascotTrack
-    /// Whether it stands at its resting place, or only comes for the visit.
     var rests: Bool
     var visit: NotchMascotVisit?
-    /// The face it keeps at rest: wide awake while Keep Awake holds the Mac up.
     var mood: NotchMascotMood = .idle
     var reaction: NotchMascotReactionEvent?
-    /// Switched off, the Settings preview shows it asleep: eyes shut, no
-    /// blinking, and no eyes for the pointer.
     var awake = true
-    /// It rests in the closed island and fades out early as an activity takes its place.
     var yieldsToActivities = false
 
     func makeNSView(context: Context) -> NotchMascotHostView {
@@ -1245,8 +1103,6 @@ struct NotchMascotTrackView: NSViewRepresentable {
     func updateNSView(_ view: NotchMascotHostView, context: Context) {
         view.configure(look: look, size: track.size, mood: awake ? mood : .sleepy, idles: rests && awake,
                        reduceMotion: context.environment.accessibilityReduceMotion, animated: true)
-        // Off stage at the far end once a visit is over, so nothing jumps
-        // when its last frame hands back to where it stands.
         let x = rests ? track.rest : track.mirrored ? -track.size * 2 : track.width + track.size * 2
         var visible: [CGRect]?
         if let hidden = track.hidden {
@@ -1258,7 +1114,6 @@ struct NotchMascotTrackView: NSViewRepresentable {
         view.place(at: CGPoint(x: x, y: track.baseline), visible: visible)
         view.followsPointer = rests && awake
         view.yieldsToActivities = yieldsToActivities
-        // A countdown is watched from the camera's left whatever the side.
         let stand = visit?.kind.watchesTimer == true ? track.leftSide.rest : track.rest
         view.playVisit(visit, path: NotchMascotMotion.path(for: visit?.kind ?? .pass, on: track),
                        baseline: track.baseline, stand: CGPoint(x: stand, y: track.baseline),
@@ -1271,45 +1126,26 @@ struct NotchMascotTrackView: NSViewRepresentable {
     }
 }
 
-/// The companion over an activity's closed strip, which steps aside while
-/// it visits or comes out to react. `track` is nil when the strip has no
-/// room for it.
 struct NotchMascotActivityVisit: ViewModifier {
     @ObservedObject var service: NotchService
     let track: NotchMascotTrack?
-    /// The island's own strip, the only one that names its song.
     var ownStrip = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        // A lap or a homecoming ends where it rests, which an activity's
-        // strip has no place for, so only what ends out of sight comes over it.
-        // A countdown is watched from beside a camera; a capsule copy has
-        // none, and stepping its timer aside there would only blank it.
         let visit = track == nil ? nil : service.mascotVisit.flatMap {
             $0.kind.endsOutOfSight && !($0.kind.watchesTimer && track?.hidden == nil) ? $0 : nil
         }
-        // Reacting or watching a countdown beside a camera, it covers only
-        // the wing it stands in, as the black of the closed island, and the
-        // other side stays in view. A capsule has no wings, so what it shows
-        // steps aside instead.
         let hidden = track?.hidden
         let ownWing = visit?.kind.takesOnlyItsWing == true && hidden != nil
         let stepsAside = visit != nil && service.mascotStepsAside && !ownWing
-        // A countdown is watched from the camera's left whatever the side.
         let rightWing = track?.mirrored == true && visit?.kind.watchesTimer == false
-        // Beside a strip naming its song, the black starts where the words
-        // end, which the cover's inset leaves less room before than spacing.
         let clearance = ownStrip && !rightWing && service.namedMusicWings != nil
             ? max(0, NotchMusicStripLayout.coverInset(service.compactActivityGeometry) - NotchMusicStripLayout.spacing) : 0
         content
             .opacity(stepsAside ? 0 : 1)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stepsAside)
             .overlay(alignment: .top) {
-                // Handed back with the strip, halfway home, so what it covered
-                // returns as it goes behind the camera. Laid out on the
-                // companion's own track, which stays on the camera however far
-                // a strip reaches to one side.
                 if ownWing, service.mascotStepsAside, let track, let hidden {
                     Color.black
                         .frame(width: rightWing ? track.width - hidden.upperBound : max(0, hidden.lowerBound - clearance),

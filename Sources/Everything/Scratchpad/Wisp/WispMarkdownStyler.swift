@@ -1,35 +1,28 @@
 import AppKit
 
 extension NSAttributedString.Key {
-    /// The answer to a line that ends in `=`, on the `=` and anything
-    /// after it. Drawn by CaretTextView; never in the file.
     static let wispMathAnswer = NSAttributedString.Key("wispMathAnswer")
 
-    /// The URL a run of text points at. Deliberately not `.link`:
-    /// NSTextView follows `.link` on a plain click, which would make the
-    /// text of a URL impossible to click into and edit. ⌘-click opens it.
     static let wispLink = NSAttributedString.Key("wispLink")
-    /// A list marker drawn as a bullet; the value is the bullet's color.
     static let wispBullet = NSAttributedString.Key("wispBullet")
+    static let wispCheckbox = NSAttributedString.Key("wispCheckbox")
 }
 
-/// The styling pass behind the editor: headings, emphasis, code, rules,
-/// ticked items and links, all as attributes over plain markdown.
-///
-/// Everything here is line-local except fenced code blocks, whose
-/// extent depends on every fence above a line. That's what makes
-/// restyling only the edited paragraph safe: the fences are re-listed
-/// on each pass (a substring search, well under a millisecond on a
-/// large note), and if an edit changed which lines are inside a block
-/// the whole document is restyled instead.
+/// How a task's checkbox is drawn in place of its `- [ ]` marker.
+final class WispCheckboxMark: NSObject {
+    let checked: Bool
+    let color: NSColor
+
+    init(checked: Bool, color: NSColor) {
+        self.checked = checked
+        self.color = color
+    }
+}
+
 @MainActor
 enum MarkdownStyler {
     nonisolated static let lineHeightMultiple: CGFloat = 1.35
 
-    // Spans never cross a line break of any kind: a paragraph restyle
-    // only sees whole paragraphs, and NSString ends those at CR and
-    // U+2029 as well as LF. Emphasis must touch a word at both ends —
-    // markdown's own rule — so a `* ` bullet or `a * b` isn't a marker.
     private static let boldPattern = try! NSRegularExpression(
         pattern: #"\*\*([^\s*](?:[^*\n\r\u2029]*[^\s*])?)\*\*"#
     )
@@ -38,11 +31,6 @@ enum MarkdownStyler {
     )
     private static let codePattern = try! NSRegularExpression(pattern: #"`([^`\n\r\u2029]+)`"#)
     private static let headingPattern = try! NSRegularExpression(pattern: #"^(#{1,6})\s+\S"#)
-    /// http(s) URLs, not ending on sentence punctuation. Parentheses
-    /// count only in balanced pairs, so `(see https://x.io)` stops at
-    /// the `)` while `…/wiki/Foo_(bar)` keeps it. A pattern rather than
-    /// NSDataDetector: the detector's answer for a line depends on the
-    /// text around it, which a paragraph restyle can't reproduce.
     private static let linkPattern = try! NSRegularExpression(
         pattern: #"\bhttps?://(?:[^\s<>"'`()\[\]]|\([^\s<>"'`()]*\))*(?:[^\s<>"'`.,;:!?()\[\]*]|\([^\s<>"'`()]*\))"#
     )
@@ -53,8 +41,6 @@ enum MarkdownStyler {
         return paragraph
     }
 
-    /// Restyle `storage`. With `edited`, only the paragraphs it touches
-    /// are restyled, unless the edit moved a code-block boundary.
     static func restyle(
         _ storage: NSTextStorage,
         face: FontFace,
@@ -69,9 +55,6 @@ enum MarkdownStyler {
         var range = NSRange(location: 0, length: ns.length)
         if let edited {
             let start = min(max(0, edited.location), ns.length)
-            // One character past the edit: an edit ending in a newline
-            // hands the next line a new start, and line-level styles
-            // (heading, task, rule) depend on where a line starts.
             let end = min(max(start, NSMaxRange(edited)) + 1, ns.length)
             let dirty = ns.paragraphRange(for: NSRange(location: start, length: end - start))
             if blocksUnchanged(after: dirty, in: storage, fences: fences) {
@@ -83,19 +66,11 @@ enum MarkdownStyler {
         let style = Style(face: face, size: size, theme: theme, transparency: transparency)
         storage.beginEditing()
         defer { storage.endEditing() }
-        // Replace, not add: anything a pass applied last time has to go,
-        // or it outlives the text that justified it — a reopened
-        // checkbox would stay struck through, a deleted fence would keep
-        // its panel. The editor never restyles mid-composition, so
-        // there's no input-method underline here to wipe.
         storage.setAttributes([
             .font: style.base,
             .foregroundColor: style.palette.text,
             .paragraphStyle: style.body,
         ], range: range)
-        // One String for the regex passes. The storage's backing string
-        // is mutable, so every `as String` is a full copy — done per
-        // heading, that made a large note quadratic.
         let text = ns as String
         styleLines(in: range, storage: storage, ns: ns, text: text, fences: fences, style: style)
         styleInline(in: range, storage: storage, ns: ns, text: text, style: style)
@@ -119,9 +94,6 @@ enum MarkdownStyler {
 
             let isFence = contains(fences, lineRange.location)
             if isFence || isInsideBlock(lineRange.location, fences: fences) {
-                // The ground is drawn by HorizontalRuleLayoutManager from
-                // .wispCodeBlock, full width; an attribute background
-                // would stop at each line's last glyph.
                 storage.addAttributes([.font: style.mono, .wispCodeBlock: true], range: lineRange)
                 if isFence, content.length > 0 {
                     storage.addAttribute(.foregroundColor, value: style.syntax, range: content)
@@ -131,19 +103,16 @@ enum MarkdownStyler {
             guard content.length > 0 else { continue }
 
             if HorizontalRuleLayoutManager.isHorizontalRuleLine(lineRange: lineRange, in: ns) {
-                // The rule itself is drawn by the layout manager.
                 storage.addAttribute(.foregroundColor, value: NSColor.clear, range: content)
                 continue
             }
 
-            // A reminder line's grey text is its time (drawn by
-            // CaretTextView); it never also gets a maths answer.
             if !(Reminders.mightBeReminder(ns, content) && Reminders.isReminder(ns.substring(with: content))) {
                 styleAnswer(content, storage: storage, ns: ns)
             }
 
             let first = ns.character(at: content.location)
-            if first == 0x23,  // #
+            if first == 0x23,
                let match = headingPattern.firstMatch(in: text, range: content) {
                 let hashes = match.range(at: 1)
                 storage.addAttributes([
@@ -165,10 +134,6 @@ enum MarkdownStyler {
         }
     }
 
-    /// Everything: `- `, `* ` and `+ ` items read as real bullets. The
-    /// marker stays in the file but is drawn as • by the layout manager,
-    /// and wrapped lines hang under the item's text, nested items keeping
-    /// their own indent.
     private static func styleBullet(
         _ content: NSRange, storage: NSTextStorage, ns: NSString, style: Style
     ) {
@@ -186,9 +151,6 @@ enum MarkdownStyler {
         storage.addAttribute(.paragraphStyle, value: paragraph, range: content)
     }
 
-    /// Only lines that end in `=` pay for a parse. The answer sits on
-    /// the `=` and any spaces after it — never on a line break, which a
-    /// CRLF note leaves inside `content`.
     private static func styleAnswer(_ content: NSRange, storage: NSTextStorage, ns: NSString) {
         var lineEnd = NSMaxRange(content)
         while lineEnd > content.location, isBreak(ns.character(at: lineEnd - 1)) { lineEnd -= 1 }
@@ -196,7 +158,7 @@ enum MarkdownStyler {
         while end > content.location, ns.character(at: end - 1) == 0x20 || ns.character(at: end - 1) == 0x09 {
             end -= 1
         }
-        guard end > content.location, ns.character(at: end - 1) == 0x3D,  // =
+        guard end > content.location, ns.character(at: end - 1) == 0x3D,
               let answer = InlineMath.answer(
                 forLine: ns.substring(with: NSRange(location: content.location, length: lineEnd - content.location))
               ) else { return }
@@ -210,15 +172,42 @@ enum MarkdownStyler {
         c == 0x0A || c == 0x0D || c == 0x2028 || c == 0x2029
     }
 
-    /// A ticked item reads as done: the whole line dims and the text
-    /// after the box is struck through. The file still says `- [x]`.
     private static func styleCheckedItem(
         _ content: NSRange, storage: NSTextStorage, ns: NSString, style: Style
     ) {
         let line = ns.substring(with: content)
-        guard Checkbox.isChecked(line), let box = Checkbox.boxRange(in: line) else { return }
-        storage.addAttribute(.foregroundColor, value: style.done, range: content)
-        let textStart = content.location + NSMaxRange(box)
+        guard let box = Checkbox.boxRange(in: line) else { return }
+        let checked = Checkbox.isChecked(line)
+        // The `- [ ]` marker is hidden and drawn as a checkbox; the text
+        // wraps under itself, not under the marker.
+        var bullet = content.location
+        while ns.character(at: bullet) == 0x20 || ns.character(at: bullet) == 0x09 { bullet += 1 }
+        let markerEnd = content.location + NSMaxRange(box)
+        let marker = NSRange(location: bullet, length: markerEnd - bullet)
+        if checked { storage.addAttribute(.foregroundColor, value: style.done, range: content) }
+        // The `- [ ] ` stays in the line's font, hidden; the box is drawn
+        // over its right end. A ticked `x` is kerned to a space's width so
+        // ticked and open tasks line up.
+        var spanEnd = NSMaxRange(marker)
+        if spanEnd < NSMaxRange(content), ns.character(at: spanEnd) == 0x20 { spanEnd += 1 }
+        let markerSpan = NSRange(location: marker.location, length: spanEnd - marker.location)
+        storage.addAttributes([.foregroundColor: NSColor.clear,
+                               .wispCheckbox: WispCheckboxMark(checked: checked, color: style.palette.text)],
+                              range: markerSpan)
+        let font = (storage.attribute(.font, at: marker.location, effectiveRange: nil) as? NSFont) ?? style.base
+        if checked {
+            let extra = ("x" as NSString).size(withAttributes: [.font: font]).width
+                - (" " as NSString).size(withAttributes: [.font: font]).width
+            storage.addAttribute(.kern, value: -extra, range: NSRange(location: content.location + box.location + 1, length: 1))
+        }
+        let prefix = ns.substring(with: NSRange(location: content.location, length: spanEnd - content.location))
+            .replacingOccurrences(of: "x", with: " ").replacingOccurrences(of: "X", with: " ")
+        let paragraph = (style.body.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        paragraph.headIndent = (prefix as NSString).size(withAttributes: [.font: font]).width
+        storage.addAttribute(.paragraphStyle, value: paragraph, range: content)
+        guard checked else { return }
+        var textStart = content.location + NSMaxRange(box)
+        while textStart < NSMaxRange(content), ns.character(at: textStart) == 0x20 { textStart += 1 }
         let textLength = NSMaxRange(content) - textStart
         guard textLength > 0 else { return }
         storage.addAttributes([
@@ -227,7 +216,6 @@ enum MarkdownStyler {
         ], range: NSRange(location: textStart, length: textLength))
     }
 
-    /// Cheap pre-check so ordinary lines never allocate a substring.
     private static func mayBeTask(_ ns: NSString, _ content: NSRange) -> Bool {
         var i = content.location
         let end = NSMaxRange(content)
@@ -252,8 +240,6 @@ enum MarkdownStyler {
             )
         }
 
-        // Code first: inside a span everything is literal, so the other
-        // passes skip anything that starts or ends in one.
         codePattern.enumerateMatches(in: text, range: range) { match, _, _ in
             guard let r = match?.range, !inCodeBlock(r) else { return }
             storage.addAttributes([.font: style.mono, .backgroundColor: style.codeBackground], range: r)
@@ -275,7 +261,6 @@ enum MarkdownStyler {
         }
         italicPattern.enumerateMatches(in: text, range: range) { match, _, _ in
             guard let r = match?.range, !isCode(r) else { return }
-            // A `*` on either side means this is half of a **bold**.
             if r.location > 0, ns.character(at: r.location - 1) == 0x2A { return }
             if NSMaxRange(r) < ns.length, ns.character(at: NSMaxRange(r)) == 0x2A { return }
             let current = storage.attribute(.font, at: r.location, effectiveRange: nil) as? NSFont
@@ -294,9 +279,6 @@ enum MarkdownStyler {
         }
     }
 
-    /// The URL for a matched link. macOS 13's URL(string:) rejects
-    /// anything not already escaped — `Straße`, a `|` in a query — so
-    /// those are percent-encoded rather than left unclickable.
     static func linkURL(_ text: String) -> URL? {
         if let url = URL(string: text) { return url }
         var allowed = CharacterSet.urlQueryAllowed
@@ -306,8 +288,6 @@ enum MarkdownStyler {
 
     // MARK: Fences
 
-    /// Start offsets of every line that opens or closes a fenced block:
-    /// optional leading whitespace, then three backticks. Ascending.
     static func fenceLineStarts(in ns: NSString) -> [Int] {
         var starts: [Int] = []
         var searchFrom = 0
@@ -328,17 +308,10 @@ enum MarkdownStyler {
         return starts
     }
 
-    /// A non-fence line is inside a block when an odd number of fences
-    /// open above it. An unclosed fence runs to the end of the document,
-    /// so a block looks like code while you're still typing it.
     private static func isInsideBlock(_ lineStart: Int, fences: [Int]) -> Bool {
         countBelow(fences, lineStart) % 2 == 1
     }
 
-    /// Would the lines after `dirty` still be styled correctly? Every
-    /// one of them flips together when the fence count above changes,
-    /// so checking the first ordinary line against its current
-    /// attribute is enough.
     private static func blocksUnchanged(
         after dirty: NSRange, in storage: NSTextStorage, fences: [Int]
     ) -> Bool {
@@ -401,8 +374,6 @@ enum MarkdownStyler {
             headingParagraph = heading
         }
 
-        /// H1 and H2 step up in size; H3 and below are bold at (nearly)
-        /// body size, so a deep outline doesn't shout.
         func heading(level: Int) -> NSFont {
             let scale: CGFloat
             switch level {

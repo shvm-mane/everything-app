@@ -3,15 +3,8 @@
 
 import SwiftUI
 
-// A floating capsule has no camera inside it, so what the closed island shows
-// runs in one row from one round end to the other, and the capsule is as
-// wide as that row. The service measures each row with NotchCapsuleLayout,
-// and these views draw it with the same measures. A click anywhere on the
-// capsule opens the island, on the activity's page when it shows one.
-
 private typealias CapsuleLayout = NotchCapsuleLayout
 
-/// One row between the capsule's round ends, centred in the menu bar.
 private struct NotchCapsuleRow<Content: View>: View {
     let size: CGSize
     let geometry: NotchGeometry
@@ -54,8 +47,6 @@ private struct NotchCapsuleSymbol: View {
 }
 
 private extension View {
-    /// A symbol's ink, not its frame, meets the row's middle line, where the
-    /// text beside it has its capitals.
     func capsuleCentred(_ symbol: String, size: CGFloat = CapsuleLayout.symbolSize,
                         weight: NSFont.Weight = .medium) -> some View {
         alignmentGuide(VerticalAlignment.center) {
@@ -64,7 +55,6 @@ private extension View {
     }
 }
 
-/// Feedback, a message or a mirrored banner, read from one end to the other.
 struct NotchCapsuleNoticeView: View {
     let notice: NotchNotice
     let geometry: NotchGeometry
@@ -73,7 +63,6 @@ struct NotchCapsuleNoticeView: View {
 
     private var tint: Color {
         switch notice.event {
-        // A warning reads as one in any agent's color; other AI notices wear it.
         case .agents: return notice.symbol.hasPrefix("exclamationmark") ? .orange : notice.agent?.tint ?? .white
         case .timer: return .orange
         default: return .white
@@ -105,8 +94,6 @@ struct NotchCapsuleNoticeView: View {
         }
     }
 
-    /// The meter keeps its place while the reading changes: the reading
-    /// always has the room of its widest value.
     private func levelRow(_ level: Double) -> some View {
         HStack(spacing: CapsuleLayout.spacing) {
             NotchCapsuleSymbol(name: notice.symbol, tint: tint)
@@ -126,7 +113,6 @@ struct NotchCapsuleNoticeView: View {
     private var messageRow: some View {
         HStack(spacing: CapsuleLayout.spacing) {
             mark
-            // A timer's notice keeps the orange its strip wears.
             Text(notice.title).capsuleTitle().layoutPriority(1)
                 .foregroundStyle(notice.event == .timer ? Color.orange : .white)
             if !notice.detail.isEmpty {
@@ -138,10 +124,6 @@ struct NotchCapsuleNoticeView: View {
     }
 
     @ViewBuilder private var mark: some View {
-        // With the companion on, it stands in for the symbol and reacts, unless
-        // its reactions are off. A
-        // notice about the agent itself wears its mark; warnings and renewals
-        // keep a symbol that says what happened.
         if NotchMascotSupport.isEnabled(), let reaction = notice.mascot {
             let side = min(CapsuleLayout.symbolWidth, CapsuleLayout.artworkSide(geometry))
             NotchMascotView(look: NotchMascotSupport.look(), mood: NotchService.shared.mascotRestingMood,
@@ -158,7 +140,6 @@ struct NotchCapsuleNoticeView: View {
     }
 }
 
-/// The new song's cover, read as it arrives: it often lands after the title.
 private struct NotchCapsuleTrackArtwork: View {
     @ObservedObject private var music = NotchMusicService.shared
     let side: CGFloat
@@ -167,9 +148,6 @@ private struct NotchCapsuleTrackArtwork: View {
                                           source: music.playback?.track) }
 }
 
-/// The closed capsule at rest: bare, or with the charge or the AI allowance
-/// the person chose, in its middle. The companion rests in its middle when
-/// nothing else is there, and walks through on its visits.
 struct NotchCapsuleRestingView: View {
     @ObservedObject var service: NotchService
     @ObservedObject private var music = NotchMusicService.shared
@@ -179,12 +157,10 @@ struct NotchCapsuleRestingView: View {
     @AppStorage(DefaultsKey.notchLowBatteryEarlyThreshold) private var earlyBatteryThreshold = NotchSupport.defaultEarlyBatteryThreshold
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
 
     private var geometry: NotchGeometry { displayGeometry ?? service.geometry }
 
-    /// A visit walks over what the capsule rests with, which steps aside meanwhile.
     private var contentStepsAside: Bool { service.mascotStepsAside && !service.mascotAtRest }
 
     var body: some View {
@@ -244,25 +220,17 @@ struct NotchCapsuleRestingView: View {
     }
 }
 
-/// Playing music: the cover in the round end, concentric with it, the title
-/// in the middle and the bars at the other end.
 struct NotchCapsuleMusicStrip: View {
     @ObservedObject var service: NotchService
     var snapshot: NotchCompactMusicSnapshot? = nil
-    /// The surface the strip fills; a departing strip keeps its own.
     var size: CGSize? = nil
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
-    /// The island's own capsule answers the pointer. A copy on another
-    /// display or a strip on its way out only shows the song.
     var interactive = false
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var geometry: NotchGeometry { snapshot?.geometry ?? displayGeometry ?? service.geometry }
-    /// A new song stays off the strip until its notice has shown it, and a
-    /// held song through a reading from its player without a name.
     private var shown: NotchCompactMusicSnapshot? {
         snapshot ?? service.heldMusic ?? (interactive ? service.musicStripStandIn(for: music.playback) : nil)
     }
@@ -272,14 +240,10 @@ struct NotchCapsuleMusicStrip: View {
     private var title: String { playback?.track.title ?? FeatureStrings.radialMenu(l10n.language).mediaNowPlaying }
     private var live: Bool { interactive && snapshot == nil }
     private var showsControl: Bool { live && service.musicStripShowsControl }
-    /// A click's request shows at once, before the player says so.
     private var playing: Bool { (live ? service.musicStripRequest : nil) ?? playback?.isPlaying == true }
 
     var body: some View {
         let side = CapsuleLayout.artworkSide(geometry)
-        // A song is named as it starts and while the pointer rests on its
-        // cover, and a strip on its way out leaves as it was. Otherwise the
-        // cover and bars say enough.
         let named = service.capsuleMusicTitleShown || (live ? service.musicStripNamesSong : snapshot?.namesSong == true)
         NotchCapsuleRow(size: size ?? CapsuleLayout.musicSurface(title: named ? title : nil, geometry: geometry),
                         geometry: geometry, leading: 0, trailing: 0) {
@@ -325,12 +289,9 @@ struct NotchCapsuleMusicStrip: View {
     }
 }
 
-/// A running timer: its mark, or the activity it shares the capsule with,
-/// and its reading.
 struct NotchCapsuleTimerStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var timer = NotchTimerService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -374,15 +335,12 @@ struct NotchCapsuleTimerStrip: View {
             .foregroundStyle(.orange)
             .lineLimit(1).fixedSize()
             .modifier(NotchRollingDigits(value: text, countsDown: !timer.session.countsUp, everySecond: false))
-            // A reading that gains or loses a character, like 10m becoming
-            // 9m, resizes the capsule; the service measures the same reading.
             .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                 DispatchQueue.main.async { service.refreshPresentation() }
             }
     }
 }
 
-/// The working agents' marks, side by side, each in a frame wider than it.
 private struct NotchCapsuleAgentMarks: View {
     let providers: [AgentProvider]
 
@@ -393,9 +351,6 @@ private struct NotchCapsuleAgentMarks: View {
     }
 }
 
-/// What shares the capsule with a timer or an event: a download's arrow and
-/// percentage, the working agents, the playing track's cover, or the next
-/// event's dot and countdown.
 private struct NotchCapsuleCompanionMark: View {
     let companion: NotchCompactActivity
     let geometry: NotchGeometry
@@ -435,11 +390,9 @@ private struct NotchCapsuleCompanionMark: View {
     }
 }
 
-/// A working agent: its mark and the reading the person chose.
 struct NotchCapsuleAgentStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -452,7 +405,6 @@ struct NotchCapsuleAgentStrip: View {
     }
 
     var body: some View {
-        // The last agent stopping empties the list before the strip has left.
         NotchStripHold(usage.snapshot.live, shows: !usage.snapshot.live.isEmpty) { row(live: $0) }
     }
 
@@ -467,8 +419,6 @@ struct NotchCapsuleAgentStrip: View {
                         .font(Font(CapsuleLayout.readingFont as CTFont))
                         .foregroundStyle(working.first?.tint ?? .white)
                         .lineLimit(1).fixedSize()
-                        // A reading that gains a digit, like an hour passing,
-                        // widens the capsule; the service measures the same.
                         .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                             DispatchQueue.main.async { service.refreshPresentation() }
                         }
@@ -490,11 +440,9 @@ struct NotchCapsuleAgentStrip: View {
     }
 }
 
-/// A download: its arrow and name, its progress and the percentage.
 struct NotchCapsuleDownloadStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var downloads = NotchDownloadService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -526,12 +474,9 @@ struct NotchCapsuleDownloadStrip: View {
     }
 }
 
-/// A watched area: the eye, then what the area reads now, or the area
-/// itself when it holds no text.
 struct NotchCapsuleWatchStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var watch = NotchWatchService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -545,7 +490,6 @@ struct NotchCapsuleWatchStrip: View {
                 if watch.showsThumbnail, let preview = watch.preview {
                     NotchWatchThumbnail(image: preview, height: max(8, geometry.stripBodyHeight - 6))
                 } else if watch.headline.isEmpty {
-                    // A hidden window's slashed eye says enough until it is read.
                     if watch.state == .hidden {
                         Color.clear.frame(width: CapsuleLayout.spinnerWidth, height: 1)
                     } else {
@@ -564,12 +508,9 @@ struct NotchCapsuleWatchStrip: View {
     }
 }
 
-/// The next timed event, or the one under way: its color and title, and
-/// the countdown with the time it starts or ends.
 struct NotchCapsuleCalendarStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var calendar = NotchCalendarService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -578,8 +519,6 @@ struct NotchCapsuleCalendarStrip: View {
     private var geometry: NotchGeometry { displayGeometry ?? service.geometry }
 
     var body: some View {
-        // An event ending moves the countdown on, or clears it, before the
-        // strip has left.
         NotchStripHold(calendar.countdown, shows: service.compactActivity == .calendar) { content($0) }
     }
 
@@ -592,8 +531,6 @@ struct NotchCapsuleCalendarStrip: View {
                 NotchCapsuleRow(size: size, geometry: geometry,
                                 leading: companion == .music ? CapsuleLayout.artworkInset(geometry) : CapsuleLayout.endPadding) {
                     if let companion {
-                        // Paired, what shares the capsule takes the title's place,
-                        // and the title moves to the tooltip and VoiceOver.
                         HStack(spacing: CapsuleLayout.markGap(.calendar)) {
                             NotchCapsuleCompanionMark(companion: companion, geometry: geometry)
                             Self.clockMark(countdown, now: context.date)
@@ -602,8 +539,6 @@ struct NotchCapsuleCalendarStrip: View {
                         HStack(spacing: CapsuleLayout.spacing) {
                             Self.dot(countdown.event)
                             Text(title).capsuleTitle().truncationMode(.tail)
-                            // The time left keeps its place; the start or end time
-                            // beside it gives way first when the bar is short.
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: CapsuleLayout.markSpacing) {
                                     Self.clock(remaining, ongoing: countdown.ongoing)
@@ -630,7 +565,6 @@ struct NotchCapsuleCalendarStrip: View {
         }
     }
 
-    /// The event's dot and its countdown, as a pair shows the event.
     static func clockMark(_ countdown: NotchCalendarCountdown, now: Date) -> some View {
         HStack(spacing: CapsuleLayout.markSpacing) {
             dot(countdown.event)
@@ -644,8 +578,6 @@ struct NotchCapsuleCalendarStrip: View {
             .overlay { Circle().strokeBorder(.white.opacity(0.5), lineWidth: 0.5) }
     }
 
-    /// Time left in an event under way takes the agenda's "happening now"
-    /// color, so it never reads as a wait for the next one.
     private static func clock(_ remaining: String, ongoing: Bool) -> some View {
         Text(remaining)
             .font(Font(CapsuleLayout.readingFont as CTFont))
@@ -655,19 +587,14 @@ struct NotchCapsuleCalendarStrip: View {
     }
 }
 
-/// A running Keep Awake session: the cup of its tile, then the time it has
-/// left, or infinity for a session without an end. The reading changes once
-/// a minute, so the clock wakes only then.
 struct NotchCapsuleKeepAwakeStrip: View {
     @ObservedObject var service: NotchService
     let size: CGSize
-    /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var awake = KeepAwakeManager.shared
     @ObservedObject private var l10n = L10n.shared
 
     var body: some View {
-        // Ending a session clears its end before the strip has left.
         NotchStripHold(awake.endDate, shows: awake.isActive) { content(end: $0) }
     }
 
@@ -684,8 +611,6 @@ struct NotchCapsuleKeepAwakeStrip: View {
     private func row(end: Date?, now: Date) -> some View {
         NotchCapsuleRow(size: size, geometry: displayGeometry ?? service.geometry) {
             HStack(spacing: CapsuleLayout.spacing) {
-                // The cup is wider than the slot other marks share; the
-                // capsule measures it as drawn.
                 Image(systemName: NotchKeepAwakeSupport.symbol)
                     .font(.system(size: CapsuleLayout.symbolSize, weight: .medium))
                     .foregroundStyle(.yellow)
@@ -697,8 +622,6 @@ struct NotchCapsuleKeepAwakeStrip: View {
                         .font(Font(CapsuleLayout.readingFont as CTFont))
                         .foregroundStyle(.yellow)
                         .lineLimit(1).fixedSize()
-                        // A reading that gains or loses a character, like 10m
-                        // becoming 9m, resizes the capsule; the service measures the same.
                         .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                             DispatchQueue.main.async { service.refreshPresentation() }
                         }
@@ -718,8 +641,6 @@ struct NotchCapsuleKeepAwakeStrip: View {
     }
 }
 
-/// Screen capture controls folded while an area is chosen: the tool and the
-/// way back to the controls.
 struct NotchCapsuleCaptureStrip: View {
     let symbol: String
     let geometry: NotchGeometry

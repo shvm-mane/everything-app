@@ -26,13 +26,9 @@ final class PeripheralBatterySampler {
     private var bluetoothStartedAt: TimeInterval = -.greatestFiniteMagnitude
     private var bluetoothFinishedAt: TimeInterval = -.greatestFiniteMagnitude
     private var request: BoundedProcessCancellation?
-    // The reader itself belongs only to bluetoothQueue.
     private var bluetoothBatteryRead: (request: BoundedProcessCancellation, reader: PeripheralBluetoothReading)?
     private let fastCacheInterval: TimeInterval = 15
     private let bluetoothCacheInterval: TimeInterval = 300
-    /// Called on the Bluetooth queue after a refresh stores new devices, so
-    /// the owner can read them now instead of at its next sampling stride.
-    /// Set once before sampling starts.
     var onBluetoothRefresh: (() -> Void)?
 
     init(bluetoothQueue: DispatchQueue = DispatchQueue(label: "com.vorssaint.peripheral-battery.bluetooth", qos: .utility),
@@ -49,7 +45,6 @@ final class PeripheralBatterySampler {
         self.currentTime = currentTime
     }
 
-    /// SystemMonitor supplies the combined demand, not one surface's demand.
     func setEnabled(_ enabled: Bool) {
         lock.lock()
         guard self.enabled != enabled else { lock.unlock(); return }
@@ -62,9 +57,6 @@ final class PeripheralBatterySampler {
             bluetoothStartedAt = -.greatestFiniteMagnitude
             bluetoothFinishedAt = -.greatestFiniteMagnitude
         }
-        // Devices read before a pause longer than the refresh interval may
-        // have been disconnected or recharged since. The refresh that the
-        // first sample starts brings back the ones still connected.
         if enabled, currentTime() - bluetoothObservedAt >= bluetoothCacheInterval {
             cachedBluetoothDevices = []
         }

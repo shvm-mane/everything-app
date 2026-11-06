@@ -19,14 +19,12 @@ final class DockPreviewService: ObservableObject {
 
     @Published private(set) var isRunning = false
     @Published private(set) var blockedReason: DockPreviewBlockedReason?
-    /// The user’s auto-hide preference, excluding our temporary session hold.
     @Published private(set) var dockAutohide = false
     @Published private(set) var windows: [SwitcherItem] = []
     @Published private(set) var previews: [CGWindowID: CGImage] = [:]
     @Published private(set) var selectedWindowID: CGWindowID?
     @Published private(set) var currentAppName: String?
     @Published private(set) var isPinned = false
-    /// Which edge the Dock is on, so the panel can run its cards along it.
     @Published private(set) var orientation: DockPreviewOrientation = .bottom
     private var isDraggingWindow = false
 
@@ -48,13 +46,7 @@ final class DockPreviewService: ObservableObject {
     private var lastAXMousePoint: CGPoint?
     private var lastAppKitMousePoint: CGPoint?
     private var panel: NSPanel?
-    /// The app of the currently shown panel. `nil` means no session.
     private var currentSessionPID: pid_t?
-    /// True once the cursor has reached the panel. Before this, the icon and
-    /// corridor keep the session alive so the icon→panel hop survives; after it,
-    /// only the panel keeps it alive, so returning to the Dock closes or switches
-    /// instead of pinning the panel open on the icon (or, with auto-hide, on the
-    /// ghost icon region at the screen edge).
     private var hasEnteredPanel = false
     private var activePanelFrame: CGRect?
     private var activeCorridor: HoverCorridor?
@@ -83,7 +75,6 @@ final class DockPreviewService: ObservableObject {
         if freshScope != currentSpaceOnly {
             currentSpaceOnly = freshScope
             endSession()
-            // Pinned panels pick up the new scope on their existing refresh timer.
         }
         let enabled = AppFeature.dockPreview.isAvailable
             && UserDefaults.standard.bool(forKey: DefaultsKey.dockPreviewEnabled)
@@ -136,8 +127,6 @@ final class DockPreviewService: ObservableObject {
         ) { [weak self] _ in
             guard let self, self.isRunning, self.currentSpaceOnly,
                   !self.isDraggingWindow else { return }
-            // Invalidate both the open list and a hover prefetched on the old
-            // desktop. Pinned panels keep their existing refresh cycle.
             self.endSession()
         }
     }
@@ -164,21 +153,12 @@ final class DockPreviewService: ObservableObject {
         selectedWindowID = item.windowID
     }
 
-    /// Whether a preview panel (session or pinned) covers the given top-left-
-    /// origin global point. DockClickService asks before treating a click near
-    /// the Dock as an icon click: panels can dip into the Dock's edge band and
-    /// their card clicks must stay theirs. Main-thread only, like all panel
-    /// state here.
     func panelCovers(axPoint: CGPoint) -> Bool {
         let point = appKitPoint(fromAX: axPoint)
         if isVisible, activePanelFrame?.contains(point) == true { return true }
         return pinnedPanelWindows.values.contains { $0.isVisible && $0.frame.contains(point) }
     }
 
-    /// A Dock icon click was handled — and swallowed — by DockClickService, so
-    /// the listen-only tap here never sees that mouseDown. Mirror what a native
-    /// Dock click does to the session so the panel cannot stay open with stale
-    /// window state.
     func dockClickWasHandled() {
         cancelPendingHover()
         guard isVisible else { return }
@@ -206,8 +186,6 @@ final class DockPreviewService: ObservableObject {
         }
         endSession()
         guard WindowEnumerator.dockPreviewMayActivate(item) else { return }
-        // The app in front keeps the delayed focus handoff settling; it is
-        // not a session source, so minimizing the window later leaves it be.
         WindowActivator.activate(
             item,
             handoffSourcePID: NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -274,12 +252,6 @@ final class DockPreviewService: ObservableObject {
 
     // MARK: - Drag to place
 
-    /// Lifts a preview card into a pointer-following stand-in. The real window
-    /// is not touched until the drop, so an abandoned drag changes nothing.
-    ///
-    /// Minimized and fullscreen windows are refused: a minimized window has no
-    /// on-screen position to aim at, and a fullscreen one owns its Space and
-    /// ignores the position it is given.
     func beginWindowDrag(_ item: SwitcherItem) {
         guard isVisible,
               windows.contains(item),
@@ -300,11 +272,6 @@ final class DockPreviewService: ObservableObject {
         DockPreviewDragGhost.shared.move(to: NSEvent.mouseLocation)
     }
 
-    /// Drops the window where the stand-in was: its top-left corner goes to the
-    /// pointer and the window keeps the size the user gave it, restored and
-    /// carried to this desktop if it was somewhere else. The session ends
-    /// either way, so a drop that could not move the window still gets the user
-    /// out of the panel instead of leaving it hanging over the desktop.
     func endWindowDrag(_ item: SwitcherItem) {
         guard isDraggingWindow else { return }
         isDraggingWindow = false
@@ -418,12 +385,6 @@ final class DockPreviewService: ObservableObject {
         }
 
         let point = event.location
-        // The tap sees every mouse move on the whole screen, and nearly all of
-        // them happen far from the Dock with nothing open — paying a closure
-        // allocation and a main-queue hop for each one keeps the CPU warm all
-        // day. The tap's run-loop source lives on the main run loop, so this
-        // callback already runs on the main thread and may read panel state
-        // and settle those moves synchronously for free.
         if type == .mouseMoved {
             if discardFarMouseMove(axPoint: point) {
                 cancelPendingMove()
@@ -443,14 +404,7 @@ final class DockPreviewService: ObservableObject {
         return Unmanaged.passUnretained(event)
     }
 
-    /// The synchronous twin of handleMouseMoved's cheapest path: no session on
-    /// screen, no hover pending and the cursor outside the Dock's edge strip
-    /// means the move only needs its position recorded (the deferred hide and
-    /// switch re-confirmations read these) — everything else falls through to
-    /// the full handler.
     private func discardFarMouseMove(axPoint: CGPoint) -> Bool {
-        // Nothing checks whether the tap is running: the only caller is the tap
-        // callback, which cannot run unless it is.
         guard !isVisible, pendingHover == nil else { return false }
         let point = appKitPoint(fromAX: axPoint)
         guard !isNearDock(point) else { return false }
@@ -459,9 +413,6 @@ final class DockPreviewService: ObservableObject {
         return true
     }
 
-    /// Lets one move per display frame reach the AX path and retains the
-    /// newest dropped point, so a cursor that comes to rest still opens the
-    /// intended preview.
     private func admitMouseMove(axPoint: CGPoint) -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastMoveSampledAt < DockPreviewSupport.mouseMoveSampleInterval else {
@@ -504,9 +455,6 @@ final class DockPreviewService: ObservableObject {
     }
 
     private func handleMouseMoved(_ axPoint: CGPoint) {
-        // A drag owns the pointer until it lifts. Without this the pointer
-        // leaving the panel would arm the hide, and passing over another Dock
-        // icon would swap the panel out from under the window being carried.
         guard !isDraggingWindow else { return }
         lastAXMousePoint = axPoint
         let point = appKitPoint(fromAX: axPoint)
@@ -530,17 +478,12 @@ final class DockPreviewService: ObservableObject {
                 cancelPendingHide()
                 cancelPendingHover()
             case .openingPath:
-                // Crossing from the icon up to the panel — keep it alive.
                 cancelPendingHide()
                 cancelPendingHover()
             case .ownIcon:
                 if hasEnteredPanel {
-                    // Back on our own icon after using the panel: let it close so
-                    // the Dock is free again. Moving to another icon still switches.
                     scheduleHideIfStillOutside()
                 } else {
-                    // Still resting on the icon that opened it, before reaching
-                    // the panel — hold it open.
                     cancelPendingHide()
                     cancelPendingHover()
                 }
@@ -548,9 +491,6 @@ final class DockPreviewService: ObservableObject {
                 cancelPendingHide()
                 scheduleHover(hit, delay: DockPreviewSupport.switchDelay)
             case .outside:
-                // Don't cancel a half-armed switch here: a brief skip over dead
-                // space on the way to another icon shouldn't starve it — it
-                // re-confirms the cursor is on the icon before it fires anyway.
                 scheduleHideIfStillOutside()
             }
             return
@@ -561,8 +501,6 @@ final class DockPreviewService: ObservableObject {
             return
         }
 
-        // Only pay for an Accessibility hit-test when the cursor is in the Dock's
-        // edge strip; running it on every move across the whole screen hammers AX.
         guard isNearDock(point) else {
             cancelPendingHover()
             return
@@ -575,9 +513,6 @@ final class DockPreviewService: ObservableObject {
         scheduleHover(hit)
     }
 
-    /// Whether the cursor sits within the Dock's edge strip, so the expensive
-    /// `dockHit` Accessibility call is worth making. Errs toward `true` when the
-    /// Dock geometry is unknown so detection never silently stops working.
     private func isNearDock(_ point: CGPoint) -> Bool {
         guard let preferences = cachedPreferences else { return true }
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
@@ -590,17 +525,11 @@ final class DockPreviewService: ObservableObject {
         }
     }
 
-    /// Where the cursor stands relative to the live session. The corridor only
-    /// counts before the cursor has reached the panel (`hasEnteredPanel`); after
-    /// that, only the panel itself keeps the session alive.
     private func currentZone(point: CGPoint, axPoint: CGPoint) -> Zone {
         if activePanelFrame?.insetBy(dx: -DockPreviewSupport.panelStayMargin,
                                      dy: -DockPreviewSupport.panelStayMargin).contains(point) == true {
             return .panel
         }
-        // Hit-test the Dock before the corridor so landing on a neighbouring icon
-        // hands the session over even where the corridor's margin grazes its edge —
-        // but only within the Dock's strip, to keep the AX hit-test off the hot path.
         if isNearDock(point), let hit = dockHit(at: axPoint) {
             return hit.app.processIdentifier == currentSessionPID ? .ownIcon : .otherIcon(hit)
         }
@@ -642,8 +571,6 @@ final class DockPreviewService: ObservableObject {
             case .panel, .openingPath:
                 return
             case .ownIcon:
-                // Closes only once the panel was actually used; an unentered
-                // panel keeps resting on its opener icon.
                 if self.hasEnteredPanel { self.endSession() }
             case .otherIcon(let hit):
                 self.scheduleHover(hit, delay: DockPreviewSupport.switchDelay)
@@ -663,9 +590,6 @@ final class DockPreviewService: ObservableObject {
     }
 
     private func scheduleHover(_ hit: DockHit, delay: TimeInterval? = nil) {
-        // Same app already arming: let the existing timer run to completion rather
-        // than restarting it on every move, so a resting cursor isn't starved by
-        // a one-frame Dock hit-test miss.
         if let pendingHover,
            pendingHover.app.processIdentifier == hit.app.processIdentifier,
            pendingHover.iconFrame.insetBy(dx: -6, dy: -6).intersects(hit.iconFrame) {
@@ -683,19 +607,11 @@ final class DockPreviewService: ObservableObject {
         schedulePrefetch(token: token, pid: hit.app.processIdentifier, delay: delay)
     }
 
-    /// Reads the app's window list part-way through the arming delay, so the
-    /// panel the timer opens has one ready instead of reading it on the way up.
-    ///
-    /// Skipped while a panel is up: a switch runs on a delay as short as the
-    /// reading's own head start, so the reading would land the moment the
-    /// cursor does, and a reading under way cannot be called back.
     private func schedulePrefetch(token: UUID, pid: pid_t, delay: TimeInterval) {
         guard !isVisible else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.pendingHover?.token == token else { return }
             let list = Self.previewableWindows(for: pid)
-            // The list took Accessibility round trips to read: the hover it was
-            // taken for can have been cancelled or handed on in the meantime.
             guard self.pendingHover?.token == token else { return }
             self.pendingHover?.windows = list
         }
@@ -726,9 +642,6 @@ final class DockPreviewService: ObservableObject {
 
     private func beginSession(_ hit: DockHit) {
         guard !(isPinned && isVisible) else { return }
-        // A prefetched list counts only for the app it was taken for: a hover
-        // handed over to a neighbouring icon must not open on the previous
-        // app's windows.
         let prefetched = pendingHover.flatMap {
             $0.app.processIdentifier == hit.app.processIdentifier ? $0.windows : nil
         }
@@ -736,15 +649,11 @@ final class DockPreviewService: ObservableObject {
         cancelPendingHide()
 
         let list = prefetched ?? Self.previewableWindows(for: hit.app.processIdentifier)
-        // An app with no real windows shows nothing; if a panel is already up
-        // (the user moved here from another app), close it cleanly.
         guard !list.isEmpty else {
             if isVisible { endSession() }
             return
         }
 
-        // Switching apps keeps the panel on screen and re-points it at the app
-        // under the cursor without changing the frontmost application.
         if isVisible {
             tearDownVisuals()
         }
@@ -774,23 +683,18 @@ final class DockPreviewService: ObservableObject {
         showPanel(for: hit, itemCount: list.count)
     }
 
-    /// Fully ends the session and tears down the panel.
     private func endSession() {
         isDraggingWindow = false
         DockPreviewDragGhost.shared.end()
         cancelPendingHover()
         cancelPendingHide()
         WindowPreviewProvider.shared.cancel()
-        // Remove the surface before publishing empty content. During a Space
-        // transition, an animated dismissal can otherwise carry a blank panel.
         panel?.orderOut(nil)
         releaseDockAutohideHold()
         tearDownVisuals()
         isPinned = false
     }
 
-    /// Clears all per-app panel state while leaving the panel window available
-    /// so the same session can be re-pointed during a Dock switch.
     private func tearDownVisuals() {
         cancelPendingMinimizeConfirmations()
 
@@ -945,7 +849,6 @@ final class DockPreviewService: ObservableObject {
             panelFrame: frame,
             orientation: hit.preferences.orientation
         )
-        // Resizing keeps the opening anchor even after the Dock auto-hides.
         activeIconFrame = hit.iconFrame
         activeDockPreferences = hit.preferences
         orientation = hit.preferences.orientation
@@ -973,8 +876,6 @@ final class DockPreviewService: ObservableObject {
                                                   screenVisibleFrame: screenVisibleFrame,
                                                   orientation: preferences.orientation,
                                                   gap: gap)
-        // The Dock's work area can expand after it hides. Keep the panel's
-        // Dock-facing edge where it opened, while still fitting the screen.
         switch preferences.orientation {
         case .bottom: frame.origin.y = panel.frame.minY
         case .left: frame.origin.x = panel.frame.minX
@@ -1011,9 +912,6 @@ final class DockPreviewService: ObservableObject {
         }
     }
 
-    // An active tap returns the original key only AFTER restoring the Dock.
-    // A passive monitor or an async dispatch can restore after a system shortcut
-    // has already changed auto-hide, overwriting the user's new choice.
     private func startDockHoldInputTap() -> Bool {
         guard dockHoldInputTap == nil else { return true }
         guard let tap = CGEvent.tapCreate(
@@ -1040,8 +938,6 @@ final class DockPreviewService: ObservableObject {
     private func handleDockHoldInput(type: CGEventType) {
         guard dockAutohideHold.isHolding else { return }
         if type == .keyDown || type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            // Discard a sampled mouse move that predates the key, so it cannot
-            // reopen the hover immediately after keyboard use ended it.
             pointerEventGeneration &+= 1
             cancelPendingMove()
             endSession()
@@ -1061,8 +957,6 @@ final class DockPreviewService: ObservableObject {
     }
 
     private func releaseDockAutohideHold() {
-        // Restore before invalidating an active input callback: detaching the
-        // tap must never let its key reach the system ahead of this write.
         dockAutohideHold.end()
         dockFrameRestoration = nil
         stopDockHoldInputTap()
@@ -1181,9 +1075,6 @@ final class DockPreviewService: ObservableObject {
               let dockPID = dockProcessID()
         else { return nil }
 
-        // Asked only when a pass-through overlay covers the Dock, since only
-        // the system-wide element can tell whose it is. Its answer is reused
-        // when it turns out to be the Dock's.
         var overlayHit: AXUIElement?
         func systemWideHitProcessID() -> pid_t? {
             guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(),
@@ -1201,13 +1092,6 @@ final class DockPreviewService: ObservableObject {
             accessibilityHitProcessID: systemWideHitProcessID
         ), let element = overlayHit ?? dockElement(at: axPoint, dockPID: dockPID) else { return nil }
 
-        // Resolving by bundle comes first, for the whole chain. Only a tile
-        // names a process, while the labels below read the same across the
-        // tiles of an app that runs as several processes: letting a label match
-        // answer first would collapse those tiles onto one instance and, by
-        // returning here, keep the tile itself from ever being asked. Taking
-        // the frame from the element that resolved also pins the panel to the
-        // icon rather than to whatever sat under the pointer inside it.
         let chain = elementAndParents(from: element).filter { pid(of: $0) == dockPID }
         for candidate in chain {
             switch DockTileResolver.resolution(forTile: candidate) {
@@ -1229,11 +1113,6 @@ final class DockPreviewService: ObservableObject {
         return nil
     }
 
-    /// The Dock element under the pointer, asked of the Dock alone. The
-    /// system-wide element would ask whichever app owns the window there, and
-    /// the Dock strip's ownership margin reaches over the windows beside it,
-    /// so a hung app next to the Dock stalled the main thread on every move
-    /// until Accessibility gave up on it (issue #3208).
     private func dockElement(at axPoint: CGPoint, dockPID: pid_t) -> AXUIElement? {
         let dock = AXUIElementCreateApplication(dockPID)
         AXUIElementSetMessagingTimeout(dock, DockPreviewSupport.dockHitTimeout)
@@ -1243,9 +1122,6 @@ final class DockPreviewService: ObservableObject {
         return element
     }
 
-    /// Last resort for a Dock element whose chain named no bundle at all, or
-    /// named one no running app owns. Labels cannot tell two processes of one
-    /// app apart, so this only ever runs where there is nothing to tell apart.
     private func applicationByLabel(forDockElement element: AXUIElement) -> NSRunningApplication? {
         let labels = labelCandidates(from: element)
         guard !labels.isEmpty else { return nil }
@@ -1304,16 +1180,9 @@ final class DockPreviewService: ObservableObject {
 
     private func startSettingsTimer() {
         guard settingsTimer == nil else { return }
-        // This only tracks the user editing the Dock itself (position, size,
-        // autohide, magnification) — rare events with no notification API.
-        // Each poll copies the whole com.apple.dock domain, so it runs on a
-        // slow beat and the full (tap/session/pid) resync below only happens
-        // when something actually changed.
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
             guard let self else { return }
             let fresh = self.readDockPreferences()
-            // Resync on a real change — or while blocked, so a Dock that was
-            // restarting (or briefly unavailable) still brings the tap back.
             if fresh != self.cachedPreferences || !self.isRunning {
                 self.syncWithPreferences()
             }
@@ -1474,8 +1343,6 @@ private struct PendingHover {
     let app: NSRunningApplication
     let iconFrame: CGRect
     let workItem: DispatchWorkItem
-    /// The reading armed by `schedulePrefetch`. Nil until it lands, and dropped
-    /// with the hover it belongs to.
     var prefetchWorkItem: DispatchWorkItem?
     var windows: [SwitcherItem]?
 }

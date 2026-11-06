@@ -5,23 +5,9 @@ import AVFoundation
 import AppKit
 import CoreImage
 
-/// Turns a recording plus an edit into the picture the person sees, for both
-/// the editor preview and the export. One function decides what a frame looks
-/// like, so what is watched while editing and what lands in the file are the
-/// same pixels by construction.
-///
-/// Everything that does not change frame to frame is rendered once into a
-/// plate: the background, the shadow under the recording, the rounded mask.
-/// Per frame there is a transform, a mask and a composite, which is what keeps
-/// a Retina export running faster than the encoder behind it.
 final class RecorderComposer {
-
     // MARK: - Plan
 
-    /// Everything precomputed for one document and one pointer track. The
-    /// per-frame arrays are the offline advantage made concrete: smoothing and
-    /// zoom both need to see the whole recording, so they are solved once,
-    /// here, and every frame is then an index lookup.
     struct Plan {
         let sourceSize: CGSize
         let canvasSize: CGSize
@@ -33,51 +19,31 @@ final class RecorderComposer {
         let pressScale: [Double]
         let ring: [Double]
         let showsPointer: Bool
-        /// The real pointer images the recording showed, in the order the
-        /// track packed them.
         let pointerShapes: [RecorderPointerTrack.CursorShape]
-        /// Which of those is on screen at each frame.
         let pointerShapeIndex: [Int]
-        /// Whether a pointer was on screen at all at each frame.
         let pointerVisible: [Bool]
-        /// How solid the drawn pointer is, so one parked in a corner fades
-        /// out of the way and is back before it moves again.
         let pointerOpacity: [Double]
-        /// Points to pixels for the pointer: the display's own scale, times
-        /// the accessibility pointer size, times what the person chose.
         let pointerScale: CGFloat
-        /// What a pointer of a typical size comes out as, used to size the
-        /// click ring so it stays in proportion.
         let pointerPixelSize: CGFloat
         let showsClickRing: Bool
         let plate: CIImage?
         let mask: CIImage?
-        /// Lines of text and, for each frame, how solid each one is. Solved
-        /// once like everything else, so a frame is a lookup.
         let texts: [RecorderTextOverlay]
         let textOpacity: [[Double]]
-        /// Pictures laid over the recording, each already resized to the
-        /// pixels it is drawn at, with the same per-frame solidity.
         let images: [RecorderImageOverlay]
         let imageSprites: [CGImage?]
         let imageOpacity: [[Double]]
-        /// Areas kept unreadable and, for each frame, whether each one is on.
         let blurs: [RecorderBlurRegion]
         let blurCovers: [[Bool]]
     }
 
     private let plan: Plan
-    /// Decoded once. A recording normally shows two or three pointer shapes,
-    /// so this is a handful of small images for the whole export.
     private let decodedShapes: [CGImage?]
     private let fallbackArrow: CGImage?
 
     init(plan: Plan) {
         self.plan = plan
         decodedShapes = plan.showsPointer ? plan.pointerShapes.map { $0.image } : []
-        // Only reached when the recording never managed to read a real
-        // pointer image, which is the one case where a drawn arrow beats no
-        // pointer at all.
         fallbackArrow = (plan.showsPointer && plan.pointerShapes.isEmpty)
             ? RecorderCursorSprite.arrow(pixelSize: plan.pointerPixelSize * 3)
             : nil
@@ -116,8 +82,6 @@ final class RecorderComposer {
         return content.cropped(to: CGRect(origin: .zero, size: plan.canvasSize))
     }
 
-    /// Pictures share the captions' place above the zoom, and go under them:
-    /// a mark of your own belongs behind what the recording is saying.
     private func drawImages(on content: CIImage, index: Int) -> CIImage {
         guard !plan.images.isEmpty else { return content }
         var result = content
@@ -137,9 +101,6 @@ final class RecorderComposer {
         return result
     }
 
-    /// Text sits on top of everything, including the background and the zoom:
-    /// a caption that got magnified along with the picture would leave the
-    /// frame the moment the zoom moved.
     private func drawTexts(on content: CIImage, index: Int) -> CIImage {
         guard !plan.texts.isEmpty else { return content }
         var result = content
@@ -160,16 +121,8 @@ final class RecorderComposer {
         return result
     }
 
-    /// Blurs go into the picture before anything else is drawn on it, so the
-    /// zoom magnifies the blur along with what it hides and the pointer still
-    /// travels over it. A mosaic under a blur, rather than either alone: blocks
-    /// destroy the letters and the blur destroys the blocks.
     private func blurred(_ content: CIImage, at seconds: Double) -> CIImage {
         guard !plan.blurs.isEmpty else { return content }
-        // Retiming can hold a source frame between two plan samples. Rounding
-        // forward must not uncover that frame before its protected interval
-        // ends. Cover both neighboring samples, including either side of cuts.
-        // Exact plan times still use just their own sample.
         let position = max(0, seconds) * Double(plan.frameRate)
         let last = max(0, plan.positions.count - 1)
         let lower = min(last, Int(position.rounded(.down)))
@@ -184,8 +137,6 @@ final class RecorderComposer {
             let rect = region.pixelRect(in: plan.sourceSize)
             guard rect.width >= 1, rect.height >= 1 else { continue }
             let block = RecorderSupport.blurBlockSize(for: rect.size, strength: region.strength)
-            // Clamped first so the blur never pulls transparent edges in and
-            // lets a sliver of the original show through the border.
             let hidden = content.clampedToExtent()
                 .applyingFilter("CIPixellate", parameters: [
                     kCIInputScaleKey: block,
@@ -205,9 +156,6 @@ final class RecorderComposer {
         return min(max(0, raw), max(0, plan.positions.count - 1))
     }
 
-    /// The pointer is drawn into the content, not over the finished frame, so
-    /// the zoom carries it along with everything else it magnifies. The click
-    /// ring lives in the same space for the same reason.
     private func faded(_ image: CIImage, opacity: Double) -> CIImage {
         guard opacity < 0.999 else { return image }
         return image.applyingFilter("CIColorMatrix", parameters: [
@@ -219,8 +167,6 @@ final class RecorderComposer {
         let uv = plan.positions[index]
         guard uv.x > -0.2, uv.x < 1.2, uv.y > -0.2, uv.y < 1.2 else { return content }
         let press = plan.pressScale.indices.contains(index) ? plan.pressScale[index] : 1
-        // Core Image counts up from the bottom; the track counts down from the
-        // top, the way the screen does.
         let x = uv.x * plan.sourceSize.width
         let y = (1 - uv.y) * plan.sourceSize.height
 
@@ -237,10 +183,6 @@ final class RecorderComposer {
             ? decodedShapes[shapeIndex] : decodedShapes.first ?? nil,
            let shape = plan.pointerShapes.indices.contains(shapeIndex)
             ? plan.pointerShapes[shapeIndex] : plan.pointerShapes.first {
-            // The image carries its own point size and its own hot spot, so a
-            // text beam or a resize arrow lands exactly where the real one did.
-            // One bitmap pixel is one point on screen, so the whole
-            // conversion is the scale the plan already resolved.
             let drawnWidth = shape.pointSize.width * plan.pointerScale * CGFloat(press)
             let drawnHeight = shape.pointSize.height * plan.pointerScale * CGFloat(press)
             guard drawnWidth > 0, drawnHeight > 0, sprite.width > 0 else { return result }
@@ -273,9 +215,6 @@ final class RecorderComposer {
 
     private func drawRing(progress: Double, at point: CGPoint, on content: CIImage) -> CIImage {
         let eased = 1 - pow(1 - progress, 3)
-        // Tied to the pointer rather than to the frame: the ring belongs to
-        // the pointer, so it stays in proportion at any recording size and at
-        // whatever pointer size the person chose.
         let unit = plan.pointerPixelSize / 34
         let radius = RecorderMotion.ringRadius * unit * eased
         let width = max(0.6, 2.4 * (1 - progress)) * unit
@@ -295,8 +234,6 @@ final class RecorderComposer {
         let z = plan.zoom[index]
         guard z > 1.001, plan.travel.indices.contains(index) else { return content }
         let origin = RecorderMotion.viewportOrigin(travel: plan.travel[index], zoom: z)
-        // The viewport is expressed from the top; Core Image measures from the
-        // bottom, and the visible height is 1/z of the frame.
         let bottom = 1 - origin.y - 1 / z
         let transform = CGAffineTransform(scaleX: CGFloat(z), y: CGFloat(z))
             .concatenating(CGAffineTransform(
@@ -318,18 +255,6 @@ final class RecorderComposer {
 
     // MARK: - Composition
 
-    /// A composition that resamples the recording to a steady frame rate and
-    /// renders it through this composer.
-    ///
-    /// The master is written at a variable rate on purpose, so a still screen
-    /// costs nothing while recording; the steady rate is imposed here instead,
-    /// in the single decode pass the export already needs.
-    ///
-    /// Nil when a recording that carries an edit cannot be composed. The plain
-    /// path below draws the recording untouched, which is only ever right when
-    /// there is nothing drawn on it: answering with it after a failure would
-    /// hand back a file missing the areas kept unreadable, and everything else
-    /// the person put on the picture.
     static func videoComposition(track: AVAssetTrack,
                                  asset: AVAsset,
                                  duration: CMTime,
@@ -339,15 +264,10 @@ final class RecorderComposer {
                                  outputSize: CGSize,
                                  playbackSpeed: Double = 1) async -> AVMutableVideoComposition? {
         if let composer {
-            // The handler may run concurrently; this composer only reads
-            // immutable state while rendering each frame.
             nonisolated(unsafe) let threadSafeComposer = composer
             let timing = RecorderExportTiming(speed: playbackSpeed)
             let composition = try? await AVMutableVideoComposition.videoComposition(
                 with: asset) { request in
-                    // Plans are built on the edited, unscaled clock. Map back
-                    // before looking up zooms, cursor shapes, captions and
-                    // privacy blurs, including frames on either side of a cut.
                     let rendered = threadSafeComposer.render(
                         request.sourceImage,
                         at: timing.sourceTime(forOutputTime: CMTimeGetSeconds(request.compositionTime)))

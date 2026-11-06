@@ -3,12 +3,7 @@
 
 import Foundation
 
-// Kept apart from FanControlSupport.swift, which the protected helper also
-// compiles: resuming is the app's own business, and code the helper never
-// runs must not change its binary and force every Mac to register it again.
 extension FanControlConfiguration {
-    /// The control kept for a restart or wake. Only a valid manual speed or
-    /// curve qualifies: System control has nothing to bring back.
     static func encodeResume(_ configuration: FanControlConfiguration) -> String? {
         guard configuration.mode != .system,
               FanControlPolicy.validConfiguration(configuration) else { return nil }

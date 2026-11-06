@@ -4,28 +4,15 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// Selecting an enabled keyboard input source through the system's Text
-/// Input Sources services. Shared by the paths that switch a source while
-/// their own surface is up: the Super key tap cycles to the next source, and
-/// the Command Bar borrows a Latin layout for the length of a presentation.
 enum InputSourceSelection {
-    /// What one enabled source looks like once read out of TIS. Plain values,
-    /// so decisions over them stay pure and testable.
     struct Snapshot: Equatable {
         let id: String
-        /// A layout rather than an input method: a layout types what is
-        /// printed on the keys, a method types whatever it is set to produce.
         let isLayout: Bool
         let isASCIICapable: Bool
     }
 
     // MARK: - Decisions (pure)
 
-    /// The source to borrow when plain Latin typing is wanted, or nil when
-    /// there is nothing to switch to: either the current source is already an
-    /// ASCII layout, or none is enabled (a Mac set to Cyrillic and Greek
-    /// alone has no Latin layout to borrow). First enabled wins, because that
-    /// is the order the Input menu shows.
     static func asciiLayoutID(currentID: String?, snapshots: [Snapshot]) -> String? {
         if let currentID,
            let current = snapshots.first(where: { $0.id == currentID }),
@@ -35,9 +22,6 @@ enum InputSourceSelection {
         return snapshots.first { $0.isASCIICapable && $0.isLayout }?.id
     }
 
-    /// The short code the island's layout notice shows: the source's first
-    /// language without its script or region, so "zh-Hans" reads as ZH. Empty
-    /// when a source claims no language, which leaves the notice its mark alone.
     static func shortCode(languages: [String]) -> String {
         guard let base = languages.first?.split(separator: "-").first else { return "" }
         return base.uppercased()
@@ -50,11 +34,6 @@ enum InputSourceSelection {
         return inputSourceString(current, property: kTISPropertyInputSourceID)
     }
 
-    /// Selects an enabled source by its id, answering whether the system
-    /// took the request. The two mistakes are not symmetric: recording
-    /// against a switch that never lands restores a source the caller never
-    /// left — a no-op — while failing to record one that lands strands the
-    /// typist on the borrowed layout, so the caller records on acceptance.
     static func select(sourceID: String) -> Bool {
         guard let source = selectableInputSources().first(where: {
             inputSourceString($0, property: kTISPropertyInputSourceID) == sourceID
@@ -64,8 +43,6 @@ enum InputSourceSelection {
 
     // MARK: - Shared TIS plumbing
 
-    /// The enabled, selectable keyboard sources, in the order the system
-    /// keeps them. TIS talks to the text-input server from the main thread.
     static func selectableInputSources() -> [TISInputSource] {
         guard let list = TISCreateInputSourceList(nil, false) else { return [] }
         let values = list.takeRetainedValue() as NSArray
@@ -85,9 +62,6 @@ enum InputSourceSelection {
         }
     }
 
-    /// What the island's notice says about the source now typing: its id, so
-    /// a caller can tell one change from the next, its short code and the
-    /// name the system itself shows in the Input menu.
     struct Reading: Equatable {
         let id: String
         let code: String
@@ -103,7 +77,6 @@ enum InputSourceSelection {
                        name: inputSourceString(source, property: kTISPropertyLocalizedName) ?? "")
     }
 
-    /// The languages a source types, in the order TIS keeps them.
     static func languages(of source: TISInputSource) -> [String] {
         guard let pointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceLanguages),
               let list = Unmanaged<CFArray>.fromOpaque(pointer).takeUnretainedValue() as? [String]

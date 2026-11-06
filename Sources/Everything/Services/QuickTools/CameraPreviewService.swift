@@ -6,10 +6,6 @@ import AVFoundation
 import Carbon.HIToolbox
 import SwiftUI
 
-/// A quick mirror before video calls: a small floating panel with the live
-/// camera image, summoned from the panel, the quick panel or a global
-/// shortcut. The capture session exists only while the panel is on screen,
-/// so the camera light and every resource die the moment it closes.
 final class CameraPreviewService: ObservableObject {
     static let shared = CameraPreviewService()
 
@@ -26,13 +22,9 @@ final class CameraPreviewService: ObservableObject {
     private var sessionRequest: CameraPreviewRequest?
     private var sessionObservers: [NSObjectProtocol] = []
 
-    /// The session is created on show and destroyed on hide. The view builds
-    /// its preview layer from it while the panel is up.
     private(set) var session: AVCaptureSession?
 
     private let hotkey = QuickToolHotkey(id: 16)
-    /// startRunning blocks for a moment, so every session mutation happens
-    /// here and only state lands back on the main thread.
     private let sessionQueue = DispatchQueue(label: "com.vorssaint.utils.camera-preview")
     private var panel: NSPanel?
     private var keyMonitor: Any?
@@ -40,9 +32,6 @@ final class CameraPreviewService: ObservableObject {
     private var outsideClickMonitor: Any?
     private var activationObserver: NSObjectProtocol?
     private var deviceObservers: [NSObjectProtocol] = []
-    /// When the permission dialog resolves, the app that was frontmost
-    /// before it reactivates a beat later; that activation must not count
-    /// as the user clicking away from a mirror they just allowed.
     private var permissionResolvedAt: Date?
 
     private init() {
@@ -80,8 +69,6 @@ final class CameraPreviewService: ObservableObject {
             || permissionResolvedAt.map { Date().timeIntervalSince($0) < 1 } == true)
     }
 
-    /// The notch calls this only from its explicit camera button. Ownership
-    /// transfers from the floating mirror; the two never capture together.
     func showEmbedded() {
         let notch = NotchService.shared
         guard SessionActivity.shared.isActive,
@@ -163,9 +150,6 @@ final class CameraPreviewService: ObservableObject {
                     Permissions.shared.refresh()
                     guard let self, self.isPresented, self.captureGeneration == generation else { return }
                     self.permissionResolvedAt = Date()
-                    // The system dialog appears mid fade-in and was observed
-                    // leaving the panel stuck transparent; the resolution is
-                    // the moment the mirror must be fully there.
                     self.panel?.alphaValue = 1
                     if granted {
                         self.startSession()
@@ -183,9 +167,6 @@ final class CameraPreviewService: ObservableObject {
 
     private func startSession() {
         guard isPresented else { return }
-        // A session may still be alive when a queued permission callback or
-        // a device replug lands here; two running sessions would fight over
-        // the camera, so the old one always stops first.
         stopSession()
         state = .starting
         installDeviceObservers()
@@ -258,10 +239,6 @@ final class CameraPreviewService: ObservableObject {
         guard device.uniqueID != selectedDeviceID else { return }
         selectedDeviceID = device.uniqueID
         if rememberChoice {
-            // The system remembers this choice per app, so the next preview
-            // opens on the same camera without a key of our own. Only an
-            // explicit pick may land here: a fallback after a disconnect
-            // would overwrite the remembered camera with a stand-in.
             AVCaptureDevice.userPreferredCamera = device
         }
         guard let session, let request = sessionRequest else { return }
@@ -303,9 +280,6 @@ final class CameraPreviewService: ObservableObject {
         return devices.first
     }
 
-    /// Cameras coming and going (a Continuity iPhone arriving, a USB camera
-    /// unplugged) only matter while the panel is up, so the observers live
-    /// exactly as long as it does.
     private func installDeviceObservers() {
         guard deviceObservers.isEmpty else { return }
         let center = NotificationCenter.default
@@ -350,8 +324,6 @@ final class CameraPreviewService: ObservableObject {
 
     // MARK: - Panel
 
-    /// Borderless panels refuse key status by default; the preview needs it
-    /// so Esc closes it without a click.
     private final class KeyablePreviewPanel: OverlayPanel {
         override var canBecomeKey: Bool { true }
     }
@@ -364,7 +336,6 @@ final class CameraPreviewService: ObservableObject {
                                         defer: false)
         panel.title = "EVERYTHING"
         panel.isReleasedWhenClosed = false
-        // A mirror is something the user drags next to the meeting window.
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.level = .floating
@@ -379,8 +350,6 @@ final class CameraPreviewService: ObservableObject {
         return panel
     }
 
-    /// Near the top center of the screen with the mouse, where the camera
-    /// sits, so the eyes stay close to the lens while checking the image.
     private func position(_ panel: NSPanel) {
         panel.contentViewController?.view.layoutSubtreeIfNeeded()
         let size = panel.contentViewController?.view.fittingSize ?? NSSize(width: 320, height: 240)
@@ -397,8 +366,6 @@ final class CameraPreviewService: ObservableObject {
 
     // MARK: - Monitors
 
-    /// While the system permission prompt may be up, an outside click or the
-    /// prompt's own activation must not tear the panel down mid-question.
     private var dismissesOnOutsideInteraction: Bool {
         state != .waitingPermission
     }
@@ -424,14 +391,10 @@ final class CameraPreviewService: ObservableObject {
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible, self.dismissesOnOutsideInteraction else { return }
             if event.windowNumber != panel.windowNumber, !Self.mouseIsInside(panel),
-               // Every key on the Accessibility Keyboard is a click outside this
-               // panel. Dismissing on those makes the panel impossible to type into.
                !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) {
                 self.hide()
             }
         }
-        // Joining the meeting (or just moving on) activates another app;
-        // the mirror has done its job and leaves on its own.
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,

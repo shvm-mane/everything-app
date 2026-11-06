@@ -5,7 +5,6 @@ import AppKit
 import SwiftUI
 
 extension AgentProvider {
-    /// Each agent keeps one color across the page, the strip and notices.
     var tint: Color {
         switch self {
         case .claude: return Color(red: 0.85, green: 0.47, blue: 0.34)
@@ -16,15 +15,12 @@ extension AgentProvider {
     }
 }
 
-/// Green reads as fine and red as trouble only when it earns it: the agent's
-/// own color while there is room, orange once a window runs low.
 func agentLimitTint(_ provider: AgentProvider, usedFraction: Double) -> Color {
     if usedFraction >= 0.95 { return .red }
     if usedFraction >= 0.8 { return .orange }
     return provider.tint
 }
 
-/// A card on the AI page: the same surface as the island's system cards.
 struct NotchAgentCardChrome<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -41,14 +37,12 @@ struct NotchAgentCardHeader<Accessory: View>: View {
     let title: String
     let symbol: String
     var tint: Color = .secondary
-    /// A card about one agent wears its mark instead of the symbol.
     var provider: AgentProvider? = nil
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
         HStack(spacing: 6) {
             if let provider {
-                // A mark is finer than a symbol and needs more room to read.
                 NotchAgentMark(provider: provider, size: 13, tint: tint)
                     .frame(width: 17, height: 17)
             } else {
@@ -74,8 +68,6 @@ extension NotchAgentCardHeader where Accessory == EmptyView {
     }
 }
 
-/// A capsule meter with a tick where spending would be if it were spread
-/// evenly across the window: a fill past the tick is ahead of pace.
 struct NotchAgentMeter: View {
     let value: Double
     var pace: Double?
@@ -86,8 +78,6 @@ struct NotchAgentMeter: View {
     var body: some View {
         let fraction = value.isFinite ? min(1, max(0, value)) : 0
         GeometryReader { proxy in
-            // Everything: the track keeps its pill; the fill is a plain bar
-            // whose right edge stays square, clipped only by the track.
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous).fill(.white.opacity(0.13))
                 Rectangle()
@@ -103,7 +93,6 @@ struct NotchAgentMeter: View {
     }
 }
 
-/// A small ring for the closed island, filled by what is left.
 struct NotchAgentRing: View {
     let value: Double
     var tint: Color = .white
@@ -122,9 +111,6 @@ struct NotchAgentRing: View {
     }
 }
 
-/// A calm pulse that says an agent is working; still under Reduce Motion.
-/// Native layer motion avoids driving the surrounding SwiftUI graph at the
-/// display refresh rate, including Settings previews retained after closing.
 struct NotchAgentPulse: View {
     var tint: Color
     var size: CGFloat = 6
@@ -138,8 +124,6 @@ struct NotchAgentPulse: View {
     }
 }
 
-/// The agent's mark breathing while it works. A turn would read as a
-/// cross halfway round, so the mark keeps its angle.
 struct NotchAgentGlyph: View {
     let provider: AgentProvider
     var size: CGFloat = 13
@@ -148,7 +132,6 @@ struct NotchAgentGlyph: View {
 
     var body: some View {
         NotchAgentGlyphBridge(provider: provider, size: size, animates: working && !reduceMotion)
-            // Room for the widest mark, the Claude one, drawn past its size.
             .frame(width: size * 1.45 + 1, height: size * 1.45 + 1)
             .accessibilityHidden(true)
             .allowsHitTesting(false)
@@ -197,8 +180,6 @@ private struct NotchAgentGlyphBridge: NSViewRepresentable {
     static func dismantleNSView(_ view: NotchAgentAnimationView, coordinator: ()) { view.stop() }
 }
 
-/// Stacked bars, one per bucket, each split by agent. Hovering a bar reports
-/// it so the card can name the day and its value.
 struct NotchAgentBars: View {
     let buckets: [AgentBucket]
     let providers: [AgentProvider]
@@ -245,7 +226,6 @@ struct NotchAgentBars: View {
     }
 }
 
-/// Thirteen weeks of activity, a column a week, darker cells for quieter days.
 struct NotchAgentHeatmap: View {
     let days: [AgentBucket]
     let byCost: Bool
@@ -253,7 +233,6 @@ struct NotchAgentHeatmap: View {
     var calendar: Calendar = .autoupdatingCurrent
     static let spacing: CGFloat = 2.5
 
-    /// Square cells as tall as seven rows allow, across every week shown.
     static func width(height: CGFloat, days: [AgentBucket], calendar: Calendar = .autoupdatingCurrent) -> CGFloat {
         let weeks = CGFloat(Self.columns(days, calendar: calendar).count)
         let cell = max(1, (height - spacing * 6) / 7)
@@ -298,7 +277,6 @@ struct NotchAgentHeatmap: View {
         .accessibilityHidden(true)
     }
 
-    /// Days laid into weeks that start on the reader's first weekday.
     static func columns(_ days: [AgentBucket], calendar: Calendar) -> [[AgentBucket?]] {
         var weeks: [[AgentBucket?]] = []
         var current = [AgentBucket?](repeating: nil, count: 7)
@@ -314,7 +292,6 @@ struct NotchAgentHeatmap: View {
         return weeks
     }
 
-    /// Quartiles of the active days, so one heavy day does not wash out the rest.
     private var thresholds: [Double] {
         let values = days.map { $0.total.weight(byCost: byCost) }.filter { $0 > 0 }.sorted()
         guard !values.isEmpty else { return [] }
@@ -328,13 +305,8 @@ struct NotchAgentHeatmap: View {
     }
 }
 
-/// Each agent's own mark, taken from its maker's app on this Mac: the
-/// monochrome image the app shows in the menu bar, or else the app's icon.
-/// None of that artwork ships with Vorssaint, so a Mac without the app
-/// keeps a symbol. Looked up once; the strip redraws every second.
 enum AgentMarks {
     enum Mark {
-        /// Drawn in the agent's color, like the symbol it replaces.
         case template(NSImage)
         case icon(NSImage)
     }
@@ -366,7 +338,6 @@ enum AgentMarks {
 }
 
 private extension AgentProvider {
-    /// The maker's desktop apps, the one that runs the agent first.
     var appIdentifiers: [String] {
         switch self {
         case .claude: return [AgentClaudeAppUsage.bundleIdentifier]
@@ -376,23 +347,18 @@ private extension AgentProvider {
         }
     }
 
-    /// The menu bar images keep a margin; the spark's thin rays need more
-    /// of the box than the knot to look the same size.
     var markScale: CGFloat { self == .claude ? 1.45 : 1.2 }
 
-    /// What those apps name the mark they show in the menu bar.
     var menuBarImageNames: [String] {
         switch self {
         case .claude: return ["TrayIconTemplate"]
         case .codex: return ["chatgptTemplate"]
-        // The OpenCode app shows nothing in the menu bar; its icon stands in.
         case .opencode: return []
         case .copilot: return []
         }
     }
 }
 
-/// An agent's mark at the size of the symbol it stands in for.
 struct NotchAgentMark: View {
     let provider: AgentProvider
     var size: CGFloat = 13
@@ -409,7 +375,6 @@ struct NotchAgentMark: View {
                 .frame(width: size * provider.markScale, height: size * provider.markScale)
                 .foregroundStyle(tint ?? provider.tint)
         case .icon(let image):
-            // App icons keep a margin around their artwork.
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)

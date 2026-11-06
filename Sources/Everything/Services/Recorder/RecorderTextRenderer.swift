@@ -4,13 +4,7 @@
 import AppKit
 import CoreText
 
-/// Turns a line of overlay text into pixels, once.
-///
-/// Rasterized rather than drawn per frame: the same words at the same size
-/// come out identical every time, so a two-minute export draws each caption
-/// exactly once and composites a texture for the rest of it.
 enum RecorderTextRenderer {
-
     private static var cache: [String: CGImage] = [:]
     private static let lock = NSLock()
 
@@ -49,9 +43,6 @@ enum RecorderTextRenderer {
                             green: components.green,
                             blue: components.blue,
                             alpha: 1)
-        // A shadow rather than an outline: text over a screen recording lands
-        // on anything, and a soft drop is what keeps it readable without
-        // looking like a sticker.
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
         shadow.shadowBlurRadius = pointSize * 0.18

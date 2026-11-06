@@ -4,8 +4,6 @@
 import AppKit
 import ApplicationServices
 
-/// Geometry only: never reads menu titles, opens menus or requests permission.
-/// Run off-main. Missing geometry fails closed rather than covering a menu.
 enum NotchMenuBarSpace {
     static func measure(pid: pid_t, geometry: NotchGeometry, primaryTop: CGFloat,
                         ownWindow: Int) -> CGFloat? {
@@ -39,8 +37,6 @@ enum NotchMenuBarSpace {
                   height > 0, height <= geometry.menuBarHeight + 2 else { continue }
             statusItems.append(CGRect(x: x, y: primaryTop - y - height, width: width, height: height))
         }
-        // AX may describe only another display's menu bar. Require an item on
-        // the selected display before status items can further constrain it.
         return NotchMenuBarLayout.measuredSideRoom(screen: geometry.screen, cameraWidth: geometry.cameraWidth,
                                                    barHeight: geometry.menuBarHeight,
                                                    menuItems: menuItems, statusItems: statusItems)

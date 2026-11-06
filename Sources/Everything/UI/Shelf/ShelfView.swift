@@ -4,17 +4,10 @@
 import AppKit
 import SwiftUI
 
-/// Contents of the floating shelf panel: a header (a move handle plus actions)
-/// and the item tiles. Dropping onto the card adds items; the tiles themselves
-/// are AppKit, so they can drag several selected items out at once.
 struct ShelfView: View {
-    /// The top-right button. The floating shelf closes; the docked shelf
-    /// collapses to its pill instead of vanishing.
     var dismissSystemImage: String = "xmark"
     var dismissHelp: String? = nil
     var onDismiss: (() -> Void)? = nil
-    /// The docked shelf shows the brand mark as a quiet watermark, so it reads
-    /// as the app's own tray rather than a plain floating card.
     var brandWatermark: Bool = false
 
     @EnvironmentObject private var shelf: ShelfService
@@ -22,8 +15,6 @@ struct ShelfView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var clearButtonHovered = false
     @State private var shareButtonHovered = false
-    /// The system share sheet points at a real view, which SwiftUI does not
-    /// hand out; this invisible one sits behind the share button.
     @State private var shareAnchor = ShelfSharePickerAnchor.Anchor()
     @State private var pinButtonHovered = false
     @State private var closeButtonHovered = false
@@ -68,8 +59,6 @@ struct ShelfView: View {
         shelf.dropTargeted
     }
 
-    /// The official mark, large and faint in the corner: unmistakably ours,
-    /// never loud enough to fight the tiles.
     private var brandWatermarkLayer: some View {
         BrandMark(width: 128, tint: colorScheme == .light ? Color.black : Color.white)
             .opacity(colorScheme == .light ? 0.05 : 0.08)
@@ -81,8 +70,6 @@ struct ShelfView: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            // Drag this region to move the panel; the tiles below stay free to
-            // start item drags.
             HStack(spacing: 7) {
                 Image(systemName: "tray.full")
                     .font(.system(size: 12, weight: .semibold))
@@ -172,8 +159,6 @@ struct ShelfView: View {
     }
 
     private var shareButton: some View {
-        // Nothing to send means a button that has to read as unavailable,
-        // hover included, instead of looking exactly like the live one.
         let enabled = shelf.hasFilesForActions
         let hovered = shareButtonHovered && enabled
         return Button(action: shareAction) {
@@ -201,7 +186,6 @@ struct ShelfView: View {
         .help(shelf.selection.isEmpty ? l10n.s.shelfClearAll : l10n.s.shelfRemoveSelected)
     }
 
-    /// The shared face of the footer's two buttons.
     private func footerButtonFace(systemImage: String, tint: Color, hovered: Bool) -> some View {
         Image(systemName: systemImage)
             .font(.system(size: 12, weight: .semibold))
@@ -274,9 +258,6 @@ struct ShelfView: View {
     }
 }
 
-/// Hosts the invisible view the system share sheet is anchored to. SwiftUI
-/// creates and owns that view, so the button reaches whichever one is on
-/// screen right now through the box below.
 struct ShelfSharePickerAnchor: NSViewRepresentable {
     final class Anchor {
         fileprivate weak var view: NSView?

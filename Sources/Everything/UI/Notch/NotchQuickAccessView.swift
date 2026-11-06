@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// Only the transition owns animation state. No timer or display link survives
-/// the reveal, and a reversed transition cannot enable a departing button.
 final class NotchQuickAccessMotion: ObservableObject {
     @Published private(set) var progress: CGFloat = 0
     @Published private(set) var interactive = false
@@ -19,10 +17,6 @@ final class NotchQuickAccessMotion: ObservableObject {
         let values = NotchQuickAccessLayout.placements(configuration, body: body, headerTop: headerTop)
         guard self.configuration != configuration || placements != values else { return }
         let spring = NotchMotion.sideSpring(from: bodyFrame.size, to: body.size)
-        // Everything: SwiftUI starts this a frame or two after Core Animation
-        // starts the island's own motion. Pills moving out ahead of a
-        // widening island, and in behind a narrowing one, never pass under
-        // its edge.
         let widens = body.width >= bodyFrame.width
         let duration = spring.duration * (widens ? 0.75 : 1.2)
         let animation: Animation? = animated && visible
@@ -61,7 +55,6 @@ final class NotchQuickAccessMotion: ObservableObject {
 struct NotchQuickAccessView: View {
     @ObservedObject var service: NotchService
     @ObservedObject var motion: NotchQuickAccessMotion
-    /// Only the glass surface below follows it; it changes every frame of a resize.
     let backdrop: NotchBackdropPresentation
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var awake = KeepAwakeManager.shared
@@ -71,7 +64,6 @@ struct NotchQuickAccessView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
-    /// Increase Contrast keeps the buttons solid beside a lip that barely opens.
     private var followsGlass: Bool {
 #if compiler(>=6.2)
         if #available(macOS 26, *) { return glass && !reduceTransparency && contrast != .increased }
@@ -141,18 +133,12 @@ struct NotchQuickAccessView: View {
                         .fill(selected ? ClaudeMark.tint : Color.white)
                         .frame(width: 18, height: 18)
                 } else {
-                    // Everything: a selected pill wears its page's color,
-                    // the system blue for the scratchpad.
                     Image(systemName: symbol)
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(selected ? Color(nsColor: .systemBlue) : .white.opacity(0.85))
                 }
             }
             .frame(width: NotchQuickAccessLayout.width, height: height)
-            // In glass the drop beneath carries the island's shade, which
-            // the window server does not count as the window's own pixels:
-            // a faint fill keeps the whole pill from passing clicks to the
-            // app behind, not just the glyph.
             .background(followsGlass ? Color.black.opacity(0.02) : Color.black, in: Capsule())
             .overlay {
                 Capsule().strokeBorder(.white.opacity(selected || contrast == .increased ? 0.5 : 0.14), lineWidth: 0.75)
@@ -169,7 +155,6 @@ struct NotchQuickAccessView: View {
     }
 }
 
-/// Every button's drop, in the coordinates of the whole floating layer.
 private struct NotchQuickAccessDrops: View {
     let placements: [NotchQuickAccessPlacement]
     let progress: CGFloat
@@ -186,17 +171,9 @@ private struct NotchQuickAccessDrops: View {
     }
 }
 
-/// On glass each drop takes the island's shade at its own height, so it
-/// leaves the island without a seam and buttons below the island are as
-/// translucent as its lip. The island no longer hides what lies beneath its
-/// edge, so a drop still inside it is cut away.
 private struct NotchQuickAccessGlassSurface: ViewModifier {
     @ObservedObject var presentation: NotchBackdropPresentation
     let drops: NotchQuickAccessDrops
-    /// Everything: only while a pill grows out of (or back into) the island,
-    /// when part of its drop is still inside it. A page that grows sets the
-    /// glass outline to its final size at once, so clipping settled pills
-    /// against it cut them to slivers until they slid clear.
     var clipsToIsland = true
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -206,8 +183,6 @@ private struct NotchQuickAccessGlassSurface: ViewModifier {
             .background {
                 if presentation.usesGlass {
                     GeometryReader { proxy in
-                        // Past the island the shade keeps the lip's tone,
-                        // measured from the top edge as the island's own.
                         LinearGradient(stops: NotchSurfaceBackground.shade(openness: presentation.openness, contrast: contrast),
                                        startPoint: .top,
                                        endPoint: UnitPoint(x: 0.5, y: (island.isEmpty ? 0 : island.boundingRect.maxY)
@@ -222,7 +197,6 @@ private struct NotchQuickAccessGlassSurface: ViewModifier {
     }
 }
 
-/// The floating layer except the island, centered between equal gutters.
 private struct NotchQuickAccessOutside: Shape {
     let island: Path
 
@@ -260,8 +234,6 @@ struct NotchQuickAccessDrop: Shape {
         var path = Path(roundedRect: CGRect(x: center.x - radius, y: center.y - halfHeight,
                                             width: radius * 2, height: halfHeight * 2),
                         cornerRadius: radius, style: .continuous)
-        // The connection dissolves before the pill finishes moving. Its other
-        // end sits under the island, so there is no visible seam.
         let neck = halfHeight * 0.8 * max(0, 1 - phase / 0.84)
         if neck > 0, center.x + radius < anchor {
             path.move(to: CGPoint(x: anchor + 2, y: center.y + neck))

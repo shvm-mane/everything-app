@@ -52,7 +52,6 @@ struct NotchQueueView: View {
                 }
             }
         }
-        // The title sits as far below the player as the first verse would.
         .padding(.top, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

@@ -1,9 +1,5 @@
 import SwiftUI
 
-/// Everything the help overlay lists, as data. Each row reads "what you
-/// want" on the left, "how" on the right — the way a menu reads — and the
-/// kind of "how" decides how it's drawn: keys as keycaps, markdown as code,
-/// menu items as plain text.
 enum HelpContent {
     enum Kind { case keys, syntax, menu }
 
@@ -12,7 +8,6 @@ enum HelpContent {
         let how: [String]
         let kind: Kind
         var id: String { what }
-        /// What a `Tip` names to flag this row as new.
         var tipKey: String { how.joined(separator: " ") }
     }
 
@@ -29,7 +24,6 @@ enum HelpContent {
                 Row(what: "Close", how: ["Esc"], kind: .keys),
                 Row(what: "Find", how: ["⌘F"], kind: .keys),
                 Row(what: "Next or previous match", how: ["↵", "⇧↵"], kind: .keys),
-                Row(what: "File in the Inbox, start fresh", how: ["⇧⌘↩"], kind: .keys),
                 Row(what: "Quit", how: ["⌘Q"], kind: .keys),
             ]),
             Section(title: "Editing", rows: [
@@ -64,7 +58,7 @@ enum HelpContent {
                 Row(what: "Close on a click elsewhere", how: ["Close When Clicking Outside"], kind: .menu),
                 Row(what: "Follow the pointer across displays", how: ["Open on Pointer's Screen"], kind: .menu),
                 Row(what: "Sync with iCloud Drive or Dropbox", how: ["Storage Location…"], kind: .menu),
-                Row(what: "Earlier versions, the Inbox", how: ["Reveal in Finder"], kind: .menu),
+                Row(what: "Earlier versions", how: ["Reveal in Finder"], kind: .menu),
             ]),
         ]
     }
@@ -72,22 +66,14 @@ enum HelpContent {
 
 struct HelpOverlay: View {
     let theme: WispTheme
-    /// The summon shortcut as the user has it, not the default.
     var hotKey: String = "⌥Space"
-    /// Things this user hasn't been shown yet; their rows get a tag.
     var newTips: [Tip] = []
     let onDismiss: () -> Void
 
     var body: some View {
         ZStack {
-            // Tap-anywhere-to-dismiss surface. Near-opaque so the help
-            // text is clearly readable; the editor fades to barely
-            // visible behind, which signals "modal mode" without
-            // competing for attention.
             OverlayScrim(theme: theme, sheet: true, onTap: onDismiss)
 
-            // Scrolls when it doesn't fit. The list only ever grows,
-            // and a panel the user has made small is still theirs.
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(alignment: .firstTextBaseline) {
@@ -98,7 +84,6 @@ struct HelpOverlay: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
-                    // Two columns when there's room, one when there isn't.
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 40) {
                             column(sections.prefix(3))
@@ -133,8 +118,6 @@ struct HelpOverlay: View {
                 }
             }
         }
-        // 320 is what two columns are measured at; alone, a column
-        // takes the sheet's width so the keys line up with its edge.
         .frame(minWidth: 280, idealWidth: 320, maxWidth: 420, alignment: .leading)
     }
 }
@@ -147,9 +130,6 @@ private struct HelpRowView: View {
         if row.kind == .menu { menuRow } else { shortcutRow }
     }
 
-    /// Menu items are named, not pressed, and their names are long: the
-    /// name leads and a line of explanation sits under it, so nothing
-    /// has to wrap.
     private var menuRow: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -192,7 +172,6 @@ private struct HelpRowView: View {
     }
 }
 
-/// A key as it's printed on the keyboard: a small raised cap.
 private struct Keycap: View {
     let text: String
 
@@ -214,7 +193,6 @@ private struct Keycap: View {
     }
 }
 
-/// Markdown you type, set as code so it can't be mistaken for a key.
 private struct SyntaxChip: View {
     let text: String
 

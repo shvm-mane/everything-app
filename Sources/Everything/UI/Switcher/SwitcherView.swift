@@ -15,10 +15,6 @@ private enum SwitcherIconStyle {
     static let thumbnailBackground = Color.primary.opacity(0.055)
 }
 
-/// A panel of the icon row. Those panels float on the desktop on their own
-/// instead of sitting inside one backdrop like the window grid, so each one
-/// draws its own: Liquid Glass when the app's setting asks for it, the solid
-/// surface otherwise.
 private struct SwitcherIconRowSurface: View {
     let cornerRadius: CGFloat
     let fill: Color
@@ -30,7 +26,6 @@ private struct SwitcherIconRowSurface: View {
 
     var body: some View {
         if HUDBackdrop.drawsLiquidGlass(enabled: liquidGlassEnabled, reduceTransparency: reduceTransparency) {
-            // The backdrop draws its own edge.
             HUDBackdrop(cornerRadius: cornerRadius, contrast: contrast)
         } else {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -68,8 +63,6 @@ private extension View {
     }
 }
 
-/// Content of the switcher panel: a grid of large window cards with live
-/// thumbnails, hover/keyboard selection and an optional springy highlight.
 struct SwitcherView: View {
     @EnvironmentObject private var switcher: AppSwitcher
     @ObservedObject private var l10n = L10n.shared
@@ -212,8 +205,6 @@ struct SwitcherView: View {
                 }
             }
             .scrollDisabled(switcher.grid.rows <= switcher.grid.visibleRows)
-            // Like the wrapped icon rows: a reverse start selects the last card
-            // before the grid exists, so reveal it on appear too.
             .onAppear {
                 guard switcher.windows.indices.contains(switcher.selectedIndex) else { return }
                 proxy.scrollTo(switcher.windows[switcher.selectedIndex].id, anchor: nil)
@@ -523,14 +514,11 @@ struct SwitcherView: View {
                                      switcher.commitSession()
                                  })
                     .overlay(alignment: .leading) {
-                        // A wrapped row's first icon has no gap to its left
-                        // to draw in; the divider would land outside the grid.
                         if dividerPIDs.contains(group.pid),
                            position % switcher.iconRowLayout.columns != 0 || !switcher.iconRowLayout.isWrapped {
                             Rectangle()
                                 .fill(Color(nsColor: .separatorColor))
                                 .frame(width: 1, height: SwitcherIconRowLayout.iconSize)
-                                // Occupy the existing gap so scrolling and hit targets stay aligned.
                                 .offset(x: -(SwitcherIconRowLayout.spacing + 1) / 2)
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
@@ -588,8 +576,6 @@ struct SwitcherView: View {
         }
     }
 
-    /// The icons wrapped at the user's column cap. Rows past what the screen
-    /// holds scroll, following the selection like the card grid does.
     private func wrappedIconRows<Content: View>(tileWidth: CGFloat,
                                                 @ViewBuilder content: () -> Content) -> some View {
         let layout = switcher.iconRowLayout
@@ -607,11 +593,7 @@ struct SwitcherView: View {
                 }
             }
             .scrollDisabled(layout.rows <= layout.visibleRows)
-            // The reverse shortcut opens on the last item, which is selected
-            // before this view exists, so no change fires to reveal it.
             .onAppear { revealSelectedIcon(in: proxy, animated: false) }
-            // Follow the selected icon rather than the index: a search can keep
-            // the index while the item under it, and so its row, changes.
             .onChange(of: selectedIconScrollID) { _, _ in
                 revealSelectedIcon(in: proxy, animated: true)
             }
@@ -629,8 +611,6 @@ struct SwitcherView: View {
                                         windowRow: usesWindowRow)
     }
 
-    /// Same guard as `revealSelection`: before macOS 26 an animated scroll can
-    /// be dropped during fast navigation, so those versions scroll at once.
     private func revealSelectedIcon(in proxy: ScrollViewProxy, animated: Bool) {
         guard let id = selectedIconScrollID else { return }
         guard animated, !instantSelection, #available(macOS 26, *) else {
@@ -670,12 +650,6 @@ struct SwitcherView: View {
         return switcher.windows[switcher.selectedIndex]
     }
 
-    /// A search can resize the strip without moving the selection, and closing
-    /// a window can replace the selected item at the same index. Reveal after
-    /// the viewport's actual geometry changes, allowing its native scroll view
-    /// to finish resizing before the queued reveal reads the current selection.
-    /// Resize corrections are unanimated. SwiftUI before macOS 26 can also drop
-    /// animated reveals during rapid navigation, so use immediate scrolling there.
     private func revealSelection(in proxy: ScrollViewProxy, animated: Bool) {
         let index = switcher.selectedIndex
         guard switcher.windows.indices.contains(index) else { return }
@@ -935,9 +909,6 @@ private struct SwitcherWindowPreviewTile: View {
             .frame(width: SwitcherIconRowLayout.previewCardWidth - 16,
                    height: SwitcherIconRowLayout.previewCardHeight - (minimalPreviews ? 16 : 38))
 
-            // The header above already names the app. A window with no name of
-            // its own would only say it again under its own thumbnail, and two
-            // such windows would say it twice, which tells nobody anything.
             if !minimalPreviews, let detail = window.windowDetail(noOpenWindow: l10n.s.switcherNoOpenWindow) {
                 Text(detail)
                     .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
@@ -1043,18 +1014,11 @@ private struct WindowCard: View {
         window.isMinimized || window.isFullscreen || window.isOnHiddenSpace
     }
 
-    /// Without a thumbnail the app icon already fills the card, so the small
-    /// corner badge would only repeat it.
     private var showsAppBadge: Bool {
         preview != nil
     }
 
     private static let appBadgeSize: CGFloat = 32
-    /// App artwork is drawn on the system icon grid, which leaves a clear
-    /// margin around it (measured at 9.4% of the side on every app checked).
-    /// The frame hangs past the row by that much so the artwork itself, and
-    /// not its empty margin, lines up with the card edge and with the status
-    /// badges across the row.
     private static let appBadgeArtworkInset: CGFloat = (appBadgeSize * 0.094).rounded()
 
     var body: some View {
@@ -1080,8 +1044,6 @@ private struct WindowCard: View {
                         .switcherHiddenAppBadge(window.isAppHidden, size: 22 * PreviewSizing.switcherScale)
                 }
 
-                // One row along the bottom of the thumbnail: the app on the
-                // left, the window's state on the right, sharing a baseline.
                 if !minimalPreviews && (showsAppBadge || hasStatusBadges) {
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
@@ -1163,9 +1125,6 @@ private struct WindowCard: View {
                                                otherDesktop: l10n.s.switcherOtherDesktop))
     }
 
-    /// An app with no window has nothing to take a thumbnail of. Saying so
-    /// under a larger icon is what separates this card from a capture that did
-    /// not arrive, which is exactly what a lone icon in an empty well reads as.
     private var appEntryMark: some View {
         VStack(spacing: 9) {
             if let icon = window.appIcon {

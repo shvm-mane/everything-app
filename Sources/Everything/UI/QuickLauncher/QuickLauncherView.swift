@@ -14,8 +14,6 @@ struct QuickLauncherView: View {
     @ObservedObject private var recorder = ScreenRecorderService.shared
     @State private var hoveredItem: QuickLauncherItem?
     @State private var draggingItem: QuickLauncherItem?
-    /// Mirrors launcher.editingOptionsItem: the service owns it so Esc can
-    /// close the card before leaving edit mode.
     private var optionsItem: QuickLauncherItem? { launcher.editingOptionsItem }
     @AppStorage(DefaultsKey.micMuteMenuBarIndicator) private var micBadgeInMenuBar = false
     @AppStorage(DefaultsKey.colorPickerFormat) private var colorFormat = "hex"
@@ -30,9 +28,6 @@ struct QuickLauncherView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // In the notch the island's top row holds the customize toggle,
-            // and with a utility open the way back and the utility's name, so
-            // the launcher's own header stays for the floating panel.
             if notchSize == nil { header }
             if notchSize != nil, launcher.activeUtility == nil, launcher.isEditing {
                 editHint
@@ -59,7 +54,6 @@ struct QuickLauncherView: View {
         .clipShape(RoundedRectangle(cornerRadius: notchSize == nil ? 22 : 0, style: .continuous))
         .notchBand(leading: {
             if notchSize != nil, let utility = launcher.activeUtility {
-                // The way back to the tools names the open one, as a detail's does.
                 NotchBandBackButton(title: title(for: utility), action: launcher.closeUtility)
             }
         }, trailing: {
@@ -82,10 +76,6 @@ struct QuickLauncherView: View {
             launcher.editingOptionsItem = nil
             launcher.refreshPanelLayout()
         }
-        // The options card changes the panel's height, and the panel is sized
-        // by hand (no autoresizing window): recompute after open and close,
-        // and also when rows inside the card appear or disappear (the
-        // clipboard limit picker and the bare-hex toggle are conditional).
         .onChange(of: launcher.editingOptionsItem) { _, _ in
             launcher.refreshPanelLayout()
         }
@@ -97,8 +87,6 @@ struct QuickLauncherView: View {
         }
     }
 
-    /// The utility runs right here inside the launcher; its own close button
-    /// and Esc lead back to the grid.
     @ViewBuilder
     private func hostedUtility(_ item: QuickLauncherItem) -> some View {
         ScrollView(showsIndicators: false) {
@@ -111,14 +99,12 @@ struct QuickLauncherView: View {
                 }
             }
         }
-        // The island's row holds the way back, so the utility has the page.
         .frame(height: notchSize?.height ?? 470)
     }
 
     private var header: some View {
         VStack(spacing: 6) {
             ZStack {
-                // The same transparent mark the menu panel shows, centered.
                 BrandMark(width: 52, tint: colorScheme == .light ? Color(white: 0.03) : .white)
                     .frame(height: 30)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -192,9 +178,6 @@ struct QuickLauncherView: View {
         .accessibilityLabel(l10n.s.obBack)
     }
 
-    /// Inside the island the tiles fill the rows its height allows and run
-    /// sideways; editing keeps the grid, whose reorder targets need every
-    /// tile in view.
     @ViewBuilder private var grid: some View {
         if let notchSize, !launcher.isEditing {
             let rows = NotchLayout.railRows(count: launcher.visibleItems.count,
@@ -224,8 +207,6 @@ struct QuickLauncherView: View {
         }
     }
 
-    /// `titleInset` keeps the title clear of its neighbours' where the
-    /// island's rail closes its gaps.
     @ViewBuilder
     private func cell(_ item: QuickLauncherItem, titleInset: CGFloat = 0) -> some View {
         let index = launcher.visibleItems.firstIndex(of: item)
@@ -234,9 +215,6 @@ struct QuickLauncherView: View {
 
         Button {
             if launcher.isEditing {
-                // In edit mode the tile body opens its inline options (when it
-                // has any); a tiny gear badge alone is too small a target and
-                // sits outside the tile's hit area.
                 if hasQuickOptions(item) {
                     withAnimation(.easeOut(duration: 0.15)) {
                         launcher.editingOptionsItem = optionsItem == item ? nil : item
@@ -287,8 +265,6 @@ struct QuickLauncherView: View {
                                 .frame(width: 8, height: 8)
                                 .offset(x: 3, y: -3)
                         }
-                        // Keys 1-9 activate the first nine tiles; the badge is
-                        // the only hint that shortcut exists.
                         if notchSize == nil, let index, index < 9 {
                             Image(systemName: "\(index + 1).circle.fill")
                                 .font(.system(size: 13))
@@ -387,9 +363,6 @@ struct QuickLauncherView: View {
 
     // MARK: - Inline options (edit mode)
 
-    /// Tools whose closest settings are worth flipping right here, without a
-    /// trip to the Settings window. Curated on purpose: only options that
-    /// change what the tile itself does.
     private func hasQuickOptions(_ item: QuickLauncherItem) -> Bool {
         switch item {
         case .keepAwake, .micMute, .colorPicker, .clipboard: return true
@@ -397,9 +370,6 @@ struct QuickLauncherView: View {
         }
     }
 
-    /// Inline card under the grid while a gear is open. A card instead of a
-    /// popover on purpose: popovers never present from this borderless
-    /// non-activating panel, and the card keeps the whole flow inside the HUD.
     private func optionsCard(_ item: QuickLauncherItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -419,9 +389,6 @@ struct QuickLauncherView: View {
             }
             switch item {
             case .keepAwake:
-                // Same guard as the panel's Keep awake card: enabling the
-                // closed-lid rule can run an admin setup step, and flipping
-                // the switch again mid-setup would race it.
                 Toggle(l10n.s.clamshellTitle, isOn: $keepAwake.clamshellPreferred)
                     .disabled(keepAwake.clamshellSetupInProgress)
                 Picker(l10n.s.defaultDurationLabel, selection: $defaultDuration) {
@@ -437,8 +404,6 @@ struct QuickLauncherView: View {
                 Toggle(l10n.s.micMuteMenuBarToggle, isOn: $micBadgeInMenuBar)
             case .clipboard:
                 Toggle(FeatureStrings.clipboard(l10n.language).enable, isOn: $clipboardEnabled)
-                    // Same sync the Settings toggle performs: writing the
-                    // default alone does not start or stop the watcher.
                     .onChange(of: clipboardEnabled) { _, _ in
                         ClipboardHistoryService.shared.syncWithPreferences()
                     }
@@ -550,7 +515,6 @@ struct QuickLauncherView: View {
     }
 }
 
-/// Minimal wrapping layout for the hidden-item chips.
 struct FlowLayoutLite: Layout {
     var spacing: CGFloat = 6
 

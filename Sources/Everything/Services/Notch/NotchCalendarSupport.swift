@@ -23,28 +23,21 @@ struct NotchCalendarEvent: Equatable, Identifiable, Sendable {
     var color: NotchCalendarColor = .fallback
     var calendarItemIdentifier = ""
     var recurring = false
-    /// How a countdown chosen from the event's menu remembers it; see
-    /// `NotchCalendarSupport.countdownKey`.
     var countdownKey = ""
 }
 
-/// What the closed island counts down to: an event's start or, while the
-/// event is happening, its end.
 struct NotchCalendarCountdown: Equatable, Sendable {
     let event: NotchCalendarEvent
     let ongoing: Bool
 
     var target: Date { ongoing ? event.end : event.start }
 
-    /// A start shows within `leadTime` before it; an end, during the hour
-    /// before it and only once its event has begun.
     func isShown(at now: Date, leadTime: TimeInterval) -> Bool {
         target > now && target.timeIntervalSince(now) <= (ongoing ? NotchCalendarSupport.timeLeftLeadTime : leadTime)
             && (!ongoing || event.start <= now)
     }
 }
 
-/// One calendar offered in Settings, grouped under its account like Calendar.app.
 struct NotchCalendarChoice: Equatable, Identifiable, Sendable {
     let id: String
     let title: String
@@ -54,11 +47,8 @@ struct NotchCalendarChoice: Equatable, Identifiable, Sendable {
 }
 
 enum NotchCalendarSupport {
-    /// How long before its end the event under way counts down.
     static let timeLeftLeadTime: TimeInterval = 60 * 60
 
-    /// Minutes before a start the countdown appears; the settings menu
-    /// offers the presets, and any stored value is held to the range.
     static let defaultCountdownLeadMinutes = 60
     static let countdownLeadPresets = [15, 30, 60, 120]
     static let countdownLeadRange = 5...240
@@ -79,8 +69,6 @@ enum NotchCalendarSupport {
         return (0..<42).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
     }
 
-    /// The seven days around `date`, from the calendar's first weekday. Every
-    /// week lies inside the 42-day grid `monthDays` reads for any of its days.
     static func weekDays(containing date: Date, calendar: Calendar = .current) -> [Date] {
         let day = calendar.startOfDay(for: date)
         let offset = (calendar.component(.weekday, from: day) - calendar.firstWeekday + 7) % 7
@@ -107,7 +95,6 @@ enum NotchCalendarSupport {
         countdownEnabled && (visible.start > current.start || visible.end < current.end)
     }
 
-    /// End dates are exclusive, including all-day events and midnight boundaries.
     static func events(_ events: [NotchCalendarEvent], on day: Date,
                        calendar: Calendar = .current) -> [NotchCalendarEvent] {
         guard let interval = calendar.dateInterval(of: .day, for: day) else { return [] }
@@ -133,8 +120,6 @@ enum NotchCalendarSupport {
         showsCountdown(chosen: false, in: defaults)
     }
 
-    /// An event chosen from its menu counts down even while the countdown
-    /// for every event is off.
     static func showsCountdown(chosen: Bool, in defaults: UserDefaults = .standard) -> Bool {
         isEnabled(in: defaults) && (chosen || defaults.bool(forKey: DefaultsKey.notchCalendarCountdown))
     }
@@ -143,15 +128,10 @@ enum NotchCalendarSupport {
         isEnabled(in: defaults) && defaults.bool(forKey: DefaultsKey.notchCalendarTimeLeft)
     }
 
-    /// The number beside a row of the month grid. Rows start on the calendar's
-    /// first weekday, so the same calendar numbers them: every day of a row
-    /// then shares one number, where ISO weeks would straddle two rows on a
-    /// Mac whose week starts on Sunday.
     static func weekNumber(of date: Date, calendar: Calendar = .current) -> Int {
         calendar.component(.weekOfYear, from: date)
     }
 
-    /// What VoiceOver reads for that number, since no day's label names its week.
     static func weekNumberLabel(of date: Date, text: NotchCalendarStrings, calendar: Calendar = .current) -> String {
         String(format: text.weekNumber, weekNumber(of: date, calendar: calendar))
     }
@@ -160,9 +140,6 @@ enum NotchCalendarSupport {
         calendar.component(.weekday, from: date) == calendar.firstWeekday
     }
 
-    /// Names the event a countdown was chosen for across refreshes, edits and
-    /// relaunches: the event itself or, in a series, one occurrence by the
-    /// date it first fell on, which moving that occurrence leaves unchanged.
     static func countdownKey(identifier: String, occurrence: Date?) -> String {
         guard let occurrence else { return identifier }
         return identifier + "@" + String(occurrence.timeIntervalSinceReferenceDate.rounded())
@@ -172,9 +149,6 @@ enum NotchCalendarSupport {
         !event.countdownKey.isEmpty && chosen.contains(event.countdownKey)
     }
 
-    /// Events chosen from their menu in the island, by countdown key, each
-    /// with the end it had when last read. Only these identifiers are kept,
-    /// never an event's text, and each is forgotten once its event ends.
     static func chosenCountdowns(in defaults: UserDefaults = .standard) -> [String: Date] {
         (defaults.dictionary(forKey: DefaultsKey.notchCalendarChosenCountdowns) ?? [:]).compactMapValues { $0 as? Date }
     }
@@ -191,9 +165,6 @@ enum NotchCalendarSupport {
         else { defaults.set(choices, forKey: DefaultsKey.notchCalendarChosenCountdowns) }
     }
 
-    /// The choices after a read: an event read again keeps its current end,
-    /// so a moved event stays chosen, and a choice whose event has ended is
-    /// forgotten. Nil when nothing changes, so a read writes no preference.
     static func refreshedChoices(_ choices: [String: Date], events: [NotchCalendarEvent],
                                  now: Date) -> [String: Date]? {
         var refreshed = choices
@@ -202,7 +173,6 @@ enum NotchCalendarSupport {
         return refreshed == choices ? nil : refreshed
     }
 
-    /// Stored as excluded identifiers so a calendar added later starts shown.
     static func excludedCalendars(in defaults: UserDefaults = .standard) -> Set<String> {
         Set(defaults.stringArray(forKey: DefaultsKey.notchCalendarExcluded) ?? [])
     }
@@ -213,16 +183,12 @@ enum NotchCalendarSupport {
         defaults.set(excluded.sorted(), forKey: DefaultsKey.notchCalendarExcluded)
     }
 
-    /// The calendars to pass to EventKit: nil reads every calendar, including
-    /// ones added later. An empty result means read nothing; the caller must
-    /// not hand `[]` to EventKit, which treats it like nil.
     static func calendarsToRead<C>(_ calendars: [C], excluded: Set<String>,
                                    identifier: (C) -> String) -> [C]? {
         guard calendars.contains(where: { excluded.contains(identifier($0)) }) else { return nil }
         return calendars.filter { !excluded.contains(identifier($0)) }
     }
 
-    /// Accounts in name order, each with its calendars in name order.
     static func grouped(_ choices: [NotchCalendarChoice]) -> [[NotchCalendarChoice]] {
         Dictionary(grouping: choices, by: \.sourceID).values
             .map { $0.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } }
@@ -253,11 +219,6 @@ enum NotchCalendarSupport {
         upcoming(events, now: now).first { !$0.allDay }
     }
 
-    /// The compact island counts down to the nearer of the moments it follows:
-    /// a timed event's start, with the countdown on or for an event chosen
-    /// from its menu, and, with time left on, the end of one in progress. A
-    /// start that coincides with an end leaves the event under way. Starts
-    /// show within `leadTime`; see `NotchCalendarCountdown.isShown`.
     static func countdown(_ events: [NotchCalendarEvent], now: Date, starts: Bool, ends: Bool,
                           chosen: Set<String> = [], leadTime: TimeInterval) -> NotchCalendarCountdown? {
         ordered(events).filter { !$0.allDay }
@@ -269,24 +230,17 @@ enum NotchCalendarSupport {
             .min { $0.target != $1.target ? $0.target < $1.target : $0.ongoing && !$1.ongoing }
     }
 
-    /// Whether the island follows the event's start (false) and its end (true).
     private static func followedMoments(_ event: NotchCalendarEvent, starts: Bool, ends: Bool,
                                         chosen: Set<String>) -> [Bool] {
         (starts || isChosen(event, in: chosen) ? [false] : []) + (ends ? [true] : [])
     }
 
-    /// The Controls tile names the next start at any distance within the
-    /// week read, not only in the countdown's lead time. An appointment already
-    /// in progress is known; the one after it is what comes next. The month
-    /// grid can load weeks further ahead, where a weekday alone would read as
-    /// this week's, so the tile stops at the week.
     static func tileEvent(_ events: [NotchCalendarEvent], now: Date,
                           calendar: Calendar = .current) -> NotchCalendarEvent? {
         let week = readInterval(month: nil, now: now, calendar: calendar)
         return ordered(events).first { !$0.allDay && $0.start > now && $0.start < week.end }
     }
 
-    /// A start later today reads as its time; a later day adds its weekday.
     static func tileStartText(_ start: Date, now: Date, locale: Locale, calendar: Calendar = .current) -> String {
         var style = calendar.isDate(start, inSameDayAs: now)
             ? Date.FormatStyle.dateTime.hour().minute()
@@ -297,9 +251,6 @@ enum NotchCalendarSupport {
         return start.formatted(style)
     }
 
-    /// When the window before each moment followed opens and closes: the lead
-    /// time before a start, the hour before an end, which opens no earlier
-    /// than its event's start.
     static func countdownTransition(_ events: [NotchCalendarEvent], now: Date, starts: Bool, ends: Bool,
                                     chosen: Set<String> = [], leadTime: TimeInterval) -> Date? {
         ordered(events).filter { !$0.allDay }
@@ -316,16 +267,12 @@ enum NotchCalendarSupport {
     static let stripTitleSpacing: CGFloat = 5
     static let stripClockSpacing: CGFloat = 4
 
-    /// Reserve one clock shape for the selected lead, including restored
-    /// values, so counting through 100 minutes does not resize the island.
     static func countdownShape(leadTime: TimeInterval) -> String {
         let minutes = leadTime.isFinite
             ? min(Double(countdownLeadRange.upperBound), max(60, ceil(leadTime / 60))) : 60
         return String(repeating: "0", count: max(2, String(Int(minutes)).count)) + ":00"
     }
 
-    /// The time beside the countdown clock in the closed island: when the
-    /// event starts or, while it is happening, when it ends.
     static func timeText(_ countdown: NotchCalendarCountdown, locale: Locale) -> String {
         (countdown.ongoing ? "→\u{2009}" : "·\u{2009}")
             + countdown.target.formatted(.dateTime.hour().minute().locale(locale))
@@ -343,9 +290,6 @@ enum NotchCalendarSupport {
             fractionalPart: .hide(rounded: .down)).locale(locale))
     }
 
-    /// The link Calendar resolves to one appointment. A series shares one
-    /// identifier across its occurrences, so the clicked start (UTC, or the
-    /// local day for all-day events) picks the right one.
     static func eventURL(_ event: NotchCalendarEvent, calendar: Calendar = .current) -> URL? {
         guard !event.calendarItemIdentifier.isEmpty,
               let identifier = event.calendarItemIdentifier

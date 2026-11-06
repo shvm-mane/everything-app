@@ -4,13 +4,7 @@
 import CoreGraphics
 import Vision
 
-/// Offline 2D code detection shared by the screen text tool and the
-/// screenshot preview. Restricted to matrix symbologies (QR and its
-/// relatives): 1D barcodes false fire on any striped area of a normal
-/// screen, and the useful case here is scanning a QR shown on screen.
 enum BarcodeDetector {
-    /// Matrix codes only. Kept as a fast, lightweight pass that runs before
-    /// the heavier text recognition.
     static let symbologies: [VNBarcodeSymbology] = [.qr, .microQR, .aztec, .dataMatrix, .pdf417]
 
     static func decode(_ image: CGImage) -> [QuickToolsSupport.DecodedBarcode] {
@@ -27,9 +21,6 @@ enum BarcodeDetector {
         }
     }
 
-    /// A finished read of an image: the joined payload, and an openable link
-    /// only when a single code carries a plain web address. Nil when nothing
-    /// was found. Shared by the screenshot preview and the annotation editor.
     struct Reading: Equatable {
         let payload: String
         let url: URL?

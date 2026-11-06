@@ -4,8 +4,6 @@
 import Foundation
 import IOKit
 
-/// Minimal client for the System Management Controller (AppleSMC). It reads
-/// sensors and allows narrowly scoped writes through the SMCParamStruct ABI.
 final class SMCClient {
     enum WriteError: Error {
         case invalidPayload
@@ -23,7 +21,6 @@ final class SMCClient {
 
     private var connection: io_connect_t = 0
 
-    // Selector and command bytes of the SMC user client.
     private static let handleYPCEvent: UInt32 = 2
     private static let cmdReadKey: UInt8 = 5
     private static let cmdWriteKey: UInt8 = 6
@@ -43,8 +40,6 @@ final class SMCClient {
 
     // MARK: - Key discovery
 
-    /// Enumerates every SMC key whose name passes `filter`. Done once at startup;
-    /// the resulting keys are then read directly on each refresh.
     func keys(where filter: (String) -> Bool) -> [Key] {
         var result: [Key] = []
         for index in 0..<keyCount() {
@@ -69,7 +64,6 @@ final class SMCClient {
         return result
     }
 
-    /// Reads a temperature-style value in the key's native encoding.
     func readValue(_ key: Key) -> Double? {
         guard let bytes = readBytes(key) else { return nil }
         return SMCValueCodec.decode(bytes, type: key.dataType)
@@ -85,8 +79,6 @@ final class SMCClient {
         return withUnsafeBytes(of: out.bytes) { Array($0.prefix(Int(key.dataSize))) }
     }
 
-    /// Writes only a value encoded in the key's own reported type and size.
-    /// Callers cannot change the key metadata or overrun the fixed SMC payload.
     func writeValue(_ value: Double, to key: Key) throws {
         guard let bytes = SMCValueCodec.encode(value, type: key.dataType,
                                                size: Int(key.dataSize)) else {
@@ -112,9 +104,6 @@ final class SMCClient {
         guard output.result == 0 else { throw WriteError.controller(output.result) }
     }
 
-    /// Looks up a single key by its 4-character code, returning its size and type
-    /// so `readValue` can decode it. Cheaper than enumerating every key — used to
-    /// resolve the power sensors directly.
     func key(named name: String) -> Key? {
         var probe = SMCParamStruct()
         probe.key = Self.fourCC(name)
@@ -163,7 +152,6 @@ final class SMCClient {
     }
 }
 
-/// Wire format of the AppleSMC user client (fixed 80-byte layout).
 struct SMCParamStruct {
     var key: UInt32 = 0
     var vers = SMCVersion()

@@ -6,9 +6,6 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 
-/// Makes the green traffic-light button maximize in the current Space instead
-/// of entering macOS fullscreen. The event tap is installed only while the user
-/// has opted in and Accessibility is granted.
 final class WindowMaximizer: ObservableObject {
     static let shared = WindowMaximizer()
 
@@ -102,9 +99,6 @@ final class WindowMaximizer: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        // Never touch Accessibility from inside the tap when it is not granted:
-        // a revoked permission (System Settings, or the app's own "Clear all
-        // permissions") would make the AX hit-test below hang and freeze input.
         guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
 
         switch type {
@@ -159,8 +153,6 @@ final class WindowMaximizer: ObservableObject {
                            allowsNativeFallback: buttonFrame.allowsNativeFallback)
     }
 
-    /// The list is read here rather than cached: this only runs for a press on
-    /// a green button, and a restored backup needs no reload to take effect.
     private func isExcluded(pid: pid_t) -> Bool {
         let excluded = UserDefaults.standard.stringArray(forKey: DefaultsKey.windowMaximizeExcludedApps) ?? []
         guard !excluded.isEmpty else { return false }
@@ -176,8 +168,6 @@ final class WindowMaximizer: ObservableObject {
         else { return false }
 
         let maximized = axFrame(fromAppKit: screen.windowLayoutVisibleFrame)
-        // Revealing the strip may change its measured width before the second
-        // click. Restore from the frame actually applied, not only today's size.
         let previousMaximized = maximizedFrames[target.windowID] ?? maximized
         if (current.isClose(to: previousMaximized, tolerance: frameTolerance)
             || current.isClose(to: maximized, tolerance: frameTolerance)),
@@ -207,9 +197,6 @@ final class WindowMaximizer: ObservableObject {
         }
     }
 
-    // The suspension lives in a dictionary rather than in the completion so a
-    // superseding click or a stop() mid animation, which drop the completion,
-    // cannot leave the app's assistive mode switched off.
     private func changeFrame(to frame: AXFrame,
                              of target: ClickTarget,
                              completion: @escaping (Bool) -> Void) -> Bool {
@@ -275,8 +262,6 @@ final class WindowMaximizer: ObservableObject {
 
     private func elementAt(point: CGPoint) -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
-        // No cap here: on the system-wide element a timeout is the default for
-        // every question this process asks, whoever asks it (#938).
         var element: AXUIElement?
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &element) == .success,
               let element
@@ -285,14 +270,6 @@ final class WindowMaximizer: ObservableObject {
         return element
     }
 
-
-    /// An application element answers a role query by switching a Chromium app's
-    /// renderers into full accessibility mode for the rest of the process's life
-    /// (issue #953), so it must never be asked for one. Its own pid names it:
-    /// the element built from that pid is the same element, since Accessibility
-    /// compares by value rather than by identity. Asking each element for its
-    /// own pid also keeps this right where a parent chain crosses processes,
-    /// which a sentinel built once from the starting element would miss.
     private func isApplicationElement(_ element: AXUIElement) -> Bool {
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
@@ -313,12 +290,6 @@ final class WindowMaximizer: ObservableObject {
             if role(of: window) == (kAXWindowRole as String) { return window }
         }
 
-        // The chain above a window is the application element itself, so an
-        // element that never yields a window — a menu bar item, a detached
-        // palette — walks onto it. Asking that element for a role is what puts
-        // a Chromium app's renderers into full accessibility mode for the rest
-        // of the process's life (issue #953), so stop there instead: the walk
-        // already ends with no window in that case.
         var current = element
         for _ in 0..<8 {
             guard let parent = elementAttribute(current, kAXParentAttribute as String) else { return nil }
@@ -346,12 +317,6 @@ final class WindowMaximizer: ObservableObject {
         return nil
     }
 
-    // Some apps commit Accessibility size changes with a short delay, so reading
-    // the frame right after setting it can still return the old value. Give the
-    // window a grace period before deciding the app refused the frame; restoring
-    // on a stale read is what used to leave a window moved to the screen edge
-    // without ever growing. The wait lives in frameAnimations so a new animation
-    // for the same window cancels a pending settle instead of fighting it.
     private func settleFrame(_ target: AXFrame,
                              on window: AXUIElement,
                              windowID: CGWindowID,

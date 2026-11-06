@@ -4,8 +4,6 @@
 import AppKit
 import Combine
 
-/// Turns coarse hardware volume wheel bursts into macOS' fine volume step.
-/// Active only while enabled and Accessibility is granted.
 final class PreciseVolumeRollerService: ObservableObject {
     static let shared = PreciseVolumeRollerService()
 
@@ -16,9 +14,6 @@ final class PreciseVolumeRollerService: ObservableObject {
     private var gate = PreciseVolumeRollerGate()
     private var keyOwnership = PreciseVolumeKeyOwnership()
     private var notchKeyGate = NotchVolumeKeyGate()
-    /// Island steps bypass the system, so its volume click plays on release here.
-    /// Waits for both the release and the last step's adjustment, so a failed
-    /// step forwarded to macOS never plays a second click.
     private var feedback: (key: Int32, step: Int, applied: Bool, released: Bool)?
     private var feedbackStep = 0
     private static let volumeFeedback = NSSound(
@@ -166,21 +161,16 @@ final class PreciseVolumeRollerService: ObservableObject {
            !gate.accepts(direction, at: ProcessInfo.processInfo.systemUptime) { return true }
         feedbackStep &+= 1
         let step = feedbackStep
-        // Like macOS, the mute key clicks only when it unmutes. The toggle
-        // follows the output's own reading, so its result decides that below.
         feedback = NotchVolumeKeyGate.playsFeedback(
             setting: UserDefaults.standard.bool(forKey: "com.apple.sound.beep.feedback"),
             option: event.flags.contains(.maskAlternate), shift: event.flags.contains(.maskShift))
             ? (code, step, false, false) : nil
         let fine = precise || (event.flags.contains(.maskAlternate) && event.flags.contains(.maskShift))
         let fallback = event.copy()
-        // CoreAudio can wait for a reconnecting device. Never hold the event
-        // tap's reply while reading or writing the audio driver.
         DispatchQueue.main.async { [weak self] in
             let completion: (AppVolumeMixer.OutputKeyResult) -> Void = { result in
                 let applied = result == .applied
                 if let self, self.feedback?.step == step {
-                    // The forwarded native press plays its own feedback.
                     if applied { self.feedback?.applied = true; self.playFeedbackIfReady() }
                     else { self.feedback = nil }
                 }
@@ -193,9 +183,6 @@ final class PreciseVolumeRollerService: ObservableObject {
                     Self.postForwardedRelease(code)
                 }
             }
-            // Both keys start from the device's own reading, so the island
-            // shows the result once it has been applied. A native fallback
-            // publishes its state through the listeners.
             if key == .mute {
                 mixer.requestOutputMuteToggle { result in
                     if result == .applied, mixer.systemOutputMuted == true, self?.feedback?.step == step {

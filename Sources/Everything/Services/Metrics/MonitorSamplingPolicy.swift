@@ -9,30 +9,18 @@ enum MonitorSamplingKind: String {
     case network
     case disk
     case power
-    /// The system draw pinned to the menu bar. Unlike battery charge and
-    /// time, the watts swing from one second to the next, so the reading
-    /// keeps the chosen interval.
     case powerDraw
     case peripheralBattery
     case gpuUsage
-    /// GPU usage pinned to the menu bar: it moves as fast as CPU usage, so
-    /// the pinned value keeps the chosen interval like `.powerDraw`.
     case gpuUsageMenuBar
     case temperature
-    /// A chip (CPU or GPU) temperature pinned to the menu bar. Chip
-    /// temperatures climb several degrees within a second under load, so the
-    /// pinned value keeps the chosen interval. Battery temperature alone and
-    /// the temperature alerts stay on the slow stride.
     case temperatureMenuBar
     case fanSpeed
-    /// Fan speed pinned to the menu bar keeps the chosen interval.
     case fanSpeedMenuBar
     case connectedDevices
 }
 
 enum MonitorSamplingPolicy {
-    /// `forced` kinds sample on any tick: an event that changed them (a power
-    /// source change) should not wait out a slow background stride.
     static func shouldSample(_ kind: MonitorSamplingKind,
                              tick: Int,
                              intervalSeconds: Int,
@@ -53,11 +41,6 @@ enum MonitorSamplingPolicy {
         return max(1, Int(ceil(targetSeconds / Double(interval))))
     }
 
-    /// The timer cadence, in base ticks, that still lands every needed kind
-    /// exactly on its stride: the GCD of the strides. With only slow metrics
-    /// on (say, temperature in the menu bar and nothing else) the timer can
-    /// wake once per several ticks instead of waking just to skip everything;
-    /// with any every-tick metric this stays 1 and nothing changes.
     static func wakeTicks(for kinds: [MonitorSamplingKind],
                           intervalSeconds: Int,
                           foreground: Bool) -> Int {
@@ -67,10 +50,6 @@ enum MonitorSamplingPolicy {
         return max(1, cadence)
     }
 
-    /// Rounds a tick up onto the wake grid after a cadence change. Ticks then
-    /// advance in `wakeTicks` steps, and `tick % stride == 0` only stays
-    /// reachable for grid-aligned ticks (an off-grid tick would never hit a
-    /// stride multiple again and the metric would silently stop sampling).
     static func alignedTick(_ tick: Int, wakeTicks: Int) -> Int {
         guard wakeTicks > 1 else { return tick }
         let remainder = tick % wakeTicks
@@ -112,10 +91,6 @@ enum MonitorSamplingPolicy {
         case .power, .temperature:
             return 15
         case .disk:
-            // Must stay comfortably under DiskSampler.maxGap (15 s) even
-            // after timer tolerance and scheduling slop, or the delta guard
-            // discards background samples, blanking the menu bar IO metric
-            // and freezing session totals while the panel is closed.
             return 10
         case .peripheralBattery:
             return 60

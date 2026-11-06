@@ -4,86 +4,51 @@
 import Darwin
 import Foundation
 
-/// What one log line says, reduced to the few facts the island keeps. Only
-/// usage counters, model names, times and folder names leave a line, besides
-/// the identifiers of Claude's shell commands still running, held in memory
-/// only; prompts, replies and tool output are never decoded into anything
-/// that is stored.
 enum AgentLogEntry: Equatable {
-    /// `key` identifies the response across duplicate lines and files.
     case usage(key: String, record: AgentUsageRecord, billable: AgentBillable)
-    /// A later chunk can identify the model of an already-counted request.
     case usageModel(key: String, model: String)
     case limits(AgentLimits)
     case plan(String, observedAt: Date)
     case turnBegan(Date)
-    /// Model and folder context known before usage is reported.
     case turnContext(model: String, project: String)
-    /// Work continues; nil when the line was not worth decoding for its time.
     case turnActive(Date?)
-    /// A step ended expecting the agent to go on; unless work follows soon,
-    /// the agent stopped there and its turn is over.
     case turnSettled(Date)
     case turnEnded(Date?, completed: Bool, duration: TimeInterval?)
     case reset(Date)
 }
 
-/// Per-file context carried from line to line.
 struct AgentLogState: Equatable {
     var session = ""
     var project = ""
     var model = ""
     var turnOpen = false
-    /// Newer logs write one usage record per response; older ones only carry
-    /// running totals, which are the fallback until a record appears.
     var sawUsageRecords = false
     var lastTotal: AgentTokens?
-    /// Codex runs the thread on the fast tier, which bills at a premium.
     var fast = false
-    /// A Codex subagent, review or memory task owns no turn. Only the log's
-    /// metadata says so: a reverted thread goes on in a log named after both
-    /// the thread and a new rollout.
     var codexSubagent = false
-    /// The first Codex metadata line describes the log's own thread; a later
-    /// one is history copied from the thread it came from.
     var codexHeaderRead = false
-    /// The thread a person started that a Codex subagent works for, whose
-    /// turn its responses count toward.
     var codexRoot = ""
-    /// The thread whose running totals the lines read now report: history
-    /// copied from another thread keeps that thread's, as in its own log.
     var codexTotalsSession = ""
-    /// Copilot shutdown counters are cumulative for the life of a session.
     var copilotTotals: [String: AgentTokens] = [:]
-    /// Counted requests by model; the empty key holds unresolved attribution.
     var copilotRequests: [String: Int] = [:]
     var copilotRequestModels: [String: String] = [:]
     var copilotReportedRequests: [String: Int] = [:]
     var copilotTurnID: String?
     var copilotFinalResponse = false
-    /// The parent session when a database row belongs to a subagent.
     var parentSession = ""
-    /// OpenCode stores all sessions in one database, tracking per-session state.
     var openCodeSessions: [String: OpenCodeSessionState] = [:]
-    /// Claude's shell commands still waiting for their result, by tool call.
-    /// They run on the Mac, so the turn goes on without the network.
     var runningCommands: Set<String> = []
 }
 
-/// Per-session turn and model tracking for OpenCode databases.
 struct OpenCodeSessionState: Equatable {
     var project = ""
     var model = ""
     var turnOpen = false
     var turnStarted: Date?
     var activeUserMessageID = ""
-    /// The newest moment the session's rows tell of.
     var lastActivity: Date?
-    /// When a step ended expecting the loop to go on, until a row follows.
     var settledAt: Date?
-    /// The reply being written, until it completes.
     var writingReplyID = ""
-    /// When the prompt the session answers now was written.
     var activePromptDate: Date?
     var seenUserMessageIDs: Set<String> = []
     var completedAssistantMessageIDs: Set<String> = []
@@ -93,8 +58,6 @@ struct OpenCodeSessionState: Equatable {
 enum AgentLogParser {
     // MARK: Byte tests
 
-    /// Structural keys are written without spaces and never appear unescaped
-    /// inside a string value, so a byte match is a safe first filter.
     static func contains(_ line: Data, _ needle: StaticString) -> Bool {
         line.withUnsafeBytes { bytes in
             guard let base = bytes.baseAddress, bytes.count >= needle.utf8CodeUnitCount else { return false }
@@ -102,11 +65,6 @@ enum AgentLogParser {
         }
     }
 
-    /// The first `"type":"…"` value at or after `start`, and where it ends.
-    /// A Codex rollout line writes its own type before its payload, and an
-    /// event's payload opens with the event's type, so the search stops
-    /// within the first hundred bytes instead of crossing tool output or
-    /// compacted history that can run to tens of megabytes per line.
     static func firstType(_ line: Data, from start: Int = 0) -> (name: String, end: Int)? {
         let key: StaticString = #""type":""#
         return line.withUnsafeBytes { bytes in
@@ -114,7 +72,6 @@ enum AgentLogParser {
                   let found = memmem(base + start, bytes.count - start, key.utf8Start, key.utf8CodeUnitCount)
             else { return nil }
             let value = base.distance(to: found) + key.utf8CodeUnitCount
-            // Type names are short identifiers.
             let limit = min(bytes.count, value + 64)
             guard value < limit, let quote = memchr(base + value, 0x22, limit - value) else { return nil }
             let end = base.distance(to: UnsafeRawPointer(quote))
@@ -142,7 +99,6 @@ enum AgentLogParser {
         CodexReader().parse(line, state: &state, now: now)
     }
 
-    /// Input counts include what came from the cache.
     static func codexTokens(_ usage: [String: Any]) -> AgentTokens {
         let input = int(usage["input_tokens"])
         let cached = min(input, int(usage["cached_input_tokens"]))
@@ -151,16 +107,12 @@ enum AgentLogParser {
                            output: int(usage["output_tokens"]), reasoning: int(usage["reasoning_output_tokens"]))
     }
 
-    /// Fast mode, named priority before July 2026.
     static func fastTier(_ tier: String) -> Bool {
         ["fast", "priority"].contains(tier.lowercased())
     }
 
     // MARK: OpenCode
 
-    /// OpenCode starts the next step the moment a step's tools return, so
-    /// a turn that goes this long without one after a step ended has stopped,
-    /// as when a permission was rejected or a question dismissed.
     static let openCodeSettle: TimeInterval = 30
 
     static func parseOpenCode(_ line: Data, state: inout AgentLogState, now: Date) -> [AgentLogEntry] {
@@ -169,9 +121,6 @@ enum AgentLogParser {
 
     // MARK: GitHub Copilot
 
-    /// Copilot CLI and the GitHub Copilot app share an append-only event log.
-    /// Only session context, turn boundaries and cumulative model counters are
-    /// decoded; prompts, replies, reasoning and tool arguments are ignored.
     static func parseCopilot(_ line: Data, state: inout AgentLogState, now: Date) -> [AgentLogEntry] {
         CopilotReader().parse(line, state: &state, now: now)
     }
@@ -181,25 +130,15 @@ enum AgentLogParser {
          "session.start", "session.context_changed", "session.model_change", "session.shutdown", "abort"].contains(type)
     }
 
-    /// Codex logs a reading for each allowance: the main one under "codex",
-    /// which older logs leave unnamed, and one for each model that has its
-    /// own. Only the main one is kept, so a model's windows never replace it
-    /// or warn again.
     static func isMainBucket(_ limits: [String: Any]) -> Bool {
         let id = (limits["limit_id"] as? String ?? "").lowercased()
         return id.isEmpty || id == "codex"
     }
 
-    /// The names a log gives a window's figures; Codex's server spells the
-    /// same ones in camel case.
     typealias WindowKeys = (used: String, minutes: String, resets: String, individual: String, remaining: String)
     static let logWindowKeys: WindowKeys = ("used_percent", "window_minutes", "resets_at",
                                             "individual_limit", "remaining_percent")
 
-    /// Windows are told apart by their length, never by their slot: an
-    /// account can report only its weekly window, and in either slot. A
-    /// Business account can leave both slots empty and report its allowance
-    /// as the share left of its own limit instead.
     static func codexWindows(_ limits: [String: Any], observed: Date,
                              keys: WindowKeys = logWindowKeys) -> [AgentLimitWindow]? {
         var windows: [AgentLimitWindow] = []
@@ -233,8 +172,6 @@ enum AgentLogParser {
 
     // MARK: Shared values
 
-    /// The folder an agent ran in names the project. A worktree kept inside
-    /// the repository still belongs to that repository.
     static func projectName(_ path: String) -> String {
         var path = path
         if let range = path.range(of: "/.claude/worktrees/") { path = String(path[..<range.lowerBound]) }
@@ -242,10 +179,6 @@ enum AgentLogParser {
         return native((path as NSString).lastPathComponent)
     }
 
-    /// Text decoded from a line arrives bridged from Foundation, and every
-    /// record keeps it. The summary hashes and compares these per response on
-    /// each refresh, which bridged text does through Unicode normalization,
-    /// many times slower than with Swift's own UTF-8 storage.
     static func native(_ text: String) -> String {
         String(decoding: text.utf8, as: UTF8.self)
     }
@@ -254,11 +187,9 @@ enum AgentLogParser {
         guard let number = value as? NSNumber else { return 0 }
         let double = number.doubleValue
         guard double.isFinite, double > 0 else { return 0 }
-        // A damaged line must not overflow the sums it joins.
         return Int(min(double, 1e12))
     }
 
-    /// Unix seconds, or milliseconds from agents that write those.
     static func seconds(_ value: Any?) -> Date? {
         guard let number = value as? NSNumber else { return nil }
         let raw = number.doubleValue
@@ -272,8 +203,6 @@ enum AgentLogParser {
     }
 }
 
-/// ISO 8601 times as both agents write them, "2026-09-21T23:42:45.078Z",
-/// read without a formatter; anything else goes through one.
 enum AgentTimestamp {
     private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -323,7 +252,6 @@ enum AgentTimestamp {
         } else {
             return nil
         }
-        // Days since 1970 from the civil date, valid for every Gregorian year.
         let y = month <= 2 ? year - 1 : year
         let era = (y >= 0 ? y : y - 399) / 400
         let yoe = y - era * 400

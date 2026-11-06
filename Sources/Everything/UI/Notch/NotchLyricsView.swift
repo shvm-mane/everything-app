@@ -11,8 +11,6 @@ struct NotchLyricsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var text: NotchMusicExtrasStrings { FeatureStrings.notchMusicExtras(l10n.language) }
 
-    // The verses sit on the island itself, as a player's own lyrics do, and
-    // a song without them says so like the island's other empty pages.
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let lyrics = service.lyrics {
@@ -22,13 +20,10 @@ struct NotchLyricsView: View {
                     }
                 } else if !lyrics.lines.isEmpty, playback.hasPosition {
                     synced(lyrics)
-                    // Importing is a one-off; it shares the timing row as an
-                    // icon instead of a row of its own under the verses.
                     HStack(spacing: 10) {
                         importButton
                         Text(text.offset).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
-                        // Hit the whole timing row height, not just the thin symbol.
                         Button { service.adjustOffset(by: -0.25) } label: {
                             Image(systemName: "minus")
                                 .frame(width: 24, height: 18)
@@ -59,7 +54,6 @@ struct NotchLyricsView: View {
                         .buttonStyle(.borderless).font(.caption).foregroundStyle(.secondary)
                 }
             } else if service.state == .loading {
-                // A slow lookup leaves importing within reach while it waits.
                 VStack(spacing: 12) {
                     HStack(spacing: 8) { ProgressView().controlSize(.small); Text(text.loading) }
                         .font(.callout).foregroundStyle(.secondary)
@@ -69,8 +63,6 @@ struct NotchLyricsView: View {
             } else {
                 NotchEmptyView(symbol: service.state == .failed ? "exclamationmark.triangle" : "quote.bubble",
                                message: emptyMessage) {
-                    // A short island keeps importing as a glyph beside the
-                    // next step rather than cutting either name short.
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) {
                             nextStep
@@ -90,8 +82,6 @@ struct NotchLyricsView: View {
 
     private func update() { service.update(playback: playback, visible: true) }
 
-    /// An import that read no timed lines fails even with online lookup off,
-    /// so the failure stays above the disclosure the next step needs.
     private var emptyMessage: String {
         let reason: String? = service.state == .failed ? text.failed : online ? text.unavailable : nil
         return [reason, online ? nil : text.onlineHint].compactMap { $0 }.joined(separator: "\n")
@@ -106,7 +96,6 @@ struct NotchLyricsView: View {
     }
 
     private var importButton: some View {
-        // A file being added, not the usual download arrow, which reads as saving.
         Button { service.importLyrics() } label: { Image(systemName: "doc.badge.plus") }
             .buttonStyle(.borderless)
             .help(text.importLyrics)
@@ -122,8 +111,6 @@ struct NotchLyricsView: View {
                         if active == nil {
                             Text(text.waiting).font(.caption).foregroundStyle(.secondary).id("start")
                         }
-                        // Every verse keeps one size, so the lines never
-                        // rewrap as the song moves. The sung one lights up.
                         ForEach(Array(lyrics.lines.enumerated()), id: \.element.id) { index, line in
                             Text(line.text.isEmpty ? "♪" : line.text)
                                 .font(.system(size: 17, weight: .bold))

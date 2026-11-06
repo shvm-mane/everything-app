@@ -3,18 +3,6 @@
 
 import Foundation
 
-/// The counters read so far and where reading stopped in each log, kept in
-/// the app's own cache folder so a launch reads only what the agents wrote
-/// since, instead of every log of the last thirteen weeks again. It holds
-/// what the store holds in memory and nothing more: no prompt, reply or tool
-/// output. Removed when the AI section is turned off.
-///
-/// A compact binary layout with shared strings: months of history hold
-/// hundreds of thousands of responses that repeat a few models, folders and
-/// sessions. A checksum covers everything after the magic, and every value
-/// read back is checked the way the parser checks it. Anything unexpected,
-/// including a file another build wrote, reads as nothing, and the logs are
-/// read from their start as before.
 enum AgentUsageArchive {
     struct Contents: Equatable {
         var providers: Set<AgentProvider>
@@ -26,20 +14,14 @@ enum AgentUsageArchive {
     private static let magic: [UInt8] = Array("VAUA".utf8)
     private static let format = 4
 
-    /// The parser and the store change between versions; what one build
-    /// read is not taken for what another would have.
     static var build: String { build(info: Bundle.main.infoDictionary) }
 
-    /// A Developer build keeps the version of the release it comes from, so
-    /// its build stamp tells two of them apart.
     static func build(info: [String: Any]?) -> String {
         let version = "\(info?["CFBundleShortVersionString"] as? String ?? "")-\(info?["CFBundleVersion"] as? String ?? "")"
         guard let stamp = info?["VorssaintBuildCommit"] as? String else { return version }
         return "\(version) \(stamp)"
     }
 
-    /// A cache the logs can rebuild: Time Machine leaves it out of backups,
-    /// and if macOS clears it the next launch reads the logs from their start.
     private static var folder: URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
               let bundleID = Bundle.main.bundleIdentifier else { return nil }
@@ -62,15 +44,6 @@ enum AgentUsageArchive {
         return PrivateFileStore.write(encode(contents, build: build), to: url)
     }
 
-    /// The store and cursors a launch resumes with, given the logs `found`
-    /// now, left as reading every log from its start would leave them. A log
-    /// gone, replaced or rewritten since gives back what it gave, and one
-    /// still there is read from its start again. A response it shared with
-    /// another log kept the largest count either gave, so those logs are read
-    /// again too. Limits and the plan describe the account when they were
-    /// read, not the log, so the latest reading stays: a fresh read would
-    /// fall back to an older one. `unchanged` tells whether the result is
-    /// still what was saved.
     static func resume(_ contents: Contents, logs found: Set<String>, since horizon: Date)
         -> (store: AgentUsageStore, cursors: [String: AgentLogCursor], unchanged: Bool) {
         let store = AgentUsageStore(saved: contents.store)
@@ -83,7 +56,6 @@ enum AgentUsageArchive {
         for file in sharing { cursors[file] = nil }
         gone.formUnion(sharing)
         store.forget(files: gone)
-        // Prices may be newer than the ones the counts were saved with.
         store.reprice()
         store.dropRecords(before: horizon)
         return (store, cursors, cursors.count == contents.cursors.count && store.saved == contents.store)
@@ -106,7 +78,6 @@ enum AgentUsageArchive {
         for entry in store.records {
             body.string(entry.key)
             body.record(entry.record)
-            // The billed tokens are nearly always the recorded ones.
             let same = entry.billable.tokens == entry.record.tokens
             body.bool(same)
             if !same { body.tokens(entry.billable.tokens) }
@@ -153,7 +124,6 @@ enum AgentUsageArchive {
         return data
     }
 
-    /// FNV-1a over the header and the body.
     private static func checksum(_ parts: [UInt8]...) -> UInt64 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for part in parts {
@@ -378,8 +348,6 @@ enum AgentUsageArchive {
             return Int(Int64(bitPattern: raw >> 1) ^ -Int64(bitPattern: raw & 1))
         }
 
-        /// A count can never exceed the bytes left, which keeps a damaged
-        /// file from asking for an enormous allocation.
         mutating func count() throws -> Int {
             let value = try unsigned()
             guard value <= UInt64(bytes.count - position) else { throw Malformed() }
@@ -429,8 +397,6 @@ enum AgentUsageArchive {
             return provider
         }
 
-        /// Counts are never negative in a log, and never more than the rest
-        /// of the file here.
         mutating func tokens() throws -> AgentTokens {
             AgentTokens(input: try amount(), cacheWrite: try amount(), cacheRead: try amount(),
                         output: try amount(), reasoning: try amount())

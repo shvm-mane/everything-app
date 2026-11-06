@@ -5,9 +5,6 @@ import AppKit
 import ImageIO
 import QuartzCore
 
-/// Small decorative layers, stepped at a limited rate while they show.
-/// Settings retains its view hierarchy when closed, so disappearance alone
-/// cannot stop motion: observe the actual window's visibility as well.
 final class NotchAgentAnimationView: NSView {
     private let artwork = CALayer()
     private var image: NSImage?
@@ -88,8 +85,6 @@ final class NotchAgentAnimationView: NSView {
         renderArtwork()
     }
 
-    /// Rasterize only when the mark, tint, size or display scale changes.
-    /// The compositor reuses this small image for every animation frame.
     private func renderArtwork() {
         guard !isPulse, let image, size > 0 else { return }
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
@@ -128,14 +123,12 @@ final class NotchAgentAnimationView: NSView {
     private func updateLayers() {
         let moving = animates && !isHiddenOrHasHiddenAncestor
             && window?.isVisible == true && window?.occlusionState.contains(.visible) == true
-        // Snapshot, time and geometry updates keep the motion's phase.
         if moving, !clock.isRunning { motionStart = CACurrentMediaTime() }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         artwork.isHidden = isPulse
         dot.isHidden = !isPulse
         ring.isHidden = !isPulse || !moving
-        // Bounds and position rather than frames: the moving layer is scaled.
         let box = CGRect(x: 0, y: 0, width: size, height: size)
         for layer in [artwork, dot, ring] {
             layer.bounds = box
@@ -144,8 +137,6 @@ final class NotchAgentAnimationView: NSView {
         for shape in [dot, ring] where shape.path?.boundingBox != box {
             shape.path = CGPath(ellipseIn: box, transform: nil)
         }
-        // Everything: the spinner's frames are a keyframe animation the
-        // window server plays; only the pulse still needs the app's clock.
         let spins = moving && !isPulse && !Self.spinner.frames.isEmpty
         if spins {
             if artwork.animation(forKey: Self.spinnerKey) == nil {
@@ -175,8 +166,6 @@ final class NotchAgentAnimationView: NSView {
 
     // MARK: Claude's spinner
 
-    /// Claude's "thinking" animation, played from its own GIF: each frame
-    /// shows for its own delay, and a step only swaps the layer's contents.
     private static let spinner: (frames: [CGImage], ends: [CFTimeInterval]) = {
         guard let url = Bundle.main.url(forResource: "ClaudeThinking", withExtension: "gif"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return ([], []) }
@@ -199,12 +188,7 @@ final class NotchAgentAnimationView: NSView {
     private var spinnerShowing = -1
     private static let spinnerKey = "everything.spinner"
 
-    /// The GIF is drawn on white. Each pixel's distance from white becomes its
-    /// alpha, filled with Claude's orange, so the spark sits on the island's
-    /// black with its own soft edges.
     private static func keyedOutWhite(_ image: CGImage) -> CGImage? {
-        // Everything: kept at the most it is ever drawn at (about 16 pt at
-        // 3x), not the GIF's 220 px: 8 frames now take ~90 KB, not 1.5 MB.
         let side = min(image.width, 56)
         let width = side, height = side
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
@@ -214,7 +198,6 @@ final class NotchAgentAnimationView: NSView {
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
-        // Claude orange, the spark's own color.
         let orange: (r: Double, g: Double, b: Double) = (217, 119, 86)
         for index in stride(from: 0, to: width * height * 4, by: 4) {
             let blue = Double(pixels[index + 2])
@@ -234,8 +217,6 @@ final class NotchAgentAnimationView: NSView {
         return spinner.ends.firstIndex { time < $0 } ?? spinner.frames.count - 1
     }
 
-    /// While working, the glyph is Claude's spinner; at rest it is the mark.
-    /// The pulse's ring spreads from the dot as it fades. With no time, both rest.
     private func show(at time: CFTimeInterval?) {
         var spreading = (scale: 1.0, opacity: 0.0)
         if let time, isPulse {

@@ -5,20 +5,13 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Everything the quick launcher can hold. Raw values are storage ids for
-/// the user's order and hidden set.
 enum QuickLauncherItem: String, PanelOrderItem, Identifiable {
-    // Case order is the default grid order; the cleaner comes second, right
-    // after Keep awake, by the owner's decision. Saved orders are untouched
-    // (a case added later joins a saved order at the end).
     case keepAwake, cleaner, toggles, micMute, screenOCR, colorPicker, clipboard, windowLayout,
          cleaning, homebrew, media, urlCleaner, uninstaller, screenshot, screenRecorder,
          cameraPreview, scratchpad
 
     var id: String { rawValue }
 
-    /// The hub feature behind the tile; off in the hub removes it from the
-    /// grid, the hidden list and edit mode until it returns.
     var feature: AppFeature {
         switch self {
         case .keepAwake: return .keepAwake
@@ -42,10 +35,6 @@ enum QuickLauncherItem: String, PanelOrderItem, Identifiable {
     }
 }
 
-/// The floating quick panel: a small, pretty launcher with the user's
-/// favorite tools, summoned from anywhere with a global shortcut (⌃⌘V by
-/// default; V for Vorssaint). Fully customizable in place: items can be
-/// hidden, brought back and reordered by dragging.
 final class QuickLauncherService: ObservableObject {
     static let shared = QuickLauncherService()
 
@@ -53,18 +42,9 @@ final class QuickLauncherService: ObservableObject {
 
     @Published private(set) var shortcutRegistrationFailed = false
     @Published var isEditing = false
-    /// The tile whose inline options card is open in edit mode. Lives here
-    /// (not in the view) so the Esc key monitor can close the card first,
-    /// before leaving edit mode and before hiding the panel.
     @Published var editingOptionsItem: QuickLauncherItem?
-    /// A utility view (Homebrew, Uninstaller…) currently hosted INSIDE the
-    /// launcher, replacing the grid. Everything happens in this panel; the
-    /// menu bar popover is never involved.
     @Published private(set) var activeUtility: QuickLauncherItem?
     @Published private(set) var selectedIndex: Int?
-    /// Where the keyboard moved the selection, which the island's rail
-    /// scrolls to. Hover clears it: centering a hovered tile slid the next
-    /// one under the pointer, and the rail kept scrolling by itself.
     @Published private(set) var keyboardIndex: Int?
     @Published private(set) var presentationID = UUID()
     @Published private(set) var hiddenItemsRaw: String = UserDefaults.standard.string(
@@ -129,8 +109,6 @@ final class QuickLauncherService: ObservableObject {
         var ids = QuickToolsSupport.hiddenIDs(from: hiddenItemsRaw)
         if hidden {
             ids.insert(item.rawValue)
-            // Hiding the tile whose options card is open would orphan the
-            // card below a grid that no longer shows its owner.
             if editingOptionsItem == item { editingOptionsItem = nil }
         } else {
             ids.remove(item.rawValue)
@@ -166,8 +144,6 @@ final class QuickLauncherService: ObservableObject {
         }
     }
 
-    /// Both destinations start with usable keyboard navigation. A utility that
-    /// is still installed keeps its working state when the island is reopened.
     func prepareForPresentation() {
         refreshAvailability()
         presentationID = UUID()
@@ -196,9 +172,6 @@ final class QuickLauncherService: ObservableObject {
         activeUtility = nil
     }
 
-    /// Hands key focus back after a modal dialog ran on top of the launcher
-    /// (choosing a file in Media, for example), so Esc and the keyboard
-    /// shortcuts keep working without an extra click.
     func refocusAfterModal() {
         if NotchService.shared.expanded, NotchService.shared.selected == .tools {
             NotchService.shared.presentationWindow?.makeKey(); return
@@ -207,20 +180,10 @@ final class QuickLauncherService: ObservableObject {
         panel.makeKey()
     }
 
-    /// The single owner of the dismissal policy: the bare grid behaves like a
-    /// transient HUD, but with a utility hosted inside the launcher is a
-    /// working window that must survive its own dialogs, admin prompts and
-    /// clicks in other apps (dragging a file into Media). Every dismissal
-    /// trigger consults this, so a future one cannot forget the rule.
     private var dismissesOnOutsideInteraction: Bool {
-        // Edit mode counts as a working window too: the clamshell toggle in
-        // the Keep awake options card can raise an admin password prompt,
-        // and that prompt's activation must not tear the launcher down.
         activeUtility == nil && !isEditing
     }
 
-    /// Re-fits the panel to its content when the grid gives way to a hosted
-    /// utility (and back), keeping the top edge and horizontal center still.
     func refreshPanelLayout() {
         guard let panel, panel.isVisible else { return }
         DispatchQueue.main.async { [weak self] in
@@ -261,8 +224,6 @@ final class QuickLauncherService: ObservableObject {
         keyboardIndex = selectedIndex
     }
 
-    /// The pointer's selection. The hovered tile is already in view, so the
-    /// rail stays where it is.
     func select(_ item: QuickLauncherItem) {
         selectedIndex = visibleItems.firstIndex(of: item)
         keyboardIndex = nil
@@ -334,9 +295,6 @@ final class QuickLauncherService: ObservableObject {
 
     // MARK: - Panel
 
-    /// Borderless panels refuse key status by default, and the launcher needs
-    /// it for arrows, digits and Esc. Borderless also removes the invisible
-    /// title-bar strip that would swallow clicks on the header controls.
     private final class KeyableLauncherPanel: OverlayPanel {
         override var canBecomeKey: Bool { true }
     }
@@ -349,8 +307,6 @@ final class QuickLauncherService: ObservableObject {
                                          defer: false)
         panel.title = "EVERYTHING"
         panel.isReleasedWhenClosed = false
-        // Item drag-to-reorder needs the mouse drag for itself; a background-
-        // movable window would win the gesture and drag the whole panel.
         panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
         panel.level = .floating
@@ -364,8 +320,6 @@ final class QuickLauncherService: ObservableObject {
         return panel
     }
 
-    /// Spotlight-style placement: centered on the screen with the mouse,
-    /// a bit above the middle so the eyes land on it naturally.
     private func position(_ panel: NSPanel) {
         panel.contentViewController?.view.layoutSubtreeIfNeeded()
         let size = panel.contentViewController?.view.fittingSize ?? NSSize(width: 420, height: 380)
@@ -385,15 +339,10 @@ final class QuickLauncherService: ObservableObject {
     func handlePanelKey(_ event: NSEvent,
                         flow: QuickToolsSupport.GridFlow = .rows(columns: QuickLauncherService.columns)) -> NSEvent? {
         if event.keyCode == UInt16(kVK_Escape) {
-            // While an input method is composing in a utility's field, Esc
-            // belongs to it and drops the candidate; the launcher takes the
-            // next one.
             if (event.window?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
             if activeUtility != nil {
                 activeUtility = nil
             } else if editingOptionsItem != nil {
-                // An open options card closes first; a second Esc then
-                // leaves edit mode, and a third hides the panel.
                 editingOptionsItem = nil
             } else if isEditing {
                 isEditing = false
@@ -435,11 +384,6 @@ final class QuickLauncherService: ObservableObject {
             guard let self, let panel, event.window === panel else { return event }
             return self.handlePanelKey(event)
         }
-        // With a utility hosted inside (Media, Homebrew, Uninstaller…) the
-        // launcher is a small working window, not a transient HUD: it must
-        // survive its own file dialogs and admin prompts, and clicks in other
-        // apps to drag a file onto its drop zones. Only the bare grid keeps
-        // the Spotlight-like dismiss-on-outside-click behavior.
         let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible, self.dismissesOnOutsideInteraction else { return event }
@@ -451,8 +395,6 @@ final class QuickLauncherService: ObservableObject {
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible, self.dismissesOnOutsideInteraction else { return }
             if event.windowNumber != panel.windowNumber, !Self.mouseIsInside(panel),
-               // Every key on the Accessibility Keyboard is a click outside this
-               // panel. Dismissing on those makes the panel impossible to type into.
                !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) {
                 self.hide()
             }

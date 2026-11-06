@@ -3,9 +3,6 @@
 
 import AppKit
 
-/// Small lookups for resolving a bundle identifier to a human name and icon,
-/// and for listing apps the user might pick. Shared by the auto-quit exception
-/// list and the uninstaller.
 enum InstalledApps {
     struct InstalledApp: Identifiable, Equatable {
         let id: String
@@ -13,13 +10,7 @@ enum InstalledApps {
         let bundleID: String?
         let url: URL
         let isSystem: Bool
-        /// The other names macOS knows this app by. Filled in only where a
-        /// search wants them; every other picker leaves them empty rather than
-        /// paying Spotlight for a list nobody is going to type into.
         var alternateNames: [String] = []
-        /// What the running process answers to when the row was built from a
-        /// process rather than a bundle on disk, so the picker stores exactly
-        /// what the taps will compare against.
         var explicitIdentity: String? = nil
 
         var identity: String? {
@@ -35,8 +26,6 @@ enum InstalledApps {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
     }
 
-    /// A list entry can also be the path of a program that is not packaged as
-    /// an app, which has no bundle identifier to be named by (issue #1009).
     private static func fileURL(forIdentity identity: String) -> URL? {
         guard MouseAppExceptionSupport.isExecutablePathIdentity(identity) else {
             return url(for: identity)
@@ -44,26 +33,18 @@ enum InstalledApps {
         return URL(fileURLWithPath: identity)
     }
 
-    /// Where a path identity's file sits, spelled from home. Every bundled
-    /// Java runtime is displayed as "java" (issue #1009), so the directory is
-    /// what tells two of them apart in a list. A bundle identifier names its
-    /// app on its own and carries no location.
     static func location(for identity: String) -> String? {
         guard MouseAppExceptionSupport.isExecutablePathIdentity(identity) else { return nil }
         return ((identity as NSString).deletingLastPathComponent as NSString)
             .abbreviatingWithTildeInPath
     }
 
-    /// The file manager spells a bundle's name with its ".app" while the
-    /// Finder is set to show every extension. The lists of apps read it
-    /// without, as the application walk does.
     static func displayName(fromFinderName finderName: String) -> String {
         var name = finderName
         if name.hasSuffix(".app") { name.removeLast(4) }
         return name
     }
 
-    /// `finderName` is the file manager's name for a path. Only a test passes it.
     static func name(
         for bundleID: String,
         finderName: (String) -> String = { FileManager.default.displayName(atPath: $0) }
@@ -79,14 +60,8 @@ enum InstalledApps {
         return NSWorkspace.shared.icon(for: .applicationBundle)
     }
 
-    /// Apps that belong to the system wherever their bundle really sits. An
-    /// app inside these is never offered for uninstalling, and only shows up
-    /// in the pickers that ask for system apps too.
     private static let systemPathPrefixes = ["/System/", "/Library/Apple/"]
 
-    /// Apps the user knows well but that no application folder holds. The file
-    /// manager cannot reach them by walking, so they are resolved by identity
-    /// instead of by a hardcoded path.
     private static let systemBundleIDsOutsideFolders = ["com.apple.finder"]
 
     static func isSystemApplication(at url: URL) -> Bool {
@@ -94,15 +69,6 @@ enum InstalledApps {
         return systemPathPrefixes.contains { path.hasPrefix($0) }
     }
 
-    /// Whether `url` sits somewhere under one of the folders installed apps
-    /// live in - /Applications or ~/Applications - at any depth, not just
-    /// directly inside them. Matches `installedApplications`'s own walk of
-    /// these same two roots, which recurses into subfolders (an installer
-    /// that drops its app inside a vendor subfolder, such as
-    /// /Applications/Vendor/App.app, is exactly what that walk already
-    /// treats as installed) - this used to require the app sit directly in
-    /// one of the roots, which meant a bundle `installedApplications` would
-    /// list could still be refused here.
     static func isInApplicationsFolder(_ url: URL) -> Bool {
         let containingDirectory = url.deletingLastPathComponent()
             .resolvingSymlinksInPath().standardizedFileURL.path
@@ -114,11 +80,6 @@ enum InstalledApps {
         return roots.contains { containingDirectory == $0 || containingDirectory.hasPrefix($0 + "/") }
     }
 
-    /// The apps an app ships for people to open, in its own
-    /// Contents/Applications folder, where Xcode keeps Instruments, FileMerge
-    /// and its other tools, and in Contents/Developer/Applications, where it
-    /// keeps Simulator. Helpers anywhere else in a bundle, such as login
-    /// items or a browser's renderer apps, are not apps a person opens.
     static func bundledApplications(in appURL: URL, fileManager fm: FileManager = .default) -> [URL] {
         ["Contents/Applications", "Contents/Developer/Applications"].flatMap { relativePath -> [URL] in
             let folder = appURL.appendingPathComponent(relativePath, isDirectory: true)
@@ -128,10 +89,6 @@ enum InstalledApps {
         }
     }
 
-    /// `includeBundledApplications` adds the tools apps ship for people, for
-    /// a search that should find them. Pickers that act on whole apps, such as
-    /// the uninstaller's, leave them out. `roots` replaces the application
-    /// folders, so a test can walk a fixture instead of this Mac.
     static func installedApplications(includeSystemApplications: Bool = false,
                                       includeBundledApplications: Bool = false,
                                       spotlightPaths: [String] = [],
@@ -149,10 +106,6 @@ enum InstalledApps {
         var apps: [InstalledApp] = []
 
         for root in roots where fm.fileExists(atPath: root.path) {
-            // Hidden entries are deliberately NOT skipped: the browser that
-            // ships with macOS lives on the system volume and is exposed in
-            // /Applications as a hidden symlink, so skipping them left it out
-            // of every picker. Only bundles ending in .app are taken anyway.
             guard let enumerator = fm.enumerator(at: root,
                                                 includingPropertiesForKeys: keys,
                                                 options: [.skipsPackageDescendants]) else {
@@ -162,8 +115,6 @@ enum InstalledApps {
                 guard found.pathExtension == "app" else { continue }
                 let shipped = includeBundledApplications ? bundledApplications(in: found, fileManager: fm) : []
                 for url in [found] + shipped {
-                    // A link's target decides whether the app is the system's:
-                    // the path inside the application folder says nothing.
                     let resolved = url.resolvingSymlinksInPath()
                     let isSystemApp = isSystemApplication(at: url)
                     guard includeSystemApplications || !isSystemApp else { continue }
@@ -190,8 +141,6 @@ enum InstalledApps {
             guard fm.fileExists(atPath: path),
                   seen.insert(url.standardizedFileURL.path).inserted else { continue }
             apps.append(app(at: url, fileManager: fm))
-            // A copy of Xcode kept in the home folder ships the same tools as
-            // one in an application folder.
             guard includeBundledApplications else { continue }
             for tool in bundledApplications(in: url, fileManager: fm)
             where seen.insert(tool.resolvingSymlinksInPath().standardizedFileURL.path).inserted {
@@ -204,9 +153,6 @@ enum InstalledApps {
         }
     }
 
-    /// Merges the normal Applications folders with shallow Spotlight results
-    /// from the user's home. Deep build products, hidden folders, nested apps
-    /// and system-owned bundles are not installed apps a person should see.
     static func applicationScanPaths(folderPaths: [String],
                                      spotlightPaths: [String],
                                      homeDirectory: String) -> [String] {
@@ -256,9 +202,6 @@ enum InstalledApps {
                             isSystem: isSystemApplication(at: url))
     }
 
-    /// A program with no .app bundle (a runtime a game launcher starts, issue #865)
-    /// is listed only for lists that store path identities, because a list that
-    /// takes only apps would drop the pick silently and show a row that does nothing.
     static func runningApplication(activationPolicy: NSApplication.ActivationPolicy,
                                    bundleID: String?,
                                    bundleURL: URL?,
@@ -318,8 +261,6 @@ enum InstalledApps {
             return true
         }.sorted {
             let byName = $0.name.localizedCaseInsensitiveCompare($1.name)
-            // Equal display names — three runtimes all named "java" — fall
-            // back to the identity so the rows hold one order between renders.
             return byName == .orderedSame
                 ? ($0.identity ?? "") < ($1.identity ?? "")
                 : byName == .orderedAscending

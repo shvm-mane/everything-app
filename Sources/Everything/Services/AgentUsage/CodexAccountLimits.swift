@@ -4,7 +4,6 @@
 import Darwin
 import Foundation
 
-/// A Codex home of its own, a `CODEX_HOME`, whose account gets a limits card.
 struct CodexAccountProfile: Codable, Equatable, Identifiable {
     static let maximum = 8
 
@@ -28,9 +27,6 @@ struct CodexAccountProfile: Codable, Equatable, Identifiable {
         (try? JSONEncoder().encode(profiles)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
 
-    /// Only metadata is looked at: Codex, not Vorssaint, opens the sign-in.
-    /// A home with only a config is valid too, since Codex can keep its
-    /// sign-in in the Keychain.
     var canonicalDirectory: URL? {
         guard directory.hasPrefix("/") else { return nil }
         let manager = FileManager.default
@@ -42,7 +38,6 @@ struct CodexAccountProfile: Codable, Equatable, Identifiable {
               let mode = root[.posixPermissions] as? NSNumber, mode.intValue & 0o022 == 0 else { return nil }
         let auth = url.appendingPathComponent("auth.json")
         if let metadata = try? manager.attributesOfItem(atPath: auth.path) {
-            // A symbolic or hard link would make two homes one account.
             guard metadata[.type] as? FileAttributeType == .typeRegular,
                   (metadata[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
                   let permissions = metadata[.posixPermissions] as? NSNumber, permissions.intValue & 0o077 == 0,
@@ -54,8 +49,6 @@ struct CodexAccountProfile: Codable, Equatable, Identifiable {
         return url
     }
 
-    /// `~/.codex` and the `~/.codex-<name>` homes beside it. The usual one is
-    /// named `defaultName`, so it can have a card beside the others.
     static func discover(home: URL = FileManager.default.homeDirectoryForCurrentUser, defaultName: String) -> [Self] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) ?? []
         var paths = Set<String>()
@@ -68,7 +61,6 @@ struct CodexAccountProfile: Codable, Equatable, Identifiable {
             }
     }
 
-    /// `.codex-work` is Work; the usual `.codex` takes `defaultName`.
     static func name(for folder: URL, defaultName: String) -> String {
         let folder = folder.lastPathComponent
         let name = folder.hasPrefix(".codex-") ? String(folder.dropFirst(".codex-".count))
@@ -77,19 +69,12 @@ struct CodexAccountProfile: Codable, Equatable, Identifiable {
     }
 }
 
-/// What stopped an account check.
 enum CodexAccountUsageError: Error, Equatable {
-    /// The folder is no longer a private Codex home.
     case invalidProfile
-    /// Neither the Codex app nor its command-line tool is on this Mac.
     case missingCLI
-    /// Signed out, or signed in with a key, which has no plan limits.
     case needsSignIn
-    /// A Codex from before its limits could be read from outside it.
     case outdated
-    /// No usable answer: it stopped, ran out of time or refused.
     case unavailable
-    /// The page closed for good, the Mac locked or Codex was turned off.
     case cancelled
 }
 
@@ -98,18 +83,12 @@ struct CodexAccountReading: Equatable {
     let plan: String?
 }
 
-/// Asks the account behind one Codex home for its plan and limits through
-/// the same server and tool as the Resets card.
 enum CodexAccountUsageReader {
-    /// A reading this recent still stands.
     static let refreshInterval: TimeInterval = 5 * 60
-    /// After a window renews, the next reading comes sooner.
     static let renewedInterval: TimeInterval = 60
     static let retryAfter: TimeInterval = 5 * 60
-    /// Only the person can install, update or sign in to Codex, or fix a folder.
     static let settledRetry: TimeInterval = 30 * 60
 
-    /// How long after the last check the account is asked again.
     static func interval(after failure: CodexAccountUsageError?, renewed: Bool) -> TimeInterval {
         switch failure {
         case nil: return renewed ? renewedInterval : refreshInterval
@@ -120,8 +99,6 @@ enum CodexAccountUsageReader {
 
     static func environment(directory: URL, executable: URL, searchPath: String?,
                             base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
-        // Neither a sign-in, a provider nor a shared state folder Vorssaint
-        // was opened with may point a check at another account.
         let allowed = ["HOME", "USER", "LOGNAME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
                        "http_proxy", "https_proxy", "all_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR",
                        "NODE_EXTRA_CA_CERTS", "DO_NOT_TRACK", "DISABLE_TELEMETRY"]
@@ -132,9 +109,6 @@ enum CodexAccountUsageReader {
         return result
     }
 
-    /// Asks only for the account and its limits, never refreshing its
-    /// sign-in on purpose and never using a reset. A Codex from before resets
-    /// still reports limits, so none are required.
     static func read(_ profile: CodexAccountProfile, executable: URL, searchPath: String?,
                      cancellation: BoundedProcessCancellation,
                      timeout: TimeInterval = AgentCodexServer.checkTimeout) -> Result<CodexAccountReading, CodexAccountUsageError> {

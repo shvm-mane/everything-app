@@ -2,14 +2,6 @@ import AppKit
 
 @MainActor
 enum MarkdownWrap {
-    /// Toggle markdown `marker` around the text view's current selection.
-    ///
-    /// - Empty selection: inserts `marker + marker` with the cursor between
-    ///   the two halves.
-    /// - Selection already wrapped (starts and ends with the marker):
-    ///   unwraps, leaving just the inner content selected.
-    /// - Otherwise: wraps the selection, keeping the inner content selected
-    ///   so the user can immediately re-toggle or keep typing.
     static func toggle(in textView: NSTextView, marker: String) {
         let nsString = textView.string as NSString
         let selectedRange = textView.selectedRange()

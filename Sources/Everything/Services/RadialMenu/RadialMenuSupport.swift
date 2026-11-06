@@ -7,7 +7,6 @@ import Foundation
 import ImageIO
 import SwiftUI
 
-/// Accent colors available for radial menu profiles.
 enum RadialMenuColor: String, Codable, CaseIterable, Identifiable {
     case accent, blue, purple, pink, red, orange, yellow, green, mint, cyan, indigo, graphite
 
@@ -65,8 +64,6 @@ enum RadialMenuColor: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// A complete configuration of the radial menu wheel: its items, color theme,
-/// keyboard shortcut, mouse button and trackpad tap triggers.
 struct RadialMenuProfile: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String = ""
@@ -74,21 +71,13 @@ struct RadialMenuProfile: Codable, Identifiable, Equatable {
     var shortcut: String = ""
     var mouseButton: String = RadialMenuMouseTrigger.off.rawValue
     var items: [RadialMenuItem] = []
-    /// The starter set this wheel was created from, so restoring its actions
-    /// brings back that one. Kept as the raw value because it is persisted;
-    /// nil for a wheel whose origin is not known.
     var preset: String?
-    /// A five-finger tap on the trackpad opens this wheel. Settings keeps it
-    /// on one profile at most; the first one wins otherwise.
     var trackpadTap = false
 
     func displayName(_ text: RadialMenuFeatureStrings) -> String {
         name.isEmpty ? text.presetGeneral : name
     }
 
-    /// The copy Duplicate adds. The shortcut, the mouse button and the
-    /// trackpad tap each open one wheel, so the copy starts without them and
-    /// leaves the original's.
     func duplicate(named name: String) -> RadialMenuProfile {
         var copy = self
         copy.id = UUID()
@@ -127,9 +116,6 @@ private struct FailableRadialMenuProfile: Decodable {
     }
 }
 
-/// A profile read for its mouse button and trackpad tap alone: the questions
-/// the event taps and the Features hub ask, answered without walking the
-/// items or decoding the icons they carry.
 private struct RadialMenuProfileTriggers: Decodable {
     let mouseButton: String?
     let trackpadTap: Bool
@@ -143,7 +129,6 @@ private struct RadialMenuProfileTriggers: Decodable {
     }
 }
 
-/// Curated starter presets when creating new profiles.
 enum RadialMenuProfilePreset: String, CaseIterable, Identifiable {
     case general, media, tools, windowLayout, quickToggles, blank
 
@@ -226,9 +211,6 @@ enum RadialMenuProfilePreset: String, CaseIterable, Identifiable {
     }
 }
 
-/// One action on the wheel. `payload` carries the target: an app or file path,
-/// a link, tool, media or window-layout identifier, or a shortcut storage
-/// value. Submenus keep their actions in `children`.
 struct RadialMenuItem: Codable, Identifiable, Equatable {
     enum Kind: String, Codable, CaseIterable {
         case app, file, url, shortcut, tool, quickToggle, windowLayout, media, submenu
@@ -258,8 +240,6 @@ struct RadialMenuItem: Codable, Identifiable, Equatable {
         kind == .windowLayout ? WindowLayoutAction(rawValue: payload) : nil
     }
 
-    /// The symbol drawn when the user picked none. App and file items prefer
-    /// their real file icons in the UI; these are the fallbacks.
     var defaultSymbolName: String {
         switch kind {
         case .app: return "app"
@@ -285,15 +265,12 @@ struct RadialMenuItem: Codable, Identifiable, Equatable {
     }
 }
 
-/// Quick toggle actions a slice can trigger. Raw values persist inside the
-/// items blob; never rename them.
 enum RadialMenuQuickToggle: String, Codable, CaseIterable, Identifiable {
     case darkMode, emptyTrash, quitAllApps, ejectDisks, hiddenFiles, desktopIcons,
          lockScreen, displayOff, screenSaver
 
     var id: String { rawValue }
 
-    /// Quit all apps belongs to the Quit apps feature; the rest to Quick toggles.
     var feature: AppFeature {
         self == .quitAllApps ? .quitApps : .quickToggles
     }
@@ -313,11 +290,6 @@ enum RadialMenuQuickToggle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-// The custom decoder lives in an extension so the memberwise initializer
-// stays synthesized. It tolerates blobs written by newer versions: absent
-// fields fall back to their defaults, and an unknown kind fails just this
-// item, which the lossy array decode below then drops instead of losing the
-// whole menu.
 extension RadialMenuItem {
     private enum CodingKeys: String, CodingKey {
         case id, kind, name, symbolName, payload, customIconData, children
@@ -344,15 +316,12 @@ private struct FailableRadialMenuItem: Decodable {
     }
 }
 
-/// Vorssaint tools a slice can trigger. Raw values persist inside the items
-/// blob; never rename them.
 enum RadialMenuTool: String, Codable, CaseIterable, Identifiable {
     case screenshot, screenRecorder, colorPicker, screenOCR, micMute, clipboardHistory, quickLauncher,
          cameraPreview, scratchpad, shelf, cleaner, uninstaller, appUpdates, cleaningMode, keepAwake
 
     var id: String { rawValue }
 
-    /// EVERYTHING ships only the colour picker; the rest read as their names.
     var title: String {
         self == .colorPicker ? "Color Picker" : rawValue.prefix(1).uppercased() + rawValue.dropFirst()
     }
@@ -379,9 +348,6 @@ enum RadialMenuTool: String, Codable, CaseIterable, Identifiable {
 
     var symbolName: String { feature.symbolName }
 
-    /// Hub availability and a feature's own master switch are separate. A
-    /// saved Shelf slice stays dormant while Shelf is explicitly disabled and
-    /// returns automatically when the user enables it again.
     func isRunnable(isFeatureAvailable: (AppFeature) -> Bool = { $0.isAvailable },
                     boolFor: (String) -> Bool = { UserDefaults.standard.bool(forKey: $0) }) -> Bool {
         guard isFeatureAvailable(feature) else { return false }
@@ -389,9 +355,6 @@ enum RadialMenuTool: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// The optional second summoner: any extra mouse button. The original raw
-/// values stay stable for existing settings; newer buttons use their
-/// CoreGraphics number, which follows USB order from 3 through 31.
 enum RadialMenuMouseTrigger: Equatable, Identifiable {
     case off
     case button(Int64)
@@ -430,16 +393,9 @@ enum RadialMenuMouseTrigger: Equatable, Identifiable {
     }
 }
 
-/// How the summoning shortcut or side button owns a radial-menu session.
-/// Raw values are persisted; never rename them.
 enum RadialMenuActivationMode: String, CaseIterable, Identifiable {
-    /// The existing adaptive gesture: release over a slice to run it, or
-    /// release near the center to leave the wheel open for clicking.
     case pressOrHold
-    /// A press opens a sticky wheel. Releasing the summoner has no effect.
     case press
-    /// The wheel exists only while the summoner is down. Release runs the
-    /// highlighted slice, or simply dismisses when nothing is highlighted.
     case hold
 
     var id: String { rawValue }
@@ -465,18 +421,10 @@ enum RadialMenuReleaseAction: Equatable {
 }
 
 extension RadialMenuSupport {
-    /// The Super Key is a virtual modifier: it decorates the summoning key but
-    /// never appears in the system's current physical-modifier state.
     static func shortcutIsStillHeld(modifiersHeld: Bool, superKeyHeld: Bool) -> Bool {
         modifiersHeld || superKeyHeld
     }
 
-    /// Whether the radial menu currently owns this extra button as its
-    /// summoner. Mouse navigation and the mouse button shortcuts both ask
-    /// this from inside their own tap callbacks, on every event of a
-    /// side-button gesture, so it reads defaults and the stored buttons only:
-    /// never the items, and never `decodeProfiles`, which decodes their
-    /// custom icons. Asking never wakes the radial menu service.
     static func claimsMouseButton(_ button: Int64) -> Bool {
         claimsMouseButton(button, defaults: .standard)
     }
@@ -489,14 +437,11 @@ extension RadialMenuSupport {
     }
 }
 
-/// Media keys a slice can press, mapped to the aux-button codes the physical
-/// keys post (NX_KEYTYPE_PLAY / FAST / REWIND).
 enum RadialMenuMediaKey: String, Codable, CaseIterable, Identifiable {
     case playPause, previousTrack, nextTrack, nowPlaying
 
     var id: String { rawValue }
 
-    /// Now Playing opens Vorssaint's metadata card rather than posting a key.
     var auxKeyType: Int32? {
         switch self {
         case .playPause: return 16
@@ -535,10 +480,6 @@ enum RadialNowPlayingSupport {
     static let playbackRateKey = "kMRMediaRemoteNowPlayingInfoPlaybackRate"
 
     private static let forbiddenScalars = CharacterSet.controlCharacters.union(.newlines)
-    /// The one artwork cap. The adapter (`Sources/NowPlayingAdapter`) drops
-    /// artwork above it before encoding, and the bridge's pipe cap is
-    /// `maximumAdapterReplyBytes`, sized so the base64 line (4/3 of the bytes,
-    /// so 16 MB) plus the other keys fits.
     static let maximumArtworkBytes = 12 * 1_024 * 1_024
     static let maximumAdapterReplyBytes = maximumArtworkBytes / 3 * 4 + 1_024 * 1_024
 
@@ -547,9 +488,6 @@ enum RadialNowPlayingSupport {
         return (info[playbackRateKey] as? NSNumber)?.doubleValue ?? 0 > 0
     }
 
-    /// One reply from the Now Playing adapter (`Resources/now-playing.pl`):
-    /// the MediaRemote metadata keys it forwards, plus the owning app and the
-    /// remote's own playing flag, in the shape `snapshot(info:...)` reads.
     struct AdapterReply {
         let info: [String: Any]
         let pid: Int32
@@ -557,11 +495,6 @@ enum RadialNowPlayingSupport {
         let isPlaying: Bool?
     }
 
-    /// Parses the adapter's JSON line, the last non-blank line of the run's
-    /// output: stderr shares the pipe, so a perl warning (a locale it cannot
-    /// set, say) can precede it. Artwork arrives base64-encoded under
-    /// `artworkBase64` and is handed on as `artworkDataKey` bytes. An `error`
-    /// key, a non-object or unreadable bytes read as no reply.
     static func adapterReply(from data: Data) -> AdapterReply? {
         let blank: Set<UInt8> = [0x20, 0x09, 0x0D]
         guard let line = data.split(separator: 0x0A).last(where: { $0.contains { !blank.contains($0) } }),
@@ -639,19 +572,13 @@ enum RadialNowPlayingSupport {
 }
 
 enum RadialMenuSupport {
-    /// Pointer events that can update a visible wheel's highlighted slice.
-    /// AppKit reports movement with a held extra mouse button as
-    /// `otherMouseDragged`, rather than as a plain mouse move.
     static let sessionMoveMask: NSEvent.EventTypeMask = [
         .mouseMoved, .leftMouseDragged, .otherMouseDragged,
     ]
 
     static let maxItemsPerWheel = 12
-    /// Root plus one submenu level. Deeper nesting turns the wheel into a maze.
     static let maxDepth = 2
 
-    /// Curated built-in symbols for the editor. The picker filters this list
-    /// at runtime so older supported macOS releases only show symbols they own.
     static let symbolNames = [
         "star.fill", "heart.fill", "bolt.fill", "flame.fill", "sparkles",
         "folder.fill", "doc.fill", "tray.full.fill", "terminal.fill", "globe",
@@ -678,9 +605,6 @@ enum RadialMenuSupport {
         "printer.fill", "textformat", "number",
     ]
 
-    /// Whether the target can actually run for this kind. The editor blocks
-    /// saving what fails here, and `sanitized` drops it, so the two can never
-    /// disagree about what belongs on a wheel.
     static func isValidPayload(_ item: RadialMenuItem) -> Bool {
         switch item.kind {
         case .app, .file: return !item.payload.isEmpty
@@ -694,9 +618,6 @@ enum RadialMenuSupport {
         }
     }
 
-    /// Drops what cannot run (unknown tools or media keys, unparseable
-    /// shortcuts, empty targets, submenus past the depth cap) and clamps
-    /// counts, so the wheel never renders a dead slice.
     static func sanitized(_ items: [RadialMenuItem], depth: Int = 0) -> [RadialMenuItem] {
         guard depth < maxDepth else { return [] }
         var seen = Set<UUID>()
@@ -725,8 +646,6 @@ enum RadialMenuSupport {
         return result
     }
 
-    /// A missing blob means a fresh install and yields the starter wheel; a
-    /// present blob, even an empty list, is the user's own menu.
     static func decode(_ data: Data?) -> [RadialMenuItem] {
         guard let data else { return starterItems }
         let decoded = (try? JSONDecoder().decode([FailableRadialMenuItem].self, from: data)) ?? []
@@ -737,9 +656,6 @@ enum RadialMenuSupport {
         try? JSONEncoder().encode(sanitized(items))
     }
 
-    /// Accepts "example.com/page" style input by assuming https, keeps
-    /// explicit schemes (mailto:, app links) as typed, and rejects anything
-    /// that cannot become a loadable URL.
     static func normalizedURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains(" ") else { return nil }
@@ -755,9 +671,6 @@ enum RadialMenuSupport {
         return candidate
     }
 
-    /// A leading URL scheme, minding that "example.com:8080" is a host and
-    /// port while "tel:5551234" is a scheme: digits after the colon only
-    /// mean a port when the part before it looks like a host.
     private static func hasExplicitScheme(_ value: String) -> Bool {
         if value.contains("://") { return true }
         guard value.first?.isLetter == true,
@@ -771,11 +684,6 @@ enum RadialMenuSupport {
         return !prefix.contains(".") && prefix.lowercased() != "localhost"
     }
 
-    /// The wheel a fresh install starts with: media around the top, tools and
-    /// the Downloads folder below. Names stay empty so every language derives
-    /// its own labels. A single evaluation keeps the seed ids stable for the
-    /// whole session, so equality against a decoded seed behaves.
-    /// A new wheel: the color picker, the usual folders and a website.
     static let starterItems: [RadialMenuItem] = [
         RadialMenuItem(kind: .tool, payload: RadialMenuTool.colorPicker.rawValue),
         RadialMenuItem(kind: .file, payload: "~/Downloads"),
@@ -784,8 +692,6 @@ enum RadialMenuSupport {
         RadialMenuItem(kind: .url, name: "GitHub", payload: "https://github.com"),
     ]
 
-    /// True when any item, at any level, controls keyboard input or windows
-    /// and therefore needs the Accessibility permission.
     static func needsAccessibility(_ items: [RadialMenuItem]) -> Bool {
         items.contains { item in
             switch item.kind {
@@ -797,9 +703,6 @@ enum RadialMenuSupport {
         }
     }
 
-    /// True when any profile, at any level, controls keyboard input or windows,
-    /// or claims a mouse button or the trackpad tap, and therefore needs the
-    /// Accessibility permission.
     static func needsAccessibility(_ profiles: [RadialMenuProfile]) -> Bool {
         profiles.contains { profile in
             RadialMenuMouseTrigger.sanitized(profile.mouseButton) != .off
@@ -808,18 +711,12 @@ enum RadialMenuSupport {
         }
     }
 
-    /// Whether anything opens this wheel. The profile picked in Settings is
-    /// only the one being edited, so a wheel without a shortcut, a mouse
-    /// button or the trackpad tap never opens outside of Try it.
     static func hasTrigger(_ profile: RadialMenuProfile) -> Bool {
         GlobalShortcut(storageValue: profile.shortcut) != nil
             || RadialMenuMouseTrigger.sanitized(profile.mouseButton) != .off
             || profile.trackpadTap
     }
 
-    /// Gives one wheel a mouse button. A button only ever opens the first
-    /// wheel that has it, so claiming it here releases it from the others,
-    /// the way the trackpad tap moves.
     static func assigning(mouseButton raw: String, to profileID: UUID,
                           in profiles: [RadialMenuProfile]) -> [RadialMenuProfile] {
         let button = RadialMenuMouseTrigger.sanitized(raw).buttonNumber
@@ -835,14 +732,6 @@ enum RadialMenuSupport {
         }
     }
 
-    /// The mouse buttons the wheel is bound to right now, decoded from the
-    /// stored buttons alone.
-    ///
-    /// This is the question the event taps ask, so it must stay cheap:
-    /// `decodeProfiles` answers it too, but only by paying for every item on
-    /// every wheel. The legacy fallback is the same one it migrates from, so
-    /// the two answers cannot drift apart for a user who has not saved a
-    /// profile yet.
     static func claimedMouseButtons(_ data: Data?, defaults: UserDefaults = .standard) -> [Int64] {
         if let data, let decoded = try? JSONDecoder().decode([RadialMenuProfileTriggers].self, from: data) {
             return decoded.compactMap { RadialMenuMouseTrigger.sanitized($0.mouseButton).buttonNumber }
@@ -852,10 +741,6 @@ enum RadialMenuSupport {
         return legacy.buttonNumber.map { [$0] } ?? []
     }
 
-    /// Whether any wheel opens from a mouse button or the trackpad tap, the
-    /// triggers that keep an input tap running while the menu is on. Read
-    /// like `claimedMouseButtons`, from the stored triggers alone and with
-    /// the same legacy fallback, so the Features hub never decodes icons.
     static func opensFromMouseOrTrackpad(_ data: Data?, defaults: UserDefaults = .standard) -> Bool {
         if let data, let decoded = try? JSONDecoder().decode([RadialMenuProfileTriggers].self, from: data) {
             return decoded.contains {
@@ -866,16 +751,6 @@ enum RadialMenuSupport {
             defaults.string(forKey: DefaultsKey.radialMenuMouseButton)) != .off
     }
 
-    /// Decodes profiles from JSON blob. If missing, checks for legacy
-    /// items / shortcut / mouse button to migrate existing users, or creates
-    /// the starter profile.
-    ///
-    /// Walks every item on every wheel and decodes each custom icon (up to
-    /// `RadialMenuFaviconFetcher.maxStoredIconBytes` of PNG apiece), so it
-    /// belongs to settings and session start, never to an event-tap callback.
-    /// A callback that only needs the summoner wants `claimedMouseButtons`.
-    /// Everything opens wheels only from the five-finger tap: no keyboard or
-    /// mouse-button triggers, and only file, link and color-picker items.
     static func decodeProfiles(_ data: Data?, defaults: UserDefaults = .standard) -> [RadialMenuProfile] {
         var profiles = decodeStoredProfiles(data, defaults: defaults)
         for index in profiles.indices {
@@ -892,7 +767,6 @@ enum RadialMenuSupport {
             let sanitized = sanitizedProfiles(decoded.compactMap(\.value))
             if !sanitized.isEmpty { return sanitized }
         }
-        // Legacy items migration
         let legacyItemsData = defaults.data(forKey: DefaultsKey.radialMenuItems)
         let legacyShortcut = ""
         let legacyMouseButton = defaults.string(forKey: DefaultsKey.radialMenuMouseButton)
@@ -906,23 +780,16 @@ enum RadialMenuSupport {
             shortcut: legacyShortcut,
             mouseButton: legacyMouseButton,
             items: items,
-            // The single wheel that came before profiles started from the
-            // general starter set, whatever it was edited into since.
             preset: RadialMenuProfilePreset.general.rawValue
         )
         return [initialProfile]
     }
 
-    /// The combinations the wheels answer to, read the way `RadialMenuService`
-    /// registers them. Before any profile is saved that is the shortcut the
-    /// first wheel migrates from, and a wheel without one claims nothing.
     static func profileShortcuts(defaults: UserDefaults = .standard) -> [GlobalShortcut] {
         decodeProfiles(defaults.data(forKey: DefaultsKey.radialMenuProfiles), defaults: defaults)
             .compactMap { GlobalShortcut(storageValue: $0.shortcut) }
     }
 
-    /// The other wheel that already opens on a combination. Two wheels on one
-    /// combination would leave one of them dead, so Settings refuses the second.
     static func profile(using shortcut: GlobalShortcut, in profiles: [RadialMenuProfile],
                         excluding profileID: UUID) -> RadialMenuProfile? {
         profiles.first { $0.id != profileID && GlobalShortcut(storageValue: $0.shortcut) == shortcut }
@@ -945,9 +812,6 @@ enum RadialMenuSupport {
                 profile.shortcut = ""
             }
             profile.mouseButton = RadialMenuMouseTrigger.sanitized(profile.mouseButton).rawValue
-            // A button opens only the first wheel that has it, so a later
-            // wheel saved with the same one (Duplicate used to keep it) reads
-            // as off, which is what it always was.
             if let button = RadialMenuMouseTrigger.sanitized(profile.mouseButton).buttonNumber,
                !seenButtons.insert(button).inserted {
                 profile.mouseButton = RadialMenuMouseTrigger.off.rawValue
@@ -975,31 +839,17 @@ enum RadialMenuSupport {
     }
 }
 
-/// Shared wheel dimensions, points. The service positions the panel and maps
-/// pointer distances with these; the view draws with them. The panel is a
-/// good margin wider than the wheel so its soft shadow fades out naturally
-/// instead of being clipped into a visible square.
 enum RadialMenuLayout {
-    // Everything: 20% smaller than Vorssaint's wheel.
     static let panelSize: CGFloat = 320
     static let wheelDiameter: CGFloat = 240
     static let ringRadius: CGFloat = 86
     static let chipSize: CGFloat = 42
-    /// Wide enough for an item name on one line.
     static let hubDiameter: CGFloat = 76
     static let deadZoneRadius: CGFloat = 38
-    /// The pointer must travel this far from where the wheel opened before
-    /// slices start highlighting, so a center-of-screen wheel never fires on
-    /// whatever direction the pointer already happened to sit in.
     static let moveActivationDistance: CGFloat = 8
 }
 
-/// Pure slice math shared by the wheel view and the pointer tracking. Slice 0
-/// sits at 12 o'clock and indices grow clockwise; angles are measured
-/// clockwise from the top in radians.
 enum RadialMenuGeometry {
-    /// Angle of the vector (dx, dyUp) where dyUp grows toward the top of the
-    /// screen, in [0, 2 * pi).
     static func angle(dx: CGFloat, dyUp: CGFloat) -> CGFloat {
         let raw = atan2(dx, dyUp)
         return raw < 0 ? raw + 2 * .pi : raw
@@ -1013,7 +863,6 @@ enum RadialMenuGeometry {
         return min(max(index, 0), itemCount - 1)
     }
 
-    /// The slice under the pointer, nil inside the dead zone around the hub.
     static func highlightedIndex(dx: CGFloat, dyUp: CGFloat,
                                  deadZoneRadius: CGFloat, itemCount: Int) -> Int? {
         guard itemCount > 0 else { return nil }
@@ -1022,7 +871,6 @@ enum RadialMenuGeometry {
         return index(forAngle: angle(dx: dx, dyUp: dyUp), itemCount: itemCount)
     }
 
-    /// Unit-circle position of a slice center, dyUp toward the screen top.
     static func unitPosition(index: Int, itemCount: Int) -> (dx: CGFloat, dyUp: CGFloat) {
         guard itemCount > 0 else { return (0, 1) }
         let theta = 2 * .pi * CGFloat(index) / CGFloat(itemCount)
@@ -1030,20 +878,12 @@ enum RadialMenuGeometry {
     }
 }
 
-/// On-demand fetcher for website favicons, executed exclusively when explicitly
-/// requested by the user in the Settings editor.
 enum RadialMenuFaviconFetcher {
-    /// Max allowable icon data storage: 64KB
     static let maxStoredIconBytes = 65536
-    /// A favicon should be tiny. Stop the transfer itself at this bound so a
-    /// hostile response cannot be buffered into unbounded memory first.
     static let maxDownloadBytes = 2 * 1_024 * 1_024
     static let maxSourceDimension = 4_096
     static let maxSourcePixels = 16_777_216
 
-    /// Fetches a site's icon from the site itself (no third-party service):
-    /// the icons the page links to, best first, then the standard paths.
-    /// Calls completion on the main queue.
     static func fetchFavicon(for rawURL: String, completion: @escaping (Result<Data, Error>) -> Void) {
         guard let normalized = RadialMenuSupport.normalizedURL(rawURL), let page = URL(string: normalized),
               let fallback = faviconURL(for: rawURL) else {
@@ -1078,7 +918,6 @@ enum RadialMenuFaviconFetcher {
         }.start()
     }
 
-    /// `<link rel="apple-touch-icon" | "icon">` hrefs, largest declared first.
     static func linkedIcons(in html: String, base: URL) -> [URL] {
         guard let tag = try? NSRegularExpression(pattern: "<link\\b[^>]*>", options: .caseInsensitive) else { return [] }
         func attribute(_ name: String, in text: String) -> String? {
@@ -1156,7 +995,6 @@ enum RadialMenuFaviconFetcher {
     }
 
     private struct Origin: Equatable {
-        // `host.siteRoot` compares the last two labels of each host.
         let scheme: String
         let host: String
         let port: Int
@@ -1238,7 +1076,6 @@ enum RadialMenuFaviconFetcher {
                         willPerformHTTPRedirection newResponse: HTTPURLResponse,
                         newRequest request: URLRequest,
                         completionHandler: @escaping (URLRequest?) -> Void) {
-            // The same site only: youtube.com may hand over to www.youtube.com.
             guard let redirectURL = request.url, let next = Origin(redirectURL),
                   next.host.siteRoot == origin.host.siteRoot else {
                 completionHandler(nil)
@@ -1268,7 +1105,6 @@ enum RadialMenuFaviconFetcher {
 }
 
 extension RadialMenuItem {
-    /// The three actions Everything's wheel offers.
     var isEverythingKind: Bool {
         switch kind {
         case .file, .url: return true
@@ -1279,6 +1115,5 @@ extension RadialMenuItem {
 }
 
 private extension String {
-    /// "www.youtube.com" and "m.youtube.com" are both "youtube.com".
     var siteRoot: String { split(separator: ".").suffix(2).joined(separator: ".") }
 }

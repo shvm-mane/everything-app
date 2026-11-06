@@ -5,42 +5,15 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 
-/// Remembers which windows and applications the user actually used, most
-/// recent first. The switcher's order is exactly as good as this history.
-///
-/// Application activation alone cannot answer the question. The system posts
-/// nothing when focus moves between two windows of the *same* app, so a
-/// history built only from activation is blind to a large part of what the
-/// user does, and a history built only from the switcher's own commits knows
-/// nothing about the mouse. Focus is therefore observed directly through
-/// Accessibility on whichever application is in front, which is the one place
-/// a window can take focus without an activation being posted.
-///
-/// The window server's front-to-back order seeds the history at startup and
-/// files windows that were never focused since, so the very first press is
-/// already ordered by use instead of by the arbitrary order the window server
-/// hands out.
-///
-/// Accessibility calls block for as long as the target application takes to
-/// answer; an app with a hung main thread was measured holding a bare observer
-/// install for 1.5 seconds. All of them run on this object's own thread, never
-/// on the main run loop, and carry a messaging timeout on top — a stalled main
-/// thread here would freeze typing system wide (issues #189 and #275).
 final class WindowUseTracker {
     static let shared = WindowUseTracker()
 
-    /// Ceiling for a single Accessibility round trip to an app that may not be
-    /// servicing its run loop.
     private static let messagingTimeout: Float = 0.35
 
     private let stateLock = NSLock()
     private var windowHistory: [CGWindowID] = []
     private var appHistory: [pid_t] = []
     private var focusHistory = WindowFocusHistory()
-    /// False from the moment the feature is switched off. The watcher thread is
-    /// stopped from the outside and never joined, so without this a callback
-    /// already in flight could write a window back into a history that was
-    /// just cleared.
     private var recording = false
 
     private let lifecycleLock = NSLock()
@@ -49,10 +22,8 @@ final class WindowUseTracker {
     private var watcherRunLoop: CFRunLoop?
     private var shouldStopWatcher = false
     private var pendingStartAfterStop = false
-    /// Applications running when the feature came on, handed to the watcher.
     private var seedRunningPIDs: Set<pid_t> = []
 
-    // Watcher-thread state; never touched from anywhere else.
     private var observer: AXObserver?
     private var observedPID: pid_t?
     private var retryTimer: CFRunLoopTimer?
@@ -62,23 +33,16 @@ final class WindowUseTracker {
 
     // MARK: - History
 
-    /// Most recently used windows, most recent first.
     var windows: [CGWindowID] { stateLock.withLock { windowHistory } }
 
-    /// Most recently used applications, most recent first.
     var apps: [pid_t] { stateLock.withLock { appHistory } }
 
     var historyRevision: UUID { stateLock.withLock { focusHistory.revision } }
 
-    /// Rank of an application; one never seen sorts after every known one.
     func rank(of pid: pid_t) -> Int {
         stateLock.withLock { appHistory.firstIndex(of: pid) ?? Int.max }
     }
 
-    /// Records a switch the switcher itself performed. `previous` becomes the
-    /// second-most-recent window, so a quick repeat toggles straight back.
-    /// Applied immediately because the window server's order lags an
-    /// activation by a frame or two, and a flick is faster than that.
     func recordSwitch(to windowID: CGWindowID?, pid: pid_t, from previous: CGWindowID?) {
         stateLock.withLock {
             guard recording else { return }
@@ -89,9 +53,6 @@ final class WindowUseTracker {
         }
     }
 
-    /// Drops what no longer exists and files windows that were never focused,
-    /// using the window server's front-to-back order. Called by the enumerator,
-    /// which already has both lists in hand.
     func reconcile(existingWindows: Set<CGWindowID>, frontToBack: FrontToBack,
                    running: Set<pid_t>, revision: UUID) {
         stateLock.withLock {
@@ -130,8 +91,6 @@ final class WindowUseTracker {
 
     // MARK: - Lifecycle
 
-    /// The history feeds the switcher and Window Layout's "every app" actions;
-    /// with both features off in the hub, nothing observes anything.
     func syncWithFeatures() {
         if AppFeature.switcher.isAvailable || AppFeature.windowLayout.isAvailable {
             start()
@@ -144,8 +103,6 @@ final class WindowUseTracker {
         guard !started else { return }
         started = true
         stateLock.withLock { recording = true }
-        // Read on the main thread and handed over, so the watcher never has to
-        // ask AppKit for the application list from its own thread.
         lifecycleLock.withLock {
             seedRunningPIDs = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
         }
@@ -181,13 +138,7 @@ final class WindowUseTracker {
     @objc private func appActivated(_ note: Notification) {
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let pid = app.processIdentifier
-        // Our own activation during a handoff is `ActivationHandoff`
-        // self-activating on the way out; ranking it would put Vorssaint ahead
-        // of the app the user left. Every other activation of Vorssaint, the
-        // Dock icon and its own windows included, is a real use and is kept.
         let own = pid == ProcessInfo.processInfo.processIdentifier && ActivationHandoff.isHandingOff
-        // The application half is exact and free, so it lands right away; the
-        // window half needs Accessibility and happens on the watcher thread.
         let request = stateLock.withLock { () -> WindowFocusHistory.Request? in
             guard recording else { return nil }
             if !own { appHistory = WindowUseOrder.promoting(pid, in: appHistory) }
@@ -231,9 +182,6 @@ final class WindowUseTracker {
             return (watcherRunLoop, watcherThread != nil)
         }
         if let runLoop = snapshot.runLoop {
-            // Never join: the run loop is stopped from the outside, exactly as
-            // the switcher's tap thread is, so a teardown can never deadlock
-            // against work the thread is running on the main thread.
             CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { CFRunLoopStop(runLoop) }
             CFRunLoopWakeUp(runLoop)
         } else if !snapshot.threadExists {
@@ -255,9 +203,6 @@ final class WindowUseTracker {
             let runLoop = CFRunLoopGetCurrent()
             lifecycleLock.withLock { watcherRunLoop = runLoop }
 
-            // A source that is never signalled, so the run loop stays alive
-            // between front-application changes without a timer waking the
-            // machine up for nothing.
             var context = CFRunLoopSourceContext()
             context.perform = { _ in }
             if let source = CFRunLoopSourceCreate(kCFAllocatorDefault, 0, &context) {
@@ -290,8 +235,6 @@ final class WindowUseTracker {
         }
     }
 
-    /// First history of the session: the window server's front-to-back order is
-    /// the only account of what was used before the app was even running.
     private func seedFromWindowServer() {
         let revision = historyRevision
         reconcile(existingWindows: Set(Self.allWindows()),
@@ -301,10 +244,6 @@ final class WindowUseTracker {
 
     // MARK: - Accessibility observation (watcher thread only)
 
-    /// Watches the front application only. A window can take focus without an
-    /// activation being posted solely inside the application that already has
-    /// the keyboard, so one observer at a time covers every case the
-    /// activation notifications miss — for the cost of a single one.
     private func retargetObserver(request: WindowFocusHistory.Request?, attempt: Int = 0) {
         guard !lifecycleLock.withLock({ shouldStopWatcher }),
               stateLock.withLock({ recording && focusHistory.current == request }) else { return }
@@ -315,8 +254,6 @@ final class WindowUseTracker {
 
         var created: AXObserver?
         let application = AXUIElementCreateApplication(pid)
-        // Without this, an unresponsive application holds the install for its
-        // full default timeout, on this thread, once per switch.
         AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
         var needsRetry = false
         if AXObserverCreate(pid, Self.focusCallback, &created) == .success, let created {
@@ -332,9 +269,6 @@ final class WindowUseTracker {
             needsRetry = true
         }
 
-        // Activation itself posts no focus change, so the window the app came
-        // back to has to be asked for once. Any change that races this arrives
-        // through the observer, which is already installed.
         let foundFocus = readFocusedWindow(for: request)
         if needsRetry || !foundFocus { scheduleRetry(request, attempt: attempt) }
     }
@@ -345,7 +279,6 @@ final class WindowUseTracker {
     }
 
     private func scheduleRetry(_ request: WindowFocusHistory.Request, attempt: Int) {
-        // A launch may not yet serve AX. Three one-shot retries, no idle polling.
         guard attempt < 3, stateLock.withLock({ recording && focusHistory.current == request }) else { return }
         let timer = CFRunLoopTimerCreateWithHandler(kCFAllocatorDefault,
             CFAbsoluteTimeGetCurrent() + 0.2 * Double(attempt + 1), 0, 0, 0) { [weak self] _ in
@@ -378,36 +311,28 @@ final class WindowUseTracker {
               let value,
               CFGetTypeID(value) == AXUIElementGetTypeID()
         else { return false }
-        // A misbehaving app can answer with something that is not an element.
         let window = value as! AXUIElement
         guard let windowID = AXWindowResolver.windowID(for: window) else { return false }
         promote(window: windowID, for: request)
         return true
     }
 
-    /// C callback: no captures, so the tracker travels in the refcon.
     private static let focusCallback: AXObserverCallback = { observer, _, _, refcon in
         guard let refcon else { return }
         let tracker = Unmanaged<WindowUseTracker>.fromOpaque(refcon).takeUnretainedValue()
         guard let active = tracker.observer, CFEqual(active, observer),
               let request = tracker.stateLock.withLock({ tracker.focusHistory.current }),
               request.pid == tracker.observedPID else { return }
-        // Main-window notifications may name a window that does not have focus.
-        // Read actual focus and reject replies from an older activation.
         _ = tracker.readFocusedWindow(for: request)
     }
 
     // MARK: - Window server
 
-    /// What is on screen, front to back.
     struct FrontToBack {
         let windows: [CGWindowID]
         let apps: [pid_t]
     }
 
-    /// On-screen windows and their applications, front to back. This is real
-    /// z-order, and for anything never seen taking focus it is the only
-    /// evidence of how recently it was used.
     static func frontToBack() -> FrontToBack {
         let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                              kCGNullWindowID) as? [[String: Any]] ?? []

@@ -5,17 +5,13 @@ import Darwin
 import Foundation
 import SystemConfiguration
 
-/// One network reading: instantaneous speed plus session totals.
 struct NetworkReading {
-    var downBytesPerSec: Double?   // nil until there is a previous sample
+    var downBytesPerSec: Double?
     var upBytesPerSec: Double?
-    var totalDown: UInt64          // accumulated since the app started watching
+    var totalDown: UInt64
     var totalUp: UInt64
 }
 
-/// Samples cumulative interface byte counters and derives speed + session totals.
-/// State (previous counters, accumulated totals) is only touched from the
-/// monitor's serial queue, so no extra synchronization is needed.
 final class NetworkSampler {
     private var previous: (counters: NetworkCounters, time: TimeInterval)?
     private var totalDown: UInt64 = 0
@@ -25,8 +21,6 @@ final class NetworkSampler {
     private let counterReader: () -> NetworkCounters?
     private let processReader: () -> [NetworkProcessSample]?
 
-    /// After a gap longer than this (sampling was paused), the previous reading
-    /// is treated as a fresh baseline instead of producing a misleading spike.
     private static let maxGap: TimeInterval = 10
 
     init(counterReader: @escaping () -> NetworkCounters? = NetworkSampler.readCounters,
@@ -94,9 +88,6 @@ final class NetworkSampler {
         total = addition.overflow ? UInt64.max : addition.partialValue
     }
 
-    /// Sums received/sent bytes across the physical interfaces via the routing
-    /// socket (`NET_RT_IFLIST2`), which reports 64-bit counters in `if_data64` —
-    /// unlike `getifaddrs`, whose 32-bit counters wrap and corrupt totals.
     static func readCounters() -> NetworkCounters? {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var length = 0
@@ -146,7 +137,6 @@ final class NetworkSampler {
 
     private static let store = SCDynamicStoreCreate(nil, "com.vorssaint.utils.network-sampler" as CFString, nil, nil)
 
-    /// The interfaces the system routes IPv4 and IPv6 through.
     private static func primaryInterfaces() -> [String] {
         guard let store else { return [] }
         return ["State:/Network/Global/IPv4", "State:/Network/Global/IPv6"].compactMap { key in

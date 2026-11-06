@@ -5,13 +5,6 @@ import AVFoundation
 import CoreMedia
 import Foundation
 
-/// Encodes a video to a chosen file size.
-///
-/// The resolution mode drives `avconvert`, which only takes presets and so can
-/// never aim at a number of megabytes. Reading into a writer can: the bitrate
-/// is an explicit setting there, and a bitrate held for a known duration is a
-/// file size. Rate control still lands near the budget rather than on it, so a
-/// pass that overshoots hands the next one a smaller scale.
 enum MediaVideoTargetEncoder {
     struct Source {
         let asset: AVAsset
@@ -31,7 +24,6 @@ enum MediaVideoTargetEncoder {
 
     static let maximumPasses = 3
 
-    /// Returns the size of the file it wrote, always at or under `targetBytes`.
     static func encode(source: Source,
                        trim: MediaTrimRange,
                        targetBytes: Int64,
@@ -82,7 +74,6 @@ enum MediaVideoTargetEncoder {
         let start = CMTime(seconds: trim.start, preferredTimescale: 600)
         reader.timeRange = CMTimeRange(start: start,
                                        duration: CMTime(seconds: trim.duration, preferredTimescale: 600))
-        // A file that exists to be uploaded is read from the front.
         writer.shouldOptimizeForNetworkUse = true
 
         let videoOutput = AVAssetReaderTrackOutput(track: source.videoTrack, outputSettings: [
@@ -114,8 +105,6 @@ enum MediaVideoTargetEncoder {
         }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         videoInput.expectsMediaDataInRealTime = false
-        // The frames are encoded at their natural orientation and the rotation
-        // travels as metadata, so a portrait source stays portrait.
         videoInput.transform = source.preferredTransform
         guard writer.canAdd(videoInput) else { throw EncodeError.unsupported }
         writer.add(videoInput)
@@ -145,11 +134,6 @@ enum MediaVideoTargetEncoder {
         var pendingVideo = videoOutput.copyNextSampleBuffer()
         var pendingAudio = audioOutput?.copyNextSampleBuffer()
 
-        // Both tracks are drained by whichever holds the earlier sample, so the
-        // writer receives them interleaved the way it would from a live source.
-        // It answers by holding one input back while it waits on the other,
-        // which is why a pass never waits on the input it would have preferred:
-        // it hands the sample to whichever input can take one.
         while pendingVideo != nil || pendingAudio != nil {
             if isCancelled() {
                 reader.cancelReading()
@@ -176,8 +160,6 @@ enum MediaVideoTargetEncoder {
                 guard input.append(buffer) else { throw writeFailure(writer) }
                 pendingAudio = audioOutput?.copyNextSampleBuffer()
             } else if pendingAudio != nil, audioInput == nil {
-                // The audio track was read but the writer refused an input for
-                // it, so the samples are dropped instead of piling up.
                 pendingAudio = nil
             } else {
                 guard writer.status == .writing else { throw writeFailure(writer) }

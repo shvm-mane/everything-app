@@ -4,13 +4,7 @@
 import Darwin
 import Foundation
 
-/// Scratch belongs to one export, in the app's private macOS temporary folder.
-/// Remove it on every normal exit. A crash releases its file lock, so launch
-/// and the next export can sweep it without an age guess or a PID reuse race.
-/// Live exports in other processes are protected by their own locks.
 final class RecorderGIFWorkspace {
-    /// A process without a bundle, such as the test binary, keeps its scratch
-    /// under its own name instead of in the app's folder.
     static var root: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName,
@@ -42,8 +36,6 @@ final class RecorderGIFWorkspace {
 
     func discard() {
         guard lease >= 0 else { return }
-        // Keep the lock until removal completes. An unsuccessful removal will
-        // be retried by a later sweep once the lease is released.
         try? FileManager.default.removeItem(at: folder)
         Darwin.close(lease)
         lease = -1
@@ -61,8 +53,6 @@ final class RecorderGIFWorkspace {
             throw CocoaError(.fileWriteUnknown)
         }
         let lease = openLease(in: root)
-        // Serialize folder creation with sweeping so a new, as-yet-unlocked
-        // directory can never be mistaken for an abandoned export.
         guard lease >= 0, flock(lease, LOCK_EX) == 0 else {
             if lease >= 0 { Darwin.close(lease) }
             throw CocoaError(.fileWriteUnknown)

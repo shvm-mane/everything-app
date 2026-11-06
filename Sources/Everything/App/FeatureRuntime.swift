@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// EVERYTHING's features and what each starts. The set is fixed
-// (`AppFeature.everythingFeatures`); a feature that is off starts nothing.
 
 import AppKit
 
@@ -45,7 +43,6 @@ final class FeatureRuntime: ObservableObject {
 }
 
 extension AppFeature {
-    /// No feature EVERYTHING ships depends on hardware a Mac may lack.
     var hardwareUnsupportedReason: String? { nil }
     var isHardwareSupported: Bool { true }
     var installBlockedReason: String? { nil }

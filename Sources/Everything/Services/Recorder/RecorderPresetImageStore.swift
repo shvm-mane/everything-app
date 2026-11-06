@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// Presets own their pictures independently of the disposable recording.
-/// Applying one makes fresh copies in the destination take, including for undo.
 struct RecorderPresetImageStore {
     let directory: URL?
 
@@ -32,8 +30,6 @@ struct RecorderPresetImageStore {
         }
     }
 
-    /// Only retired preset files are passed here. Active edits have their own
-    /// copies, so deleting a preset cannot invalidate the document or its undo.
     func remove(_ images: [RecorderImageOverlay]) {
         for image in images {
             let url = URL(fileURLWithPath: image.path)
@@ -56,7 +52,6 @@ struct RecorderPresetImageStore {
         for image in images {
             guard let url = RecorderTakeStore.shared.copyImage(
                 at: URL(fileURLWithPath: image.path), into: directory) else {
-                // Roll back only the fresh copies from this attempt.
                 for copy in copied {
                     try? FileManager.default.removeItem(
                         at: URL(fileURLWithPath: copy.path).deletingLastPathComponent())

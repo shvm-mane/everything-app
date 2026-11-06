@@ -35,7 +35,6 @@ struct ScreenshotShareRecord: Codable, Equatable, Identifiable {
     }
 }
 
-/// Keeps clipboard retries tied to the capture that produced the link.
 struct ScreenshotLinkCopyRetry {
     private var pending: (captureID: UUID, record: ScreenshotShareRecord)?
 

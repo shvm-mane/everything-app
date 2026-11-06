@@ -6,8 +6,6 @@ import CoreGraphics
 import Foundation
 
 enum DockPreviewFrameSupport {
-    /// Accept only the two ways a work-area reduction constrains a window:
-    /// clipping its bounds, or moving it inward while preserving its size.
     static func wasConstrained(_ current: CGRect, original: CGRect, visibleFrame: CGRect) -> Bool {
         guard !original.isEmpty, !visibleFrame.isEmpty,
               !visibleFrame.contains(original), !current.isEmpty else { return false }
@@ -48,9 +46,6 @@ struct DockPreviewPreferences: Equatable {
     let magnification: Bool
     let magnifiedTileSize: CGFloat
 
-    /// The tallest an icon under the cursor can get: the magnified size while
-    /// magnification is on, the resting tile size otherwise. Geometry that must
-    /// cover a hovered icon (like the proximity band) sizes against this.
     var hoverTileSize: CGFloat {
         magnification ? max(tileSize, magnifiedTileSize) : tileSize
     }
@@ -61,8 +56,6 @@ struct DockPreviewPreferences: Equatable {
                           magnification: Bool?,
                           magnifiedTileSize rawMagnifiedTileSize: Double?) -> DockPreviewPreferences {
         let size = rawTileSize ?? 64
-        // System Settings never writes largesize until the slider moves, so a
-        // missing key defaults to the slider's maximum rather than undershooting.
         let magnifiedSize = rawMagnifiedTileSize ?? 128
         return DockPreviewPreferences(
             orientation: DockPreviewOrientation.sanitized(rawOrientation),
@@ -100,14 +93,6 @@ struct DockPreviewMouseDownDecision: Equatable {
     let shouldEndSession: Bool
 }
 
-/// A thin keep-alive region connecting a Dock icon to its preview panel.
-///
-/// Intentionally *not* the padded union of the icon and panel: a union spans the
-/// panel's full width down at the Dock row, so it swallows neighbouring icons and
-/// the session can never be handed over to another app (or closed) when the mouse
-/// returns to the Dock. Instead this is the icon, the panel, and a narrow bridge
-/// across the gap between them — wide enough to follow the cursor from icon to
-/// panel, narrow enough that the next Dock icon stays outside it.
 struct HoverCorridor: Equatable {
     let rects: [CGRect]
 
@@ -115,7 +100,6 @@ struct HoverCorridor: Equatable {
         rects.contains { $0.contains(point) }
     }
 }
-
 
 enum DockPreviewWindowOrder: Equatable {
     case lastUse
@@ -137,8 +121,6 @@ enum DockPreviewSupport {
         quitAppOnClose ? .quitApp : .closeWindow
     }
 
-    /// Reorders Dock Preview cards. Last-use keeps the enumerator’s MRU order;
-    /// creation sorts by ascending window ID (a stable creation-time proxy).
     static func orderedWindows(_ windows: [SwitcherItem],
                                order: DockPreviewWindowOrder) -> [SwitcherItem] {
         switch order {
@@ -151,7 +133,6 @@ enum DockPreviewSupport {
         }
     }
 
-
     static func performCloseAction(quitAppOnClose: Bool,
                                    requestQuit: () -> Bool,
                                    closeWindow: () -> Void) {
@@ -162,15 +143,7 @@ enum DockPreviewSupport {
         closeWindow()
     }
 
-    /// How long the cursor must rest on an icon before its panel opens. Long
-    /// enough that the Dock can be crossed on the way somewhere else, short
-    /// enough that a cursor which stopped is answered. Adjustable: that line
-    /// falls differently for every pointer speed.
     static let defaultOpenDelayMilliseconds = 200
-    /// The floor keeps two properties: the window list is read `prefetchLead`
-    /// earlier, so a shorter wait would read it the moment the cursor lands;
-    /// and `switchDelay` plus its inline reading stays under it, so a switch is
-    /// never slower than an open.
     static let openDelayMillisecondsRange: ClosedRange<Int> = 200 ... 900
 
     static func sanitizedOpenDelay(milliseconds: Int) -> Int {
@@ -182,52 +155,25 @@ enum DockPreviewSupport {
         TimeInterval(sanitizedOpenDelay(milliseconds: milliseconds)) / 1000
     }
 
-    /// Handing an already open panel to the app under the cursor: the panel is
-    /// on screen and only has to re-point. Kept under the shortest open delay
-    /// on offer, so a switch is never slower than an open.
     static let switchDelay: TimeInterval = 0.1
 
-    /// How far ahead of the panel the window list is read: far enough that an
-    /// ordinary list is in hand when the panel opens, no further, so what it
-    /// opens on is still true. Half the shortest wait.
     static let prefetchLead: TimeInterval = 0.1
 
     static func prefetchDelay(openDelay: TimeInterval) -> TimeInterval {
         max(0, openDelay - prefetchLead)
     }
     static let hideDelay: TimeInterval = 0.22
-    /// A little slack around the panel so the cursor grazing its edge doesn't
-    /// flicker the session between "inside" and "leaving".
     static let panelStayMargin: CGFloat = 6
     static let edgePadding: CGFloat = 8
     static let panelGap: CGFloat = 6
     static let autohidePanelGap: CGFloat = 0
-    /// Forgiveness around the icon, panel and bridge so a slightly off-path
-    /// cursor still keeps the session, while neighbouring Dock icons (one tile
-    /// width away) stay clear of the corridor.
     static let corridorMargin: CGFloat = 12
-    /// Whether a preview card can be lifted out of the panel and dropped
-    /// somewhere else. A minimized window has no on-screen position to aim at,
-    /// and a fullscreen window owns its Space and ignores the position it is
-    /// given — dragging either one would move nothing while still tearing the
-    /// panel down.
-    /// A minimized window, or one parked on another desktop, is still a window
-    /// the user wants somewhere: the drop restores it and brings it here rather
-    /// than refusing the gesture. Fullscreen is the one refusal left -- it owns
-    /// a Space of its own and discards any position it is given, so a drag of
-    /// it could only ever pretend to work.
     static func canDragToPlace(hasWindowID: Bool, isFullscreen: Bool) -> Bool {
         hasWindowID && !isFullscreen
     }
 
-    /// How far the pointer must travel before a press on a card becomes a
-    /// drag. Large enough that a click with a shaky hand still opens the
-    /// window, small enough that the lift feels immediate.
     static let dragLiftDistance: CGFloat = 6
 
-    /// Keeps the dropped window fully reachable on the screen under the
-    /// pointer. Oversized windows align to the visible frame instead of
-    /// leaving their title bar beyond an edge.
     static func dragOrigin(pointer: CGPoint,
                            windowSize: CGSize,
                            visibleFrame: CGRect) -> CGPoint {
@@ -243,15 +189,8 @@ enum DockPreviewSupport {
         )
     }
 
-    // Card metrics. The preview size setting picks the picture. The title
-    // band holds the same text at every size, so it is fixed. The gaps hold
-    // nothing, so they stay at their Normal size above it and tighten with
-    // Small, rounded to whole points. With the picture 16:10 in whole points
-    // too, every card edge lands on the pixel grid at every size.
     static var cardPadding: CGFloat { cardPadding(scale: PreviewSizing.scale) }
     static var cardTitleSpacing: CGFloat { cardTitleSpacing(scale: PreviewSizing.scale) }
-    /// A 13pt name over a 10.5pt subtitle, beside the two 16pt window controls
-    /// -- the App Switcher's title block, to the point.
     static let cardTitleHeight: CGFloat = 29
     static var cardSpacing: CGFloat { gap(8, scale: PreviewSizing.scale) }
     static var panelPadding: CGFloat { gap(10, scale: PreviewSizing.scale) }
@@ -265,16 +204,11 @@ enum DockPreviewSupport {
     static func cardTitleSpacing(scale: CGFloat) -> CGFloat { gap(7, scale: scale) }
     static func cardThumbnailInset(scale: CGFloat) -> CGFloat { gap(5, scale: scale) }
 
-    /// 16:10, the shape of the screen the captured window came from, so a
-    /// full-height window fills the well instead of sitting between two bars.
-    /// The width is a multiple of 8, which keeps the height whole: 144x90,
-    /// 200x125, 280x175 and 360x225 across the four sizes.
     static func cardPictureSize(scale: CGFloat) -> CGSize {
         let width = (200 * scale / 8).rounded(.down) * 8
         return CGSize(width: width, height: width * 5 / 8)
     }
 
-    /// The well the picture sits in, one inset wider on every side.
     static func cardThumbnailSize(scale: CGFloat) -> CGSize {
         let picture = cardPictureSize(scale: scale)
         let inset = cardThumbnailInset(scale: scale)
@@ -282,8 +216,6 @@ enum DockPreviewSupport {
                       height: picture.height + inset * 2)
     }
 
-    /// Minimal previews have no title band, so the card drops its height
-    /// instead of padding the width-bound picture with space it cannot fill.
     static func cardSize(scale: CGFloat, minimal: Bool = false) -> CGSize {
         let thumbnail = cardThumbnailSize(scale: scale)
         let padding = cardPadding(scale: scale)
@@ -292,15 +224,9 @@ enum DockPreviewSupport {
                           + (minimal ? 0 : cardTitleSpacing(scale: scale) + cardTitleHeight))
     }
 
-    /// The app's icon along the bottom edge of the picture, the size the App
-    /// Switcher draws it. App artwork sits on the system icon grid with a clear
-    /// margin around it, so the frame hangs past the row by that margin and the
-    /// artwork, not its empty edge, lines up with the picture.
     static var cardAppBadgeSize: CGFloat { (32 * PreviewSizing.scale).rounded() }
     static var cardAppBadgeArtworkInset: CGFloat { (cardAppBadgeSize * 0.094).rounded() }
 
-    /// Stands in for the thumbnail when there is no capture, so it follows the
-    /// thumbnail rather than staying the one fixed picture on a scaling card.
     static func cardFallbackIconSize(scale: CGFloat) -> CGFloat {
         (52 * scale).rounded()
     }
@@ -314,11 +240,6 @@ enum DockPreviewSupport {
     }
     static var cardFallbackIconSize: CGFloat { cardFallbackIconSize(scale: PreviewSizing.scale) }
 
-    /// How solid the panel's frosted background is drawn, as a fraction. The
-    /// floor is not zero on purpose: the panel's title sits straight on the
-    /// material, so past a certain point it is reading against the desktop and
-    /// the panel stops looking like a panel. Anything the slider can reach has
-    /// to still look finished.
     static let backgroundOpacityRange: ClosedRange<Double> = 0.4...1
 
     static func sanitizedBackgroundOpacity(_ value: Double) -> Double {
@@ -326,24 +247,12 @@ enum DockPreviewSupport {
         return min(max(value, backgroundOpacityRange.lowerBound), backgroundOpacityRange.upperBound)
     }
 
-    /// How far in from the Dock's screen edge the cursor can be and still sit over
-    /// a Dock item. Used to gate the per-mouse-move Accessibility hit-test to the
-    /// Dock's strip instead of running it across the whole screen — that hit-test
-    /// is a synchronous AX round-trip, and firing it on every move anywhere
-    /// saturates the main thread and the process's AX access (which, among other
-    /// things, starves other AX-driven features like quit-on-last-window-close).
-    /// Size against `hoverTileSize` so magnified icons stay inside the band.
     static func dockProximityBand(tileSize: CGFloat) -> CGFloat {
         max(160, tileSize * 1.5 + 60)
     }
 
-    /// Bounds expensive Accessibility hit testing independently of mouse
-    /// polling rate while remaining much faster than the hover delay.
     static let mouseMoveSampleInterval: TimeInterval = 1.0 / 60
 
-    /// How long a Dock hit-test may wait on the Dock before giving up. It
-    /// runs on the main thread inside the mouse handler, so a stuck Dock
-    /// must cost a skipped move rather than the default six-second stall.
     static let dockHitTimeout: Float = 0.25
 
     static func availability(enabled: Bool,
@@ -407,47 +316,24 @@ enum DockPreviewSupport {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    /// Whether the panel draws a header row. A hovered panel has no use for
-    /// one: it named the app whose Dock icon the pointer is resting on, and
-    /// carried steppers for walking windows the pointer is already on top of.
-    /// A pinned panel keeps it -- there it is the drag handle, the only way to
-    /// unpin or close, and the only place that says which app it belongs to
-    /// once the pointer has gone.
     static func showsPanelHeader(isPinned: Bool) -> Bool {
         isPinned
     }
 
-    /// The room the window's name has in the title band: the band less the two
-    /// controls beside it, whose place is held whether or not they are drawn.
     static var cardTitleTextWidth: CGFloat { cardThumbnailWidth - 40 }
 
-    /// Whether a name is longer than the room it has. Measured against the font
-    /// it is drawn in rather than a layout pass, so the answer is the same
-    /// before the band has ever been on screen and can be checked without one.
-    /// Whether a card draws the app's icon in the corner of its picture. With
-    /// no capture the icon already fills the well as a watermark, so the badge
-    /// would only repeat it.
     static func showsCardAppBadge(hasPreview: Bool) -> Bool {
         hasPreview
     }
 
-    /// Whether a card draws its close and minimize buttons. A pinned panel
-    /// counted as permanent hover, which held both open on every card it
-    /// showed for as long as it stayed up.
     static func showsCardControls(isHovering: Bool, isSelected: Bool) -> Bool {
         isHovering || isSelected
     }
 
-    /// Cards run along the Dock's own edge. A Dock at the bottom gets a row; a
-    /// Dock at the side gets a column, because a row there grows away from the
-    /// Dock across the screen, which is the one direction the pointer is not
-    /// coming from. A pinned panel is detached from the Dock, so it keeps the
-    /// row at any Dock position.
     static func stacksVertically(orientation: DockPreviewOrientation, isPinned: Bool) -> Bool {
         !isPinned && (orientation == .left || orientation == .right)
     }
 
-    /// How many cards the panel can show before it has to scroll.
     static func visibleCardCount(itemCount: Int,
                                  screenVisibleFrame: CGRect,
                                  orientation: DockPreviewOrientation,
@@ -534,13 +420,6 @@ enum DockPreviewSupport {
         return DockPreviewMouseDownDecision(shouldEndSession: true)
     }
 
-    /// The keep-alive corridor for a session: the icon and panel (each with a
-    /// little forgiveness) plus a narrow bridge spanning the gap between them,
-    /// laid along the cursor's natural path for the Dock's orientation.
-    ///
-    /// The icon rect is captured while the Dock is revealed and sits at the
-    /// screen edge, so with Dock auto-hide its padded rect still covers the strip
-    /// the cursor crosses to re-reveal the Dock — no extra handling needed.
     static func hoverCorridor(iconFrame: CGRect,
                               panelFrame: CGRect,
                               orientation: DockPreviewOrientation,

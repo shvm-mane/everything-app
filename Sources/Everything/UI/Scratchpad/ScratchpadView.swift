@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// The scratchpad card: a slim header, named tabs, the plain-text editor and a
-/// quiet footer with an on-demand formatted preview and file actions.
 struct ScratchpadView: View {
     @ObservedObject private var service = ScratchpadService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -133,10 +131,6 @@ struct ScratchpadView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            // A borderless Menu takes every point its row can spare on macOS
-            // 15, which left the tab strip beside it stuck at its old width
-            // while the window grew and cut tab names for no reason (issue
-            // #569). Pinned to its label, the strip gets the rest of the row.
             .fixedSize()
             .help(text.padActions)
             .accessibilityLabel(text.padActions)
@@ -281,8 +275,6 @@ struct ScratchpadView: View {
         .frame(height: 34)
     }
 
-    /// The editor's text inset, shared with the placeholder overlay below
-    /// so the two cannot be moved independently.
     private static let editorInset = NSSize(width: 7, height: 2)
 
     private var editor: some View {
@@ -302,8 +294,6 @@ struct ScratchpadView: View {
                 .accessibilityHidden(service.isPreviewing)
                 .overlay(alignment: .topLeading) {
                     if isEmpty, !service.isPreviewing {
-                        // NSTextView has no placeholder of its own; this sits at
-                        // the exact spot of the first line and never takes clicks.
                         Text(text.placeholder)
                             .font(.system(size: textSize))
                             .foregroundStyle(.tertiary)
@@ -332,8 +322,6 @@ struct ScratchpadView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            // Outside the disabled group below: an empty pad is exactly where
-            // someone reaches for a heading, and the chip is how they find one.
             footerButton("textformat", text.formatMarks,
                          tint: service.marksExpanded ? .accentColor : nil) {
                 withAnimation(.easeOut(duration: 0.15)) { service.toggleMarks() }
@@ -393,8 +381,6 @@ private enum ScratchpadDialog {
     case close(ScratchpadPad)
 }
 
-/// A transparent strip over the header that moves the whole panel when
-/// dragged; everything below it stays free for text selection.
 private struct ScratchpadDragHandle: NSViewRepresentable {
     func makeNSView(context: Context) -> DragHandleView {
         DragHandleView()
@@ -411,9 +397,6 @@ private struct ScratchpadDragHandle: NSViewRepresentable {
     }
 }
 
-/// An invisible border overlay that gives the borderless panel generous resize
-/// hitboxes on all four edges and corners, keeps the resize cursors visible,
-/// and enforces the minimum pad size during interactive dragging.
 private struct ScratchpadResizeOverlay: NSViewRepresentable {
     func makeNSView(context: Context) -> ResizeBorderOverlayView {
         ResizeBorderOverlayView()
@@ -572,22 +555,13 @@ private struct ScratchpadResizeOverlay: NSViewRepresentable {
     }
 }
 
-/// A selectable native preview. NSTextView keeps Markdown links interactive in
-/// the nonactivating scratchpad panel, where SwiftUI's Text link handling does
-/// not receive clicks reliably.
-/// Shared with the island's page, which shows the same formatted reading.
 struct MarkdownPreview: NSViewRepresentable {
     let blocks: [ScratchpadMarkdownBlock]
     var baseSize: CGFloat = PlainTextEditor.defaultFontSize
-    /// How a task's checkbox tells VoiceOver it is done or not.
     let taskStates: (done: String, notDone: String)
-    /// Called with the text offset of the box whose checkbox is clicked; the
-    /// owner edits the text, and the preview follows from it.
     var onToggleTask: ((Int) -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
-        // The same text view `scrollableTextView()` makes, as the subclass that
-        // answers a click on a checkbox and points its cursor at it.
         let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -626,9 +600,6 @@ struct MarkdownPreview: NSViewRepresentable {
         return coordinator
     }
 
-    /// Where a list item's text starts, which is where the items nested under
-    /// it start. `indented` marks an item placed by paragraph indents, a task
-    /// or an item under one, rather than by the leading spaces bullets use.
     private struct ListLevel {
         let column: CGFloat
         let indented: Bool
@@ -638,7 +609,6 @@ struct MarkdownPreview: NSViewRepresentable {
                                  base: CGFloat,
                                  taskStates: (done: String, notDone: String)) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        // The latest item at each depth of the list being drawn.
         var levels: [ListLevel] = []
         for (index, block) in blocks.enumerated() {
             if index > 0 {
@@ -670,8 +640,6 @@ struct MarkdownPreview: NSViewRepresentable {
 
         switch block.kind {
         case .heading(let level):
-            // Steps above the body rather than fixed points, so the
-            // document keeps its shape at whatever size the pad is set to.
             let size: CGFloat = base + (level == 1 ? 5 : (level == 2 ? 3 : 1))
             font = .systemFont(ofSize: size, weight: .semibold)
         case .unorderedListItem(let depth):
@@ -688,8 +656,6 @@ struct MarkdownPreview: NSViewRepresentable {
             prefix = String(repeating: "  ", count: depth - 1) + "▏ "
             color = .secondaryLabelColor
         case .code:
-            // A point under the body, as inline code is, since monospace
-            // reads larger than the system face at the same size.
             font = .monospacedSystemFont(ofSize: base - 1, weight: .regular)
         case .thematicBreak:
             text = AttributedString(String(repeating: "─", count: 24))
@@ -698,17 +664,11 @@ struct MarkdownPreview: NSViewRepresentable {
             break
         }
 
-        // A list inside a quote keeps the quote's bar and colour ahead of
-        // its own marker.
         let quote = block.quoteDepth > 0 ? String(repeating: "  ", count: block.quoteDepth - 1) + "▏ " : ""
         if block.quoteDepth > 0 { color = .secondaryLabelColor }
         var quoteGap: CGFloat = 0
         if listDepth > 0 {
             func width(_ string: String) -> CGFloat { (string as NSString).size(withAttributes: [.font: font]).width }
-            // The items above this one. A list can open below depth 1, as
-            // `- - [ ] a` does; the levels it skips hold no text, so each
-            // takes two spaces, as bullets do, and the item still lands at
-            // its own depth for its siblings to find.
             levels = Array(levels.prefix(listDepth - 1))
             while levels.count < listDepth - 1 {
                 let above = levels.last ?? ListLevel(column: width(quote), indented: false)
@@ -716,11 +676,6 @@ struct MarkdownPreview: NSViewRepresentable {
             }
             let parent = levels.last
             if checkbox != nil || parent?.indented == true {
-                // As in Notes, a task's circle, or an item under a task, sits
-                // under its parent's text, and a task's wrapped lines hang
-                // under its own text rather than under the circle. A quote's
-                // bar can be wider than a parent's marker, and then the item
-                // starts after the bar.
                 let lead = max(parent?.column ?? 0, width(quote))
                 let column = lead + (checkbox != nil ? boxSize + width(" ") : width(marker))
                 if quote.isEmpty { paragraph.firstLineHeadIndent = lead } else { quoteGap = lead - width(quote) }
@@ -740,8 +695,6 @@ struct MarkdownPreview: NSViewRepresentable {
                 .foregroundColor: NSColor.secondaryLabelColor,
                 .paragraphStyle: paragraph
             ]))
-            // The quote's bar stays at the line's start, so a nested item
-            // in a quote reaches its column by widening the space after it.
             if quoteGap > 0 {
                 result.addAttribute(.kern, value: quoteGap,
                                     range: NSRange(location: (quote as NSString).length - 1, length: 1))
@@ -762,7 +715,6 @@ struct MarkdownPreview: NSViewRepresentable {
                                  range: fullRange)
         }
         if let checkbox {
-            // The glyph is a link, so a click on it reaches the coordinator.
             let attachment = TaskBoxAttachment(checked: checkbox.checked, size: boxSize,
                                                description: checkbox.checked ? taskStates.done : taskStates.notDone)
             let box = NSMutableAttributedString(attachment: attachment)
@@ -817,10 +769,6 @@ struct MarkdownPreview: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onToggleTask: ((Int) -> Void)?
-        /// What the reading was last drawn from. Every render makes new
-        /// checkbox attachments, and two attachments never compare equal, so
-        /// the drawn text cannot tell an unchanged reading from a new one;
-        /// replacing it on every view update would drop its selection.
         private var shown: (blocks: [ScratchpadMarkdownBlock], base: CGFloat, done: String, notDone: String)?
 
         func show(_ blocks: [ScratchpadMarkdownBlock], base: CGFloat,
@@ -844,18 +792,12 @@ struct MarkdownPreview: NSViewRepresentable {
     }
 }
 
-/// A task's checkbox as Notes draws its checklist: an empty ring, filled
-/// with the accent colour and a check once the task is done. The system
-/// colours resolve as the box is drawn, so it follows the light or dark
-/// appearance, and `description` names which of the two it is.
 final class TaskBoxAttachment: NSTextAttachment {
     let checked: Bool
 
     init(checked: Bool, size: CGFloat, description: String) {
         self.checked = checked
         super.init(data: nil, ofType: nil)
-        // A palette lays a colour's alpha over the ring's own, which leaves
-        // tertiary label at a faint 7%; hierarchical draws it as Notes does.
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
             .applying(checked
                 ? NSImage.SymbolConfiguration(paletteColors: [.white, .controlAccentColor])
@@ -871,19 +813,12 @@ final class TaskBoxAttachment: NSTextAttachment {
     required init?(coder: NSCoder) { nil }
 }
 
-/// The preview's text view: a click on a checkbox toggles its task, and the
-/// pointer over one becomes a hand, as over any button of the island.
 final class TaskPreviewTextView: NSTextView {
     var onToggleTask: ((Int) -> Void)?
     private var pointerArea: NSTrackingArea?
-    /// Kept while their boxes stay, so the one VoiceOver is on lives on.
     private var boxElements: [Int: BoxElement] = [:]
-    /// A link element of the text view asks the view for its children to
-    /// answer its own attributes, so that inner call gets the plain list.
     private var listingChildren = false
 
-    /// A task's checkbox as VoiceOver meets it: named by its task, valued by
-    /// whether it is done, and pressed as a click on it is.
     private final class BoxElement: NSAccessibilityElement {
         weak var view: TaskPreviewTextView?
         var box = 0
@@ -908,9 +843,6 @@ final class TaskPreviewTextView: NSTextView {
         }
     }
 
-    /// The text view offers a box only as a link named by the attachment's
-    /// object replacement character, so the box's link leaves the children
-    /// and the box stands there as a checkbox of its own.
     override func accessibilityChildren() -> [Any]? {
         let children = super.accessibilityChildren() ?? []
         guard !listingChildren, let storage = textStorage else { return children }
@@ -938,7 +870,6 @@ final class TaskPreviewTextView: NSTextView {
         } + boxes
     }
 
-    /// The text offset of the box whose checkbox is under `point`.
     private func taskBox(at point: NSPoint) -> Int? {
         guard let layout = layoutManager, let container = textContainer, let storage = textStorage,
               storage.length > 0 else { return nil }
@@ -962,9 +893,6 @@ final class TaskPreviewTextView: NSTextView {
         }
     }
 
-    /// NSTextView puts its text cursor back on every move over selectable
-    /// text, past any cursor rect, so the pointer is set here instead, as the
-    /// pointer moves and when it enters.
     private func pointer(for event: NSEvent) -> Bool {
         guard taskBox(at: convert(event.locationInWindow, from: nil)) != nil else { return false }
         NSCursor.pointingHand.set()
@@ -979,9 +907,6 @@ final class TaskPreviewTextView: NSTextView {
         if !pointer(for: event) { super.mouseMoved(with: event) }
     }
 
-    /// AppKit asks again whenever the view's geometry changes, so the area
-    /// added last time goes before the next one, or they pile up and each
-    /// pointer move runs the hit test once per area.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let pointerArea { removeTrackingArea(pointerArea) }

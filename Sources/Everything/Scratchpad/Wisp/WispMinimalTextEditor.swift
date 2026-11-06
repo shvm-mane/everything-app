@@ -8,16 +8,12 @@ struct MinimalTextEditor: NSViewRepresentable {
     var scrollTarget: Int
     var findHighlightToken: Int
     var findHighlightRange: NSRange
-    /// Bumped when a reminder's notification is clicked: scroll to its
-    /// line and highlight it once.
     var reminderFlashToken: Int
     var reminderFlashRange: NSRange
     var fontSize: FontSize
     var fontFace: FontFace
     var theme: WispTheme
     var transparency: Transparency
-    /// Hands the model the editor, for what it asks of it directly:
-    /// finishing the line being written, ticking a line off.
     var connect: (NoteEditor) -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -30,9 +26,6 @@ struct MinimalTextEditor: NSViewRepresentable {
 
         guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
 
-        // Swap in the HR-aware layout manager so HR-only lines render
-        // as a full-width horizontal line that tracks panel width.
-        // The replacement keeps the same text container and storage.
         if let textContainer = textView.textContainer {
             textContainer.replaceLayoutManager(HorizontalRuleLayoutManager())
         }
@@ -40,15 +33,12 @@ struct MinimalTextEditor: NSViewRepresentable {
         let font = Self.makeFont(face: fontFace, size: fontSize.pointSize)
         let paragraph = MarkdownStyler.bodyParagraph()
 
-        // Click a `[ ]` to tick it off. A gesture recogniser rather than
-        // an NSTextView subclass: gestureRecognizerShouldBegin only
-        // claims the click when it actually lands on a box, so ordinary
-        // clicks still place the caret exactly as before.
         let click = NSClickGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleCheckboxClick(_:))
         )
         click.delegate = context.coordinator
+        click.delaysPrimaryMouseButtonEvents = true
         textView.addGestureRecognizer(click)
 
         textView.delegate = context.coordinator
@@ -83,8 +73,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         context.coordinator.lastTheme = theme
         context.coordinator.lastTransparency = transparency
         context.coordinator.updateColumn(textView: textView, in: scrollView)
-        // Everything: the island rebuilds the editor on every open; put the
-        // caret and the scroll back where they were when it closed.
         if let saved = Self.savedCaret {
             DispatchQueue.main.async {
                 let length = (textView.string as NSString).length
@@ -100,15 +88,11 @@ struct MinimalTextEditor: NSViewRepresentable {
         return scrollView
     }
 
-    /// Where the caret and the scroll were when the editor last closed.
     static var savedCaret: (selection: NSRange, scroll: NSPoint)?
 
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
         if let textView = scrollView.documentView as? NSTextView {
             savedCaret = (textView.selectedRange(), scrollView.contentView.bounds.origin)
-            // Everything: the island's panel keeps one undo manager for its
-            // whole life, while this text view goes when the island closes.
-            // Undo steps left pointing at it crashed the next ⌘Z.
             textView.breakUndoCoalescing()
             if let undo = textView.undoManager {
                 undo.removeAllActions(withTarget: textView)
@@ -127,10 +111,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             context.coordinator.forgetDrafts()
             context.coordinator.pendingEdit = nil
             context.coordinator.lastHighlight = nil
-            // Assigning .string drops every attribute. Without a
-            // restyle here a note reloaded from disk (iCloud, folder
-            // switch) shows literal `---` and flat headings until the
-            // next keystroke.
             if let storage = textView.textStorage {
                 Self.restyle(
                     storage, face: fontFace, size: fontSize,
@@ -161,6 +141,16 @@ struct MinimalTextEditor: NSViewRepresentable {
             DispatchQueue.main.async {
                 textView.window?.makeFirstResponder(textView)
             }
+            // Focused while the island was still opening, the caret was
+            // scrolled into a smaller view; once open, a note that fits sits
+            // at the top again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak scrollView] in
+                guard let scrollView, let document = scrollView.documentView else { return }
+                if document.frame.height <= scrollView.contentView.bounds.height + 1 {
+                    scrollView.contentView.scroll(to: .zero)
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+            }
         }
         if context.coordinator.lastScrollToken != scrollToken {
             context.coordinator.lastScrollToken = scrollToken
@@ -186,11 +176,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             let range = findHighlightRange
             let color = WispPalette.for(theme).findHighlight
             if let storage = textView.textStorage {
-                // Use a real storage background attribute (not a temporary
-                // layout attribute): storage mutations always trigger a
-                // redraw, so the highlight clears deterministically.
-                // Restyling the old match rather than a bare
-                // removeAttribute: code spans use .backgroundColor too.
                 if let previous = context.coordinator.lastHighlight {
                     Self.restyle(
                         storage, face: fontFace, size: fontSize,
@@ -207,8 +192,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         }
     }
 
-    /// Restyle the whole storage, or with `edited` just the paragraphs
-    /// an edit touched. See MarkdownStyler.
     static func restyle(
         _ storage: NSTextStorage,
         face: FontFace,
@@ -273,8 +256,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         if let font = face.font(size: size) {
             return font
         }
-        // Selected face is missing for some reason — fall through to a
-        // sensible serif so we never crash on font lookup.
         for fallback in ["Charter", "Iowan Old Style", "New York"] {
             if let font = NSFont(name: fallback, size: size) {
                 return font
@@ -299,48 +280,21 @@ struct MinimalTextEditor: NSViewRepresentable {
         var lastFontFace: FontFace = .charter
         var lastTheme: WispTheme = .dark
         var lastTransparency: Transparency = .subtle
-        /// Characters changed since the last restyle, in current
-        /// coordinates. Collected from the storage so every path that
-        /// edits text — typing, paste, undo, list continuation — is
-        /// covered without each one reporting in.
         var pendingEdit: NSRange?
-        /// The find match currently painted, so the next step only has
-        /// to restyle that one range instead of the whole note.
         var lastHighlight: NSRange?
-        /// True when the pending change is one typed character, the only
-        /// kind of edit that may complete a shortcode. Whole-line edits
-        /// (⌘L, ⌥↑) and pastes carry text that happens to end in `:)`
-        /// and must arrive exactly as written.
         private var typedSingleCharacter = false
         private var widthObserver: NSObjectProtocol?
         var lastReminderFlashToken = 0
-        /// "Remind me" lines typed or changed here and not yet finished.
-        /// A reminder is set when its line is finished — the caret
-        /// leaves it, or the panel loses focus or closes — so typing
-        /// "in 1" on the way to "in 15" never sets a stray one.
         private var draftReminders: Set<String> = []
-        /// For each draft, the line it was edited from — how an edited
-        /// reminder is told apart from a new one with the same time. The
-        /// store is told, so a save mid-edit doesn't cancel the reminder
-        /// being edited, and its line keeps showing it.
         private var draftOrigins: [String: String] = [:] {
             didSet { if draftOrigins != oldValue { reminderStore.editing = draftOrigins } }
         }
-        /// Drafts that were put back — undone, pasted, unticked — rather
-        /// than written: a reminder that already went off stays sent
-        /// instead of being set again.
         private var restoredDrafts: Set<String> = []
-        /// The current edit is an undo or redo, or what it inserts.
         private var editIsUndo = false
         private var editInserts = ""
-        /// The edited line as it was before the current edit, when the
-        /// edit stays within one line.
         private var lineBeforeEdit: String?
-        /// The note's text view, for what the model asks directly.
         weak var textView: NSTextView?
         private var inTextDidChange = false
-        /// The shared store; the self-tests hand in one of their own so
-        /// they never touch the real reminders or post notifications.
         lazy var reminderStore: ReminderStore = .shared
         private var reminderObservers: [NSObjectProtocol] = []
         private var flashTimer: Timer?
@@ -365,10 +319,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             }
         }
 
-        /// Union of an earlier pending range with a new edit. The earlier
-        /// range's end moves with the edit when the edit lands at or
-        /// before it; covering a little too much is harmless, too
-        /// little is a stale style.
         nonisolated static func merge(_ earlier: NSRange?, _ edit: NSRange, delta: Int) -> NSRange {
             guard let earlier else { return edit }
             let start = min(earlier.location, edit.location)
@@ -379,9 +329,6 @@ struct MinimalTextEditor: NSViewRepresentable {
 
         // MARK: Column width
 
-        /// Past a comfortable measure, extra panel width becomes margin
-        /// rather than longer lines. About 34 ems — 680pt at the default
-        /// size — keeps lines near 70 characters.
         func updateColumn(textView: NSTextView, in scrollView: NSScrollView) {
             let width = scrollView.contentView.bounds.width
             let measure = lastFontSize.pointSize * 34
@@ -417,18 +364,11 @@ struct MinimalTextEditor: NSViewRepresentable {
             text.wrappedValue = textView.string
             stopFlash()
 
-            // Everything: no emoji shortcodes.
             typedSingleCharacter = false
 
-            // Mid-composition (Japanese, Chinese, dead keys) the marked
-            // text carries the input method's own underline; restyling
-            // would strip it. The edit stays pending until it's committed.
             guard !textView.hasMarkedText(), let edited = pendingEdit,
                   let storage = textView.textStorage else { return }
             pendingEdit = nil
-            // Typing clears a find highlight, as it always has. The edit
-            // may have moved it, so the stored range can't be trusted;
-            // one full pass takes it wherever it went.
             let clearsHighlight = lastHighlight != nil
             lastHighlight = nil
             MinimalTextEditor.restyle(
@@ -438,17 +378,11 @@ struct MinimalTextEditor: NSViewRepresentable {
             )
             redrawLines(around: edited, in: textView)
             noteDraftReminders(around: edited, in: textView)
-            // Return, or an edit elsewhere, can leave a line finished.
             commitDraftReminders(in: textView, includingCaretLine: false)
         }
 
         // MARK: Reminders
 
-        /// Remember the reminder lines an edit changed, to set when
-        /// they're finished — and the line each came from. Only lines
-        /// whose text changed: pressing Return at the end of a line
-        /// touches it without changing it, and a line from another Mac
-        /// ("not set on this Mac") stays unset until it's edited here.
         private func noteDraftReminders(around edited: NSRange, in textView: NSTextView) {
             let before = lineBeforeEdit
             lineBeforeEdit = nil
@@ -463,10 +397,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             ns.enumerateSubstrings(in: lines, options: .byLines) { line, range, _, _ in
                 if let line { edited.append((line, range)) }
             }
-            // The line now reads differently: its previous text is no
-            // longer a draft, and what that was edited from carries over —
-            // a line being typed traces back to where it started, not to
-            // a set line whose text it passed through.
             var origin = before
             if let before, !edited.contains(where: { $0.line == before }) {
                 draftReminders.remove(before)
@@ -478,17 +408,12 @@ struct MinimalTextEditor: NSViewRepresentable {
                 && (range.location >= storage.length
                     || storage.attribute(.wispCodeBlock, at: range.location, effectiveRange: nil) == nil) {
                 draftReminders.insert(line)
-                // Put back: by undo, by pasting the line, or by unticking it.
-                // Not Backspace, a composed accent or an emoji shortcode —
-                // those are writing it.
                 let putBack = editIsUndo || editInserts.contains(line) || before.map { Reminders.ticked(line) == $0 } == true
                 if putBack { restoredDrafts.insert(line) } else { restoredDrafts.remove(line) }
                 if let origin { draftOrigins[line] = origin }
             }
         }
 
-        /// Set the drafts whose lines are finished. The caret's own line
-        /// is still being written unless the whole editor is being left.
         func commitDraftReminders(in textView: NSTextView, includingCaretLine: Bool) {
             guard !draftReminders.isEmpty else { return }
             let ns = textView.string as NSString
@@ -496,8 +421,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             let caretLine = Self.lineText(at: caret, in: ns)
             let finished = draftReminders.filter { includingCaretLine || $0 != caretLine }
             guard !finished.isEmpty else { return }
-            // A draft whose line has gone — deleted, or pasted over — sets
-            // nothing.
             let inNote = ReminderStore.present(finished, in: textView.string)
             for draft in finished {
                 draftReminders.remove(draft)
@@ -507,8 +430,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             }
         }
 
-        /// The whole text was replaced from outside (reload, folder
-        /// switch): nothing being typed carries over.
         func forgetDrafts() {
             draftReminders = []
             draftOrigins = [:]
@@ -529,14 +450,8 @@ struct MinimalTextEditor: NSViewRepresentable {
         }
 
         private func replaceLine(_ range: NSRange, reading line: String, with replacement: String, in textView: NSTextView) -> Bool {
-            // Only on the note as the model has it: just after a reload
-            // from disk, the view still shows the old text until SwiftUI
-            // passes the new one on, and an edit there would be saved over
-            // what was just loaded.
             guard textView.string == text.wrappedValue else { return false }
             let ns = textView.string as NSString
-            // The whole line, as expected: "… post" must not match "…
-            // post later", and a line changed since is left alone.
             guard NSMaxRange(range) <= ns.length,
                   ns.lineRange(for: NSRange(location: range.location, length: 0)).location == range.location,
                   Self.lineText(at: range.location, in: ns) == line else { return false }
@@ -547,9 +462,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             return true
         }
 
-        /// The caret left a line: it's finished. Not mid-edit — AppKit
-        /// moves the caret before reporting the edit, when the drafts
-        /// still hold the line's old text — textDidChange does it then.
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView, !textView.isFieldEditor,
                   pendingEdit == nil else { return }
@@ -558,7 +470,6 @@ struct MinimalTextEditor: NSViewRepresentable {
 
         func observeReminders(in textView: NSTextView) {
             let center = NotificationCenter.default
-            // A finished thought: the panel lost focus or closed.
             reminderObservers.append(center.addObserver(
                 forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
             ) { [weak self, weak textView] note in
@@ -568,8 +479,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                     self.commitDraftReminders(in: textView, includingCaretLine: true)
                 }
             })
-            // A reminder set, sent, or blocked: its grey text changes. It's
-            // drawn, not stored, so a redraw is all it takes.
             reminderObservers.append(center.addObserver(
                 forName: ReminderStore.didChange, object: nil, queue: .main
             ) { [weak textView] _ in
@@ -583,8 +492,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             flashTimer?.invalidate()
         }
 
-        /// Bring a reminder's line into view and highlight it once: held,
-        /// then faded, or simply held and cleared under Reduce Motion.
         func flash(_ range: NSRange, in textView: NSTextView) {
             guard let layoutManager = textView.layoutManager,
                   range.length > 0, NSMaxRange(range) <= (textView.string as NSString).length else { return }
@@ -605,8 +512,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             }
         }
 
-        /// Text moved under the highlight: the fixed range would now mark
-        /// the wrong characters, or leave a stripe behind. Clear it.
         private func stopFlash() {
             guard flashTimer?.isValid == true || flashLayoutManager != nil else { return }
             flashTimer?.invalidate()
@@ -624,7 +529,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                 return
             }
             flashStep += 1
-            // About half a second at full strength, then a second to fade.
             let strength = flashHoldsStill
                 ? (flashStep < 15 ? 1.0 : 0.0)
                 : min(1, max(0, 1 - Double(flashStep - 5) / 10))
@@ -644,10 +548,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             LineEditing.splitTerminator(ns.substring(with: ns.lineRange(for: NSRange(location: location, length: 0)))).body
         }
 
-        /// An inline-math answer is drawn past the end of its line's
-        /// text, outside what AppKit repaints for an edit — so an answer
-        /// that changed or went away could linger. Repaint the edited
-        /// lines edge to edge.
         private func redrawLines(around edited: NSRange, in textView: NSTextView) {
             guard let layoutManager = textView.layoutManager else { return }
             let ns = textView.string as NSString
@@ -665,9 +565,6 @@ struct MinimalTextEditor: NSViewRepresentable {
 
         // MARK: Checkbox clicks
 
-        /// Only claim the click when it lands on a `[ ]` or a sent
-        /// reminder's tick, or is a ⌘-click on a link; every other click
-        /// falls through to the text view untouched.
         func gestureRecognizerShouldBegin(_ recognizer: NSGestureRecognizer) -> Bool {
             guard let click = recognizer as? NSClickGestureRecognizer,
                   let textView = recognizer.view as? NSTextView else { return false }
@@ -692,11 +589,18 @@ struct MinimalTextEditor: NSViewRepresentable {
             guard let box = Self.checkboxRange(in: textView, at: point) else { return }
             let state = NSRange(location: box.location + 1, length: 1)
             let current = (textView.string as NSString).substring(with: state)
+            let selection = textView.selectedRange()
             replace(in: textView, range: state, with: current == " " ? "x" : " ")
+            // The caret never lands inside the box: it stays where it was,
+            // or goes to the end of the line if it was in the marker.
+            let ns = textView.string as NSString
+            let line = ns.lineRange(for: NSRange(location: box.location, length: 0))
+            var lineEnd = NSMaxRange(line)
+            while lineEnd > line.location, ns.character(at: lineEnd - 1) == 0x0A { lineEnd -= 1 }
+            let inMarker = selection.location >= line.location && selection.location <= NSMaxRange(box)
+            textView.setSelectedRange(inMarker ? NSRange(location: lineEnd, length: 0) : selection)
         }
 
-        /// A click on a sent reminder's tick: the line is ticked off, as
-        /// one undoable edit, the caret left where it was.
         func tickReminder(at point: NSPoint, in textView: NSTextView) -> Bool {
             guard let line = (textView as? CaretTextView)?.reminderTick(at: point) else { return false }
             let text = (textView.string as NSString).substring(with: line)
@@ -704,23 +608,17 @@ struct MinimalTextEditor: NSViewRepresentable {
             return true
         }
 
-        /// Whether `location` is inside a fenced code block, as of the
-        /// last restyle — which ran on the previous keystroke.
         private static func isInCodeBlock(_ textView: NSTextView, at location: Int) -> Bool {
             guard let storage = textView.textStorage, location < storage.length else { return false }
             return storage.attribute(.wispCodeBlock, at: location, effectiveRange: nil) != nil
         }
 
-        /// The link under `point`, if any.
         private static func link(in textView: NSTextView, at point: NSPoint) -> URL? {
             guard let index = characterIndex(in: textView, at: point),
                   let storage = textView.textStorage else { return nil }
             return storage.attribute(.wispLink, at: index, effectiveRange: nil) as? URL
         }
 
-        /// The character whose glyph is actually under `point` — not
-        /// merely the nearest one, which is what glyphIndex returns for
-        /// a click past the end of a line.
         private static func characterIndex(in textView: NSTextView, at point: NSPoint) -> Int? {
             guard let layoutManager = textView.layoutManager,
                   let container = textView.textContainer,
@@ -739,7 +637,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             return index < (textView.string as NSString).length ? index : nil
         }
 
-        /// The `[ ]` marker under `point`, in document coordinates.
         private static func checkboxRange(in textView: NSTextView, at point: NSPoint) -> NSRange? {
             guard let index = characterIndex(in: textView, at: point) else { return nil }
             let ns = textView.string as NSString
@@ -747,7 +644,10 @@ struct MinimalTextEditor: NSViewRepresentable {
             let line = ns.substring(with: lineRange)
             guard let box = Checkbox.boxRange(in: line) else { return nil }
             let absolute = NSRange(location: lineRange.location + box.location, length: box.length)
-            return NSLocationInRange(index, absolute) ? absolute : nil
+            // The drawn checkbox covers the whole `- [ ]` marker.
+            let bullet = lineRange.location + (line.prefix { $0 == " " || $0 == "\t" }.utf16.count)
+            let marker = NSRange(location: bullet, length: NSMaxRange(absolute) - bullet)
+            return NSLocationInRange(index, marker) ? absolute : nil
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -760,8 +660,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             return false
         }
 
-        /// Intercept typed text. Used to convert `---` to a horizontal rule
-        /// the moment the third hyphen is typed — no need for Enter.
         func textView(
             _ textView: NSTextView,
             shouldChangeTextIn affectedCharRange: NSRange,
@@ -773,14 +671,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                 editIsUndo = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
                 editInserts = replacementString ?? ""
             }
-            // The line as it stood, for telling an edited reminder from a
-            // new one. Not overwritten by an edit made while handling this
-            // one (a shortcode turning into an emoji): the user's line is
-            // what it was before they touched it.
-            // Nor by the later steps of a composition (Japanese input,
-            // ⌥e): its edits aren't reported until it's committed, and by
-            // then the line held the marked text. The first step already
-            // counts as composing, so it's the line kept from that step.
             if !inTextDidChange, !(textView.hasMarkedText() && lineBeforeEdit != nil) {
                 let ns = textView.string as NSString
                 let line = ns.lineRange(for: NSRange(location: min(affectedCharRange.location, ns.length), length: 0))
@@ -788,9 +678,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                     ? Self.lineText(at: line.location, in: ns) : nil
             }
 
-            // Only single-char `-` insertions count. Pastes (multi-char) and
-            // undo restorations have different replacement strings, so they
-            // skip this path naturally.
             guard replacementString == "-",
                   affectedCharRange.length == 0
             else { return true }
@@ -812,20 +699,14 @@ struct MinimalTextEditor: NSViewRepresentable {
                 length: lineEnd - insertAt
             ))
 
-            // Trigger only when the line up to the cursor is exactly "--" and
-            // the rest of the line is empty — i.e., user is finishing "---"
-            // at the end of a fresh line, not editing inside content.
-            // Inside a fenced block `---` is code (a diff header, YAML).
             guard beforeCursor == "--", afterCursor.isEmpty,
                   !Self.isInCodeBlock(textView, at: lineRange.location) else { return true }
 
             let twoDashRange = NSRange(location: lineRange.location, length: 2)
             replaceWithHorizontalRule(in: textView, range: twoDashRange)
-            return false  // suppress the typed "-"
+            return false
         }
 
-        /// Tab right after a line's `=` types its answer in. Anywhere
-        /// else Tab is Tab.
         private func acceptAnswer(in textView: NSTextView) -> Bool {
             guard let storage = textView.textStorage,
                   let insertion = Self.answerInsertion(in: storage, selection: textView.selectedRange())
@@ -834,10 +715,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             return true
         }
 
-        /// What Tab would type at `selection`: the answer, with a space
-        /// first if the caret is right after the `=`. The caret only has
-        /// to be past the `=` with nothing but spaces after it — a stray
-        /// trailing space shouldn't turn Tab back into Tab. Pure for tests.
         static func answerInsertion(in storage: NSTextStorage, selection: NSRange) -> (location: Int, text: String)? {
             let ns = storage.string as NSString
             let caret = selection.location
@@ -864,8 +741,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                 length: lineEnd - lineRange.location
             ))
 
-            // Fallback path: catches `---` that arrived via paste, where the
-            // typed-character interceptor above wouldn't fire.
             if SmartEditing.isHorizontalRuleTrigger(line),
                !Self.isInCodeBlock(textView, at: lineRange.location) {
                 let replaceRange = NSRange(
@@ -893,12 +768,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             return true
         }
 
-        /// Replace `range` with the horizontal-rule string + newline and
-        /// move the cursor past it. The HR characters are stored as
-        /// plain `---` (markdown standard); the visible full-width
-        /// line is drawn by HorizontalRuleLayoutManager, while the
-        /// `---` characters themselves are rendered with a clear
-        /// foreground so only the line shows.
         private func replaceWithHorizontalRule(in textView: NSTextView, range: NSRange) {
             let replacement = SmartEditing.horizontalRule + "\n"
             replace(in: textView, range: range, with: replacement)
@@ -918,23 +787,13 @@ struct MinimalTextEditor: NSViewRepresentable {
             let newCursor = range.location + (replacement as NSString).length
             let newRange = NSRange(location: newCursor, length: 0)
             textView.setSelectedRange(newRange)
-            // Hand-rolled edits bypass NSTextView's keyDown path, so its
-            // built-in "scroll caret into view" doesn't fire. Without
-            // this, hitting Enter at the bottom edge leaves the new
-            // line off-screen until the user scrolls manually.
             textView.scrollRangeToVisible(newRange)
         }
     }
 }
 
-/// What the model asks of the editor showing the note.
 @MainActor
 protocol NoteEditor: AnyObject {
-    /// Finish the line being written — setting its reminder — before the
-    /// note is filed, or Wisp quits or restarts into an update.
     func finishEditing()
-    /// Replace one whole line as an edit of the editor's own: undoable,
-    /// the caret left where it was. False when the line no longer reads
-    /// `line`.
     func replaceLine(_ range: NSRange, reading line: String, with replacement: String) -> Bool
 }

@@ -4,9 +4,6 @@
 import AppKit
 import CoreGraphics
 
-/// Full screen an app draws on its own, without a macOS full-screen Space.
-/// Games built on GLFW or SDL raise one borderless window over the menu bar
-/// on the current desktop, so Space queries never report them.
 enum NotchAppFullscreen {
     struct WindowInfo: Equatable {
         let ownerPID: pid_t
@@ -15,9 +12,6 @@ enum NotchAppFullscreen {
         let bounds: CGRect
     }
 
-    /// Displays the frontmost app covers with a window raised above normal
-    /// windows. A level 0 window never counts, so a zoomed window under an
-    /// auto-hidden menu bar keeps the island.
     static func coveredDisplays(windows: [WindowInfo], frontmostPID: pid_t?, ownPID: pid_t,
                                 displays: [CGDirectDisplayID: CGRect]) -> Set<CGDirectDisplayID> {
         guard let frontmostPID, frontmostPID != ownPID else { return [] }
@@ -28,13 +22,11 @@ enum NotchAppFullscreen {
         })
     }
 
-    /// Allows a point of rounding on each edge.
     static func covers(_ window: CGRect, _ display: CGRect) -> Bool {
         guard !display.isEmpty else { return false }
         return window.insetBy(dx: -1, dy: -1).contains(display)
     }
 
-    /// Reads the windows on screen only when another app is frontmost.
     static func coveredDisplays() -> Set<CGDirectDisplayID> {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         guard let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,

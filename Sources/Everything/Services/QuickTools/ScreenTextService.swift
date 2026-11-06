@@ -4,15 +4,6 @@
 import AppKit
 import Vision
 
-/// Screen OCR: the user picks an area on the app's own capture surface, the
-/// text in it is recognized offline with Vision and lands on the clipboard.
-/// Needs Screen Recording, requested contextually on first use.
-///
-/// The picking and the capture both happen here rather than through the
-/// system's capture command. A separate command is judged by macOS on its own
-/// standing, which on recent versions can be refused even while this app is
-/// allowed, and a refused command writes no file and says nothing: the tool
-/// looked dead with no crosshair, no message and nothing to fix (issue #364).
 final class ScreenTextService: ObservableObject {
     static let shared = ScreenTextService()
 
@@ -45,14 +36,10 @@ final class ScreenTextService: ObservableObject {
                     forKey: DefaultsKey.screenOCRDetectQRCodes))
     }
 
-    /// Copies text from an image that has already been captured. Screenshot
-    /// previews expose QR results separately, so this path deliberately runs
-    /// text recognition even when the image also contains a code.
     func copyText(from image: CGImage) {
         recognize(image, detectQRCodes: false)
     }
 
-    /// What a captured region turned out to hold.
     enum Outcome: Equatable {
         case qr(BarcodeDetector.Reading)
         case text(String)
@@ -72,17 +59,12 @@ final class ScreenTextService: ObservableObject {
                                                     removeLineBreaks: removeLineBreaks,
                                                     fallbackLanguages: fallbackLanguages)
             DispatchQueue.main.async { [weak self] in
-                // A later copy belongs to the user, even if this recognition
-                // is still the latest OCR request. Never replace it with a
-                // result from an earlier capture.
                 guard self?.recognitionGeneration == generation,
                       AppFeature.screenOCR.isAvailable,
                       NSPasteboard.general.changeCount == pasteboardChangeCount else { return }
                 let strings = L10n.shared.s
                 switch outcome {
                 case .qr(let reading):
-                    // Show what the code holds instead of copying it blindly;
-                    // the panel offers copy and, for a link, open.
                     QRResultController.shared.show(reading: reading)
                 case .text(let text):
                     Self.copyToPasteboard(text)
@@ -94,10 +76,6 @@ final class ScreenTextService: ObservableObject {
         }
     }
 
-    /// A capture can run to tens of megapixels, like a long scrolling
-    /// capture in a screenshot preview or a large area on an 8K display.
-    /// Past the bound the clipboard history's Copy text uses, either is
-    /// scaled down here, off the main thread, before Vision reads it.
     private static func recognitionImage(_ image: CGImage) -> CGImage {
         guard let size = ClipboardImageRecognition.scaledSize(width: image.width, height: image.height),
               let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
@@ -114,10 +92,6 @@ final class ScreenTextService: ObservableObject {
         return context.makeImage() ?? image
     }
 
-    /// Decides what a captured region holds. A QR code wins over the text:
-    /// it is the thing the user pointed at, and the scan is a fast pass that
-    /// falls through to text recognition when no code is found. Pure enough
-    /// to exercise directly on a known image.
     static func outcome(for image: CGImage,
                         detectQRCodes: Bool,
                         removeLineBreaks: Bool,
@@ -131,8 +105,6 @@ final class ScreenTextService: ObservableObject {
                                     automaticallyDetectLanguage: true,
                                     preferredLanguages: fallbackLanguages)
         if lines.isEmpty {
-            // The fast path uses a different recognition model. It is a
-            // separate second chance when the accurate model returns no text.
             lines = recognizedLines(in: image,
                                     level: .fast,
                                     automaticallyDetectLanguage: false,

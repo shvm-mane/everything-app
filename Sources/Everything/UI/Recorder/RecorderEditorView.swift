@@ -5,15 +5,11 @@ import AVFoundation
 import AVKit
 import SwiftUI
 
-/// The recording editor. Real bands, not floating chrome: the picture lives
-/// in its own region and nothing ever slides underneath the controls.
 struct RecorderEditorView: View {
     @ObservedObject var model: RecorderEditorModel
     let controller: RecorderEditorController
     @ObservedObject private var l10n = L10n.shared
     @State private var sharedRecord: RecordingShareRecord?
-    /// The area being drawn for a blur, in the stage's own points, while the
-    /// mouse is down.
     @State private var blurDraft: CGRect?
     @AppStorage(DefaultsKey.recorderSharingEnabled) private var sharingEnabled = true
 
@@ -44,10 +40,6 @@ struct RecorderEditorView: View {
             bottomBand
         }
         .background(stageBackground)
-        // The window shows its content under the title bar, and SwiftUI insets
-        // for that bar by default. Taking the inset back is what lets the top
-        // band BE the title bar, with the brand and the actions on the same
-        // line as the traffic lights instead of a band's height below them.
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeOut(duration: 0.18), value: model.isExporting)
         .animation(.easeOut(duration: 0.18), value: model.lastExportedURL)
@@ -228,9 +220,6 @@ struct RecorderEditorView: View {
                     .fill(Color.black.opacity(0.72))
                 PlayerSurface(player: model.player)
                 if model.isAimingZoom {
-                    // Aiming is a single click on the picture, and the overlay
-                    // is what says so: the pointer becomes a crosshair and the
-                    // next click is the aim.
                     Color.black.opacity(0.001)
                         .contentShape(Rectangle())
                         .onTapGesture { location in
@@ -263,8 +252,6 @@ struct RecorderEditorView: View {
         .padding(.vertical, 14)
         .onTapGesture {
             guard !model.isAimingZoom, !model.isPickingBlurArea else { return }
-            // Clicking the picture puts a selected zoom or blur down before it
-            // does anything else, so there is always a way out of it.
             if model.selectedZoomID != nil {
                 model.selectZoom(nil)
             } else if model.selectedBlurID != nil {
@@ -275,9 +262,6 @@ struct RecorderEditorView: View {
         }
     }
 
-    /// Drawing the area is one drag on the picture, and the rectangle that
-    /// follows the mouse is what says so. It is drawn over the recording as
-    /// captured, so what is inside the rectangle is exactly what gets hidden.
     private func blurPicker(in size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
             Color.black.opacity(0.001)
@@ -335,8 +319,6 @@ struct RecorderEditorView: View {
                         .frame(height: 30)
                 }
             }
-            // The text lane only exists once there is text, so an editor
-            // nobody typed in stays as simple as it was.
             if !model.document.texts.isEmpty {
                 timelineRow(strings.textContentLabel) {
                     RecorderZoomLane(model: model, kind: .text,
@@ -492,9 +474,6 @@ struct RecorderEditorView: View {
         }
     }
 
-    /// What this preset actually produces for THIS recording. A file size
-    /// would be a guess, because a bitrate is a ceiling and screen content
-    /// undershoots it hard; the resolution is a fact.
     private var outputSizeLabel: String {
         let size = model.exportSize
         guard size.width > 0 else { return "" }
@@ -519,10 +498,6 @@ struct RecorderEditorView: View {
             .ignoresSafeArea()
     }
 
-    /// Saving keeps the picture visible: a scrim over the whole editor says
-    /// "this is hard for me", and it is not.
-    /// In a narrow window the band squeezes this chip; the bar gives way
-    /// first, so the words never wrap letter by letter.
     private var exportProgressChip: some View {
         HStack(spacing: 8) {
             if model.exportPhase == .uploading {
@@ -558,9 +533,6 @@ struct RecorderEditorView: View {
         }
     }
 
-    /// The finished file itself, draggable straight into a chat window and
-    /// clickable to show it in the Finder. Ending with the name of a folder
-    /// stops one step short of what the person actually wanted.
     private func finishedFileChip(_ url: URL) -> some View {
         Button {
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -766,9 +738,6 @@ private struct RecorderToolbarButtonStyle: ButtonStyle {
     }
 }
 
-/// Two independently clickable parts inside the same recorder-toolbar shell.
-/// The primary copy action and its menu keep separate hit targets without
-/// giving up the toolbar's pressed fill, typography or dimensions.
 private struct RecorderToolbarSplitPartStyle: ButtonStyle {
     var compact = false
 
@@ -785,8 +754,6 @@ private struct RecorderToolbarSplitPartStyle: ButtonStyle {
 
 // MARK: - Player
 
-/// A plain player layer. SwiftUI's own player brings system transport
-/// controls with it, and the editor already has its own.
 private struct PlayerSurface: NSViewRepresentable {
     let player: AVPlayer
 
@@ -823,18 +790,12 @@ private struct PlayerSurface: NSViewRepresentable {
 
 // MARK: - Filmstrip
 
-/// The recording as a strip of frames, with the kept part bright and a handle
-/// at each end. Dragging a handle is the whole trim interaction: there is no
-/// second place to type numbers, because there does not need to be.
 private struct Filmstrip: View {
     @ObservedObject var model: RecorderEditorModel
     private enum Handle { case start, end }
 
     private let handleWidth: CGFloat = 12
     private let coordinateSpace = "recorderFilmstrip"
-    /// Whether the drag in progress is picking a stretch to cut rather than
-    /// scrubbing. Decided on its first movement and kept, so letting go of
-    /// Shift halfway through does not turn the pick into a scrub.
     @State private var dragPicksCut: Bool?
 
     var body: some View {
@@ -846,13 +807,6 @@ private struct Filmstrip: View {
             let endX = max(startX + handleWidth * 2, position(trim.end, width: width))
 
             ZStack(alignment: .topLeading) {
-                // The strip itself is what scrubbing listens to. The handles
-                // sit above it with their own gestures, so a drag that starts
-                // on a handle trims and never moves the playhead too.
-                // Dragging across the film scrubs, the way every simple
-                // editor does; holding Shift while dragging picks a stretch
-                // to remove instead. The picture follows the pointer either
-                // way, so a cut can land on the exact moment.
                 thumbnails
                     .frame(width: width, height: height)
                     .contentShape(Rectangle())
@@ -872,14 +826,10 @@ private struct Filmstrip: View {
                             .onEnded { _ in dragPicksCut = nil }
                     )
                     .onTapGesture { location in
-                        // A click goes to that moment and puts down any
-                        // selection, the way clicking away works everywhere.
                         model.setCutSelection(nil)
                         model.seek(to: seconds(at: location.x, width: width))
                     }
 
-                // What was already cut out goes dark like the trimmed ends,
-                // with a seam at its start you can click to put it back.
                 ForEach(Array(model.document.cuts.enumerated()), id: \.offset) { _, cut in
                     let seam = position(cut.start, width: width)
                     let from = max(startX, seam)
@@ -997,9 +947,6 @@ private struct Filmstrip: View {
 
 // MARK: - Ruler
 
-/// A tick for every press the recording captured. It costs almost nothing,
-/// it gives the zooms something to snap onto, and it silently answers the
-/// first question anybody asks about an automatic zoom: why is it here.
 private struct ClickRuler: View {
     @ObservedObject var model: RecorderEditorModel
 
@@ -1008,8 +955,6 @@ private struct ClickRuler: View {
             let width = proxy.size.width
             let duration = max(0.001, model.duration)
             ZStack(alignment: .topLeading) {
-                // The ruler is where scrubbing lives, so the filmstrip below
-                // is free to be about picking a stretch to cut.
                 Color.black.opacity(0.001)
                     .frame(width: width, height: proxy.size.height)
                     .contentShape(Rectangle())

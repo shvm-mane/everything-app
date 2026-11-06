@@ -64,8 +64,6 @@ enum ScreenshotCanvasSupport {
         context.draw(image, in: destination)
         return context.makeImage()
     }
-    /// Centered on whole pixels: a layer drawn off the pixel grid is
-    /// resampled, and a pasted screenshot's text would export blurred.
     static func fittedImageRect(_ image: CGImage, canvas: CGSize) -> CGRect {
         let width = CGFloat(image.width), height = CGFloat(image.height)
         let factor = min(1, min(canvas.width / width, canvas.height / height))
@@ -76,9 +74,6 @@ enum ScreenshotCanvasSupport {
     }
     static let imageHandles = ScreenshotSupport.Handle.allCases
 
-    /// How close to an expansion grip, in points on screen, a press picks it
-    /// up. The grips sit centered on the capture's edge, so the editor takes
-    /// presses this far outside the canvas too.
     static let expansionGripReach: CGFloat = 10
 
     static func expansionHandle(at point: CGPoint, rect: CGRect,

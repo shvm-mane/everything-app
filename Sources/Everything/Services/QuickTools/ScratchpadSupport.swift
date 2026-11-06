@@ -3,16 +3,12 @@
 
 import Foundation
 
-/// How long each scratchpad keeps text that nobody edits. The check runs only
-/// when the panel opens, against the stored edit dates, so the feature needs
-/// no timer at all.
 enum ScratchpadRetention: String, CaseIterable {
     case never
     case day
     case week
     case month
 
-    /// Seconds the text may sit unedited before it clears; nil keeps forever.
     var maxIdleInterval: TimeInterval? {
         switch self {
         case .never: return nil
@@ -22,7 +18,6 @@ enum ScratchpadRetention: String, CaseIterable {
         }
     }
 
-    /// Corrupt or unknown stored values fall back to keeping the text.
     static func sanitized(_ rawValue: String?) -> ScratchpadRetention {
         guard let rawValue,
               let retention = ScratchpadRetention(rawValue: rawValue) else {
@@ -37,8 +32,6 @@ struct ScratchpadMarkdownBlock: Equatable {
         case paragraph
         case heading(Int)
         case unorderedListItem(depth: Int)
-        /// A `- [ ]` or `- [x]` item; `box` is the UTF-16 offset of its `[`
-        /// in the text, so a click edits the very box it was drawn from.
         case taskListItem(depth: Int, checked: Bool, box: Int)
         case orderedListItem(ordinal: Int, depth: Int)
         case quote(depth: Int)
@@ -49,8 +42,6 @@ struct ScratchpadMarkdownBlock: Equatable {
     let kind: Kind
     let containerID: Int?
     let text: AttributedString
-    /// The quotes around a list item, which its reading keeps ahead of its
-    /// marker; a quote's own paragraphs carry their depth in `kind`.
     var quoteDepth = 0
 }
 
@@ -61,11 +52,7 @@ struct ScratchpadPad: Codable, Equatable, Identifiable {
     var modifiedAt: Date?
 }
 
-/// The whole scratchpad state travels as one small document. Stable ids keep
-/// selection independent from names, while array order is the tab order.
 struct ScratchpadDocument: Codable, Equatable {
-    /// Keeps the tab strip and Settings backup deliberately small without
-    /// imposing a limit on the text inside any pad.
     static let maximumPadCount = 12
     static let maximumNameLength = 40
 
@@ -165,13 +152,6 @@ struct ScratchpadDocument: Codable, Equatable {
     }
 }
 
-/// What the keyboard means while the pad has focus. Tabs mirror the browser:
-/// Command-T opens one and Command-W closes one, or hides the pad when only the
-/// last tab remains. Command-F is the system's own find, which the text view
-/// already knows how to run, and Command-G and Shift-Command-G step through
-/// its matches, since no menu in the app carries them. One table, so both
-/// pads answer the same keys. `commandOnly` is Command without Control or
-/// Option; Shift is its own flag because only G takes it.
 enum ScratchpadFocusedShortcut {
     enum Action: Equatable {
         case createPad
@@ -206,16 +186,8 @@ enum ScratchpadFocusedShortcut {
 }
 
 enum ScratchpadSupport {
-    /// The fill sits over the existing material: zero preserves the familiar
-    /// frosted pad, while one fully covers what is behind the window.
     static let backgroundOpacityRange: ClosedRange<Double> = 0...1
 
-    /// The size the whole pad draws at, for anyone who finds the editor's own
-    /// 13 small to live in. It is a preference rather than a mark: plain text cannot carry a
-    /// point size, so one selection cannot differ from another, and the heading
-    /// levels are the format's own way of making words bigger. They step up
-    /// from whatever this is set to. Untouched, the pad keeps the 13 it drew
-    /// at before there was a choice.
     static let defaultTextSize: Double = 13
     static let textSizeRange: ClosedRange<Double> = 10...22
 
@@ -233,13 +205,8 @@ enum ScratchpadSupport {
         !isPinned && !exportModalActive
     }
 
-    /// Rendering is on demand and never changes the stored plain text. Native
-    /// presentation intents keep headings, lists and quotes semantic without a
-    /// second Markdown parser or any work while the preview is closed.
     static func markdownPreview(_ text: String) -> [ScratchpadMarkdownBlock] {
         guard !text.isEmpty else { return [] }
-        // Source positions say where each task's box sits in the text. They
-        // leave the blocks once read, so the reading never carries them.
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible,
@@ -295,8 +262,6 @@ enum ScratchpadSupport {
             : blocks
     }
 
-    /// The checkbox opening a list item's text: `[ ]`, `[x]` or `[X]`, and
-    /// the bare `[]` that is easy to type, followed by a space or the end.
     private static func taskMarker(in text: String) -> (checked: Bool, length: Int)? {
         let characters = Array(text.prefix(4))
         func closes(_ at: Int) -> Bool { characters.count == at || characters[at] == " " || characters[at] == "\t" }
@@ -309,10 +274,6 @@ enum ScratchpadSupport {
         return nil
     }
 
-    /// Turns a list item that opens with a checkbox into a task that knows
-    /// where its box is in `source`: the parser's own position of the item's
-    /// first run, so the reading and a click can never disagree about which
-    /// line a box belongs to. Source positions leave the block here.
     private static func withTask(_ block: ScratchpadMarkdownBlock, in source: String,
                                  lineStarts: [String.Index]) -> ScratchpadMarkdownBlock {
         var text = block.text
@@ -320,26 +281,15 @@ enum ScratchpadSupport {
         text.markdownSourcePosition = nil
         let plain = ScratchpadMarkdownBlock(kind: block.kind, containerID: block.containerID, text: text,
                                             quoteDepth: block.quoteDepth)
-        // The box has to open the item as plain text: `[ ]` in code or
-        // emphasis is only text, and so is an escaped or encoded bracket,
-        // which reads the same but leaves no box where its run starts.
         guard case .unorderedListItem(let depth) = block.kind,
               let first, first.inlinePresentationIntent == nil, first.link == nil,
               let position = first.markdownSourcePosition,
-              // The parser's line and UTF-8 column, read against lines
-              // counted here. Foundation's own conversion slips a line after
-              // a lazy continuation line or a NUL, and its NSRange variant
-              // after every CRLF.
               position.startLine >= 1, position.startLine <= lineStarts.count, position.startColumn >= 1,
               let start = source.utf8.index(lineStarts[position.startLine - 1],
                                             offsetBy: position.startColumn - 1,
                                             limitedBy: source.utf8.endIndex),
               let marker = taskMarker(in: String(text.characters))
         else { return plain }
-        // A position that still lands elsewhere, as one after a NUL on the
-        // item's own line does, must not reach a box of the same shape, so
-        // the text there has to read as the run does, up to the first escape
-        // or entity the parser resolved.
         let run = String(block.text[first.range].characters)
         guard run.hasPrefix(source[start...].prefix(run.count).prefix { !"\\&\u{0}".contains($0) })
         else { return plain }
@@ -356,8 +306,6 @@ enum ScratchpadSupport {
                                        containerID: block.containerID, text: text, quoteDepth: block.quoteDepth)
     }
 
-    /// Where each line of `text` starts, ending lines at \n, \r\n and a lone
-    /// \r, as the Markdown parser does.
     private static func lineStarts(in text: String) -> [String.Index] {
         let bytes = text.utf8
         var starts = [bytes.startIndex]
@@ -374,8 +322,6 @@ enum ScratchpadSupport {
         return starts
     }
 
-    /// The box whose `[` sits at UTF-16 offset `box` of `text`: `[ ]`, `[x]`,
-    /// `[X]` or the bare `[]`, or nil when no box starts there.
     private static func taskBox(at box: Int, in text: String) -> (checked: Bool, length: Int)? {
         let text = text as NSString
         func character(_ offset: Int) -> String? {
@@ -389,8 +335,6 @@ enum ScratchpadSupport {
 
     static let taskScheme = "vorssaint-task"
 
-    /// The edit that checks or unchecks the box whose `[` sits at UTF-16
-    /// offset `box`, or nil when the text holds no box there any more.
     static func taskToggleEdit(box: Int, in text: String) -> (range: NSRange, replacement: String)? {
         guard let current = taskBox(at: box, in: text) else { return nil }
         if current.length == 2 { return (NSRange(location: box + 1, length: 0), "x") }
@@ -400,11 +344,6 @@ enum ScratchpadSupport {
     private static let listMarker = try? NSRegularExpression(
         pattern: #"^([ \t]*(?:>[ \t]*)*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]?\](?:[ \t]+|$))?"#)
 
-    /// What Shift-Return does with the caret at `caret`: in a list item it
-    /// opens the next one, with the same marker, a fresh unchecked box for a
-    /// task and the next number for a numbered item; on an empty item it ends
-    /// the list instead; anywhere else it is a plain line break. `range` is
-    /// what is replaced and `caret` the offset after the edit.
     static func lineBreakEdit(in text: String, selection: NSRange) -> (range: NSRange, replacement: String, caret: Int) {
         let plain = (range: selection, replacement: "\n", caret: selection.location + 1)
         let whole = text as NSString
@@ -425,11 +364,9 @@ enum ScratchpadSupport {
         let spacing = lineNS.substring(with: match.range(at: 3))
         let hasBox = match.range(at: 4).location != NSNotFound
         if selection.location == NSMaxRange(content), match.range.length == lineNS.length || lineNS.substring(from: match.range.length).trimmingCharacters(in: .whitespaces).isEmpty {
-            // An empty item: the list ends, and the marker goes.
             return (content, "", content.location)
         }
         var next = marker
-        // The largest number has no next one; its item repeats it.
         if let digits = Int(marker.dropLast()), digits < Int.max, let delimiter = marker.last {
             next = "\(digits + 1)\(delimiter)"
         }
@@ -437,9 +374,6 @@ enum ScratchpadSupport {
         return (selection, replacement, selection.location + (replacement as NSString).length)
     }
 
-    /// Whether `before`, the text of a line up to the caret, ends with the
-    /// `[` of a list item's checkbox, so that a `]` typed next closes an
-    /// empty box: `- [`, `  * [`, `> - [`.
     static func completesEmptyTaskBox(before: String) -> Bool {
         guard before.hasSuffix("["), let marker = taskLine else { return false }
         let box = before + " ]"
@@ -455,8 +389,6 @@ enum ScratchpadSupport {
         var listIsOrdered: Bool?
         var listOrdinal = 1
         var quoteDepth = 0
-        // Components run from the innermost out, so a quote met after a list
-        // holds that list, and its items keep the quote around their marker.
         var listQuoteDepth = 0
         var containerID: Int?
 
@@ -520,16 +452,12 @@ enum ScratchpadSupport {
         !pad.text.isEmpty
     }
 
-    /// Whether the saved text expired: it only clears when a retention period
-    /// is chosen and the last edit is older than that period. No saved text
-    /// (or a clock that moved backwards) never clears.
     static func shouldClear(lastEdited: Date?, now: Date, retention: ScratchpadRetention) -> Bool {
         guard let limit = retention.maxIdleInterval, let lastEdited else { return false }
         let idle = now.timeIntervalSince(lastEdited)
         return idle > limit
     }
 
-    /// Suggested name for the exported file, like "Scratchpad 2026-07-17.txt".
     static func exportFileName(title: String, date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -541,14 +469,10 @@ enum ScratchpadSupport {
     }
 }
 
-/// A mark the formatting toolbar can apply. Each one is written as the
-/// Markdown a user would have typed by hand, so the pad stays plain text and
-/// the preview parser needs nothing new to understand it.
 enum ScratchpadMark: String, CaseIterable {
     case bold, italic, strikethrough, heading, bullet
     case numbered, quote, code, link
 
-    /// Inline marks wrap the selection.
     var wrap: String? {
         switch self {
         case .bold: return "**"
@@ -559,10 +483,6 @@ enum ScratchpadMark: String, CaseIterable {
         }
     }
 
-    /// Line marks prefix every line the selection touches, and clicking steps
-    /// along this list before coming back off. A bullet is only on or off, but
-    /// a heading has levels, and the preview draws each at its own size, so the
-    /// button walks down them rather than stranding everyone on the largest.
     var lineCycle: [String] {
         switch self {
         case .heading: return ["# ", "## ", "### "]
@@ -573,11 +493,8 @@ enum ScratchpadMark: String, CaseIterable {
         }
     }
 
-    /// Ordered items are numbered as they are written, so the prefix a line
-    /// ends up with is not the prefix the line after it gets.
     var isNumbered: Bool { self == .numbered }
 
-    /// A letter drawn in place of the symbol, where one says the thing better.
     var glyph: String? { self == .heading ? "H" : nil }
 
     var symbol: String {
@@ -585,9 +502,6 @@ enum ScratchpadMark: String, CaseIterable {
         case .bold: return "bold"
         case .italic: return "italic"
         case .strikethrough: return "strikethrough"
-        // Never reached while `glyph` answers for headings, and kept honest in
-        // case it stops: every symbol for this reads as font size, which is a
-        // different thing, and not one plain Markdown can say.
         case .heading: return "textformat.size"
         case .bullet: return "list.bullet"
         case .numbered: return "list.number"
@@ -598,19 +512,13 @@ enum ScratchpadMark: String, CaseIterable {
     }
 }
 
-/// One replacement, ready for the text view: what to swap out, what to put
-/// there, and where the selection belongs afterwards.
 struct ScratchpadMarkEdit: Equatable {
-    /// Both ranges are in UTF-16 units, the same units NSTextView selections
-    /// use, so nothing has to be converted on the way in or out.
     let range: NSRange
     let replacement: String
     let selection: NSRange
 }
 
 extension ScratchpadSupport {
-    /// Every mark toggles: applying one to text that already carries it takes
-    /// it back off, so a second click on the same button undoes the first.
     static func edit(applying mark: ScratchpadMark,
                      to text: String,
                      selection: NSRange) -> ScratchpadMarkEdit {
@@ -621,8 +529,6 @@ extension ScratchpadSupport {
         if mark == .link {
             return linkEdit(in: ns, selection: safe)
         }
-        // A drag across words picks up the space after them, and Markdown will
-        // not close a mark against a space, so "**word **" would never render.
         if mark.wrap != nil {
             safe = trimmingSpace(from: safe, in: ns)
         }
@@ -643,20 +549,12 @@ extension ScratchpadSupport {
         var end = selection.location + selection.length
         while start < end, isSpace(ns.character(at: start)) { start += 1 }
         while end > start, isSpace(ns.character(at: end - 1)) { end -= 1 }
-        // Nothing but space selected: there are no words to keep the marks on.
         return start == end ? selection : NSRange(location: start, length: end - start)
     }
 
-    /// What a link needs next is the address, so it goes in as a placeholder
-    /// that arrives selected: the first keystroke after the click replaces it.
-    /// Asking for the address up front would need a dialog the pad has no room
-    /// for, and would stop anyone pasting a link they have not copied yet.
     static let linkPlaceholder = "url"
 
     private static func linkEdit(in ns: NSString, selection: NSRange) -> ScratchpadMarkEdit {
-        // A second click means here what it means for every other mark: take it
-        // back off. The first click leaves the address selected, not the whole
-        // link, so the link has to be recognised from anywhere inside it.
         if let existing = enclosingLink(in: ns, selection: selection) {
             if existing.isImage {
                 return ScratchpadMarkEdit(range: selection,
@@ -671,7 +569,7 @@ extension ScratchpadSupport {
                                    length: (label as NSString).length))
         }
         let selected = ns.substring(with: selection)
-        let opening = (selected as NSString).length + 3   // "[" + text + "]("
+        let opening = (selected as NSString).length + 3
         return ScratchpadMarkEdit(
             range: selection,
             replacement: "[\(selected)](\(linkPlaceholder))",
@@ -679,9 +577,6 @@ extension ScratchpadSupport {
                                length: (linkPlaceholder as NSString).length))
     }
 
-    /// The link the selection sits in, with the range of its words. A caret has
-    /// to be strictly inside one: resting it against either edge is where
-    /// someone is about to write a new link, not undo the one behind them.
     private static func enclosingLink(in ns: NSString,
                                       selection: NSRange) -> (whole: NSRange, label: NSRange, isImage: Bool)? {
         var start = 0
@@ -735,8 +630,6 @@ extension ScratchpadSupport {
         let markerLength = (wrap as NSString).length
         let selected = ns.substring(with: selection)
 
-        // The markers sit inside the selection, which is what a selection
-        // dragged across the whole marked span looks like.
         if selected.count >= wrap.count * 2,
            selected.hasPrefix(wrap), selected.hasSuffix(wrap) {
             let inner = String(selected.dropFirst(wrap.count).dropLast(wrap.count))
@@ -744,8 +637,6 @@ extension ScratchpadSupport {
                                       whole: selection, selection: selection)
         }
 
-        // Or just outside it, which is where the second click lands: applying
-        // a mark leaves the inner text selected, not the markers.
         let before = NSRange(location: selection.location - markerLength, length: markerLength)
         let after = NSRange(location: selection.location + selection.length, length: markerLength)
         if before.location >= 0,
@@ -759,8 +650,6 @@ extension ScratchpadSupport {
                 selection: selection)
         }
 
-        // With no selection the pair still goes in, with the caret between the
-        // halves, so the button can be clicked before the words are typed.
         return ScratchpadMarkEdit(
             range: selection,
             replacement: wrap + selected + wrap,
@@ -768,9 +657,6 @@ extension ScratchpadSupport {
                                length: selection.length))
     }
 
-    /// Adjacent marked spans are not one wrapper. Joining their content under
-    /// one pair gives the whole selection the mark; the next click removes it.
-    /// Leave ambiguous or escaped delimiters alone rather than break the text.
     private static func existingInlineEdit(wrap: String, inner: String,
                                            whole: NSRange, selection: NSRange) -> ScratchpadMarkEdit {
         let pieces = inner.components(separatedBy: wrap)
@@ -794,19 +680,11 @@ extension ScratchpadSupport {
                                length: (joined as NSString).length))
     }
 
-    /// Italic's marker is a single star, which is also half of bold's pair, so
-    /// no one character says whether a star belongs to italic. What settles it
-    /// is how many stars run together: an odd run has an italic star on the
-    /// inside of however many bold pairs sit outside it. Reading one character
-    /// instead left a second click adding a pair rather than removing one, and
-    /// bold and italic together grew a star on every click.
     private static func italicEdit(in ns: NSString, selection: NSRange) -> ScratchpadMarkEdit {
         let selected = ns.substring(with: selection)
         let leading = selected.prefix(while: { $0 == "*" }).count
         let trailing = selected.reversed().prefix(while: { $0 == "*" }).count
 
-        // The stars are inside the selection, which is what selecting the whole
-        // marked span looks like. Only the innermost pair is italic's.
         if leading % 2 == 1, trailing % 2 == 1, selected.count > leading + trailing - 1 {
             let inner = String(selected.dropFirst().dropLast())
             if leading == 1, trailing == 1, inner.contains("*"), !inner.contains("**") {
@@ -823,8 +701,6 @@ extension ScratchpadSupport {
                                    length: (inner as NSString).length))
         }
 
-        // Or just outside it, which is where the second click lands, since the
-        // first leaves the words selected and the markers around them.
         if starRun(in: ns, endingAt: selection.location) % 2 == 1,
            starRun(in: ns, startingAt: selection.location + selection.length) % 2 == 1 {
             let outer = NSRange(location: selection.location - 1, length: selection.length + 2)
@@ -880,21 +756,12 @@ extension ScratchpadSupport {
         }
         let lineRange = ns.lineRange(for: selection)
         let block = ns.substring(with: lineRange)
-        // lineRange keeps the line terminator. Splitting with it still attached
-        // invents a trailing empty line that would collect a prefix of its own.
         let terminator = block.hasSuffix("\n") ? "\n" : ""
         let body = terminator.isEmpty ? block : String(block.dropLast())
         let lines = body.components(separatedBy: "\n")
 
-        // Indentation is what nests a list, so the mark goes after it and the
-        // line keeps its depth rather than growing "-   - text".
         func indent(of line: String) -> Substring { line.prefix(while: { $0 == " " || $0 == "\t" }) }
-        // Blank lines are skipped rather than marked, except in a pad that is
-        // blank altogether, where the click is how the first line gets started.
         let written = lines.map { String($0.dropFirst(indent(of: $0).count)) }.filter { !$0.isEmpty }
-        // Where the lines already sit in the cycle, and so what the click
-        // means. Past the last step the mark comes off, so a button clicked
-        // until something looks right always has an empty rung to land on.
         let step: Int?
         if mark.isNumbered {
             step = !written.isEmpty && written.allSatisfy { numberedPrefix(of: $0) != nil } ? 0 : nil
@@ -919,10 +786,6 @@ extension ScratchpadSupport {
         let replacement = updated.joined(separator: "\n") + terminator
         let firstDelta = (updated[0] as NSString).length - (lines[0] as NSString).length
         let totalDelta = (replacement as NSString).length - (block as NSString).length
-        // Both ends move with the prefixes before them. The start is held at
-        // the line's start when a removed prefix would pull it past that, and
-        // the end is worked out on its own so that hold is not added to the
-        // length, which ran the selection into the text after the lines.
         let start = max(lineRange.location, selection.location + firstDelta)
         let end = max(start, selection.location + selection.length + totalDelta)
         return ScratchpadMarkEdit(
@@ -931,9 +794,6 @@ extension ScratchpadSupport {
             selection: NSRange(location: start, length: end - start))
     }
 
-    /// A line already carrying a line mark has it replaced rather than
-    /// stacked, whichever mark it was: a heading cannot grow into "# ## text",
-    /// and asking a bullet for a heading gives a heading, not "# - text".
     private static func strippingLineMark(from line: String) -> String {
         let hashes = line.prefix(while: { $0 == "#" })
         if !hashes.isEmpty, hashes.count <= 6, line.dropFirst(hashes.count).hasPrefix(" ") {
@@ -948,7 +808,6 @@ extension ScratchpadSupport {
         return line
     }
 
-    /// "12. " and the like, however many digits the list has run to.
     private static func numberedPrefix(of line: String) -> String? {
         let digits = line.prefix(while: { $0.isNumber })
         guard !digits.isEmpty, line.dropFirst(digits.count).hasPrefix(". ") else { return nil }

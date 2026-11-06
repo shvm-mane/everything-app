@@ -107,8 +107,6 @@ final class DiskImageInstallerService {
         }
     }
 
-    /// Only Homebrew's own images are excluded. An unrelated manual mount
-    /// must still be offered while a cask installation is running.
     private static func isHomebrewImage(_ imageURL: URL) -> Bool {
         guard let libraryURL = FileManager.default.urls(for: .libraryDirectory,
                                                         in: .userDomainMask).first else { return false }
@@ -193,10 +191,6 @@ final class DiskImageInstallerService {
         options.frame = NSRect(origin: .zero, size: options.fittingSize)
         alert.accessoryView = options
 
-        // Not runModal: this runs inside a main-queue block (the hop after the
-        // mount check), and a modal loop started there holds back later
-        // main-queue work, such as shortcut actions, until the alert closes.
-        // Its modal panel mode also stops default-mode timers (issue #1665).
         NSApp.activate(ignoringOtherApps: true)
         installPrompt = NonModalAlert.present(alert, retaining: [destinationPrompt]) { [weak self] response in
             guard let self else { return }
@@ -238,8 +232,6 @@ final class DiskImageInstallerService {
         }
     }
 
-    /// Copying and verifying take a few seconds with nothing else on screen,
-    /// which reads as a failure. A quiet floating card keeps the wait honest.
     private func showProgress(for candidate: Candidate, strings: DiskImageInstallerStrings) {
         let host = NSHostingController(rootView: DiskImageInstallProgressView(
             icon: NSWorkspace.shared.icon(forFile: candidate.appURL.path),
@@ -327,9 +319,6 @@ final class DiskImageInstallerService {
 
         let stagedApp = stagingDirectory.appendingPathComponent(candidate.appURL.lastPathComponent,
                                                                  isDirectory: true)
-        // Carrying the mounted image's quarantine over leaves the installed app eligible for
-        // path randomization, so macOS runs it from a read-only random location instead of
-        // Applications. The checks below are the same assessment that flag defers to.
         let copy = Self.run("/usr/bin/ditto", arguments: [
             "--rsrc", "--extattr", "--acl", "--noqtn",
             candidate.appURL.path, stagedApp.path,
@@ -421,7 +410,6 @@ final class DiskImageInstallerService {
                 alert.informativeText = strings.failedBody
             }
         }
-        // Not runModal either: this runs inside the hop after the install.
         NSApp.activate(ignoringOtherApps: true)
         NonModalAlert.present(alert) { _ in completion() }
     }
@@ -519,11 +507,6 @@ private final class DiskImageInstallDestinationPrompt: NSObject {
     @objc func updateDestination(_ sender: NSButton) {
         let folder = sender.state == .on ? strings.userApplicationsFolder : strings.applicationsFolder
         alert.informativeText = String(format: strings.promptBodyFormat, displayName, folder)
-        // The alert keeps the height it was laid out with, and the home-folder
-        // wording can need one more line than the default one, which would cut
-        // its last line off. Lay the alert out again for the longer wording,
-        // keeping the bottom edge in place so the options stay under the
-        // pointer; the shorter wording simply leaves that line blank.
         guard sender.state == .on, alert.window.isVisible else { return }
         let window = alert.window
         let bottom = window.frame.minY

@@ -9,47 +9,33 @@ import CoreMedia
 import Foundation
 import ObjectiveC
 
-/// Bridges macOS native AirPlay output routing into Vorssaint.
-///
-/// Discovers and connects AirPlay devices using the system's trusted routing
-/// stack (`AVOutputContext` / `AVRoutePickerView`), bypassing Core Audio HAL's
-/// inability to enumerate offline AirPlay endpoints.
 final class AirPlayRouteManager: NSObject, ObservableObject {
     static let shared = AirPlayRouteManager()
 
-    /// Virtual UID used by Vorssaint to represent an AirPlay output route.
     static let airPlaySentinelUID = "vorssaint.output.airplay"
 
     @Published private(set) var isAvailable: Bool = false
     @Published private(set) var isConnected: Bool = false
     @Published private(set) var activeSpeakerName: String?
-    /// Main thread. Static so the panel's dismissal check can read it
-    /// without creating the manager, which loads the private routing stack:
-    /// a Vorssaint without the mixer must not pay for AirPlay at all.
     private(set) static var isPresentingPicker = false
 
-    /// What the mixer's device refresh needs, readable from its HAL queue
-    /// without creating the manager (which must happen on the main thread).
     private static let snapshotLock = NSLock()
     private static var snapshotIsListed = false
     private static var snapshotSpeakerName: String?
     private static var snapshotIsConnected = false
 
-    /// True while the mixer is running and AirPlay can actually be streamed to.
     static var isListed: Bool {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
         return snapshotIsListed
     }
 
-    /// True while a speaker is picked, so the AirPlay entry can carry audio.
     static var isSpeakerConnected: Bool {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
         return snapshotIsConnected
     }
 
-    /// The speaker chosen in the picker, if any.
     static var currentSpeakerName: String? {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
@@ -61,10 +47,8 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
 
     private var routingContext: NSObject?
     private var routingContextID: String?
-    /// The backup check, scheduled only while a renderer streams to the speaker.
     private var pollTimer: Timer?
     private var contextObservers: [NSObjectProtocol] = []
-    /// Called on the main thread when the connection or speaker changes.
     private var onChange: (() -> Void)?
 
     private typealias MsgSendClass = @convention(c) (AnyClass, Selector) -> AnyObject?
@@ -76,9 +60,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
     private override init() {
         dispatchPrecondition(condition: .onQueue(.main))
         super.init()
-        // The private routing objects exist on older systems too, but only on
-        // macOS 27 was the shared context seen to stay apart from the Mac's
-        // own route and the renderer seen to reach the speaker.
         let systemSupported: Bool
         if #available(macOS 27, *) { systemSupported = true } else { systemSupported = false }
         if systemSupported {
@@ -98,12 +79,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         pollTimer?.invalidate()
     }
 
-    /// Starts tracking the picked speaker while the mixer runs. Main thread.
-    ///
-    /// Nothing wakes up on a schedule for someone who never uses AirPlay: the
-    /// context announces when its output devices change. Only while a stream
-    /// is live does a slow check back that up, so a speaker that disappears
-    /// without a notification still hands its apps back to the Mac.
     func activate(onChange: @escaping () -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
         self.onChange = onChange
@@ -124,7 +99,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         updateStreamCheck()
     }
 
-    /// Stops tracking; the mixer no longer lists AirPlay. Main thread.
     func deactivate() {
         dispatchPrecondition(condition: .onQueue(.main))
         contextObservers.forEach(NotificationCenter.default.removeObserver)
@@ -143,23 +117,16 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         Self.snapshotLock.unlock()
     }
 
-    /// Only the default shared context: the system audio context is the route
-    /// of the whole Mac, which a per-app route must never move.
     private func setupContext() {
         guard let cls = NSClassFromString("AVOutputContext"), let sym = msgSendSym else { return }
         let msgClass = unsafeBitCast(sym, to: MsgSendClass.self)
         let defaultShared = sel_registerName("defaultSharedOutputContext")
-        // Only when this macOS still has it: sending a class method that is
-        // gone raises instead of returning nil.
         guard class_getClassMethod(cls, defaultShared) != nil,
               let context = msgClass(cls, defaultShared) as? NSObject else { return }
         routingContext = context
         routingContextID = AirPlayPrivateAPI.string(context, "ID")
     }
 
-    /// Creates an `AVRoutePickerView` bound to the routing context, or nil
-    /// when it cannot be bound: an unbound picker works on the whole Mac's
-    /// audio route, so it is never handed out.
     private func makeRoutePickerView() -> AVRoutePickerView? {
         guard isAvailable, let contextID = routingContextID, let sym = msgSendSym else { return nil }
         let picker = AVRoutePickerView()
@@ -172,17 +139,10 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
     }
 
     private var fallbackWindow: NSWindow?
-    /// The picker hosted in `fallbackWindow`; its delegate callback closes the window.
     private weak var fallbackPicker: AVRoutePickerView?
-    /// Tells a picker that is presenting now from one whose late callbacks
-    /// arrive after another took its place.
     private var pickerGeneration = 0
 
-    /// Opens the system's speaker list at the pointer, where the choice that
-    /// asked for it was made: an app's output menu in the panel, Settings or
-    /// the island. A transparent window anchors it there.
     func presentPicker() {
-        // Nothing to pick with, and no reason to create the anchor window.
         guard isAvailable else { return }
         closePickerWindow()
 
@@ -195,11 +155,10 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         )
         win.isOpaque = false
         win.backgroundColor = .clear
-        win.alphaValue = 0.01 // Invisible so no icon shows on screen
-        win.level = .popUpMenu // Appears on top of all panels and notch, never underneath
+        win.alphaValue = 0.01
+        win.level = .popUpMenu
         win.hasShadow = false
         win.isReleasedWhenClosed = false
-        // Over a full-screen app too, like the panel's own anchor.
         win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
         if let picker = makeRoutePickerView() {
@@ -209,8 +168,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
             self.fallbackWindow = win
             self.fallbackPicker = picker
 
-            // A list left open this long, or one whose end was never reported,
-            // still goes, and the panel stops treating clicks as the picker's.
             DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self, weak win] in
                 guard let self, let win, self.fallbackWindow === win else { return }
                 self.closePickerWindow()
@@ -238,7 +195,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         return nil
     }
 
-    /// Refreshes the currently connected AirPlay device name and status.
     func refreshActiveDevice() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let context = routingContext, let sym = msgSendSym else { return }
@@ -255,8 +211,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
                 return n
             }
             if !names.isEmpty {
-                // Sorted, so a group whose members come back in another order
-                // is not reported as a new speaker.
                 name = names.sorted().joined(separator: " + ")
             }
         }
@@ -296,7 +250,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         }
     }
 
-    /// Binds an audio object (such as AVSampleBufferAudioRenderer) to the routing context.
     func bindOutputContext(to audioObject: AnyObject) -> Bool {
         guard let context = routingContext, let sym = msgSendSym else { return false }
         let setCtxSel = sel_registerName("setOutputContext:")
@@ -313,15 +266,9 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
     private lazy var streams = AirPlayStreamRegistry(mixer: mixerSource)
     private let streamLock = NSLock()
 
-    /// Adds one engine's stream to the mix. The engine owns the returned
-    /// registration and ends it when it stops; nil when no renderer could be
-    /// started. Each app is heard once, through its newest live engine, and
-    /// an engine can only ever end its own registration.
     func addAudioStream(appID: String, buffer: AudioRingBuffer) -> AirPlayStreamRegistration? {
         streamLock.lock()
         defer { streamLock.unlock() }
-        // Paused for silence: a silent app rebuilt meanwhile joins the mix
-        // without waking the speaker; the next sound starts a renderer.
         if idleTimer.startsRendererForNewStream {
             startRendererIfNeeded()
             guard airPlayRenderer != nil else { return nil }
@@ -338,28 +285,15 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
 
     // MARK: Pausing for silence
 
-    /// Under `streamLock`, which the build queue holds when it asks whether
-    /// a joining engine starts a renderer. Only the main thread reports to it.
     private var idleTimer = AirPlayIdleTimer()
-    /// Main thread.
     private var idleCheck: DispatchWorkItem?
 
-    /// Main thread: whether any app routed to AirPlay is producing sound.
-    ///
-    /// The renderer otherwise streams silence for as long as an app is
-    /// routed, and to the speaker that is playback: phones keep showing the
-    /// Mac as playing. Like a paused player, the stream stops once nothing
-    /// routed has played for a while, and starts again with the next sound.
     func routedAudioChanged(active: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         streamLock.lock()
-        // The time is read under the lock, where renderers start, so it and
-        // a renderer's start time compare in the order they happened.
         let freshRenderer = idleTimer.update(active: active, now: ProcessInfo.processInfo.systemUptime,
                                              rendererStartedAt: airPlayRenderer?.startedAt)
         if freshRenderer {
-            // A session the speaker or macOS paused stays silent when the
-            // renderer that fed it simply carries on.
             stopRenderer()
             if !streams.isEmpty { startRendererIfNeeded() }
         }
@@ -406,9 +340,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         updateStreamCheck()
     }
 
-    /// Runs the backup check exactly while the mixer is active and a renderer
-    /// streams to the speaker. Main thread; reads the live state when it runs,
-    /// so updates that arrive out of order still settle on the right answer.
     private func updateStreamCheck() {
         dispatchPrecondition(condition: .onQueue(.main))
         streamLock.lock()
@@ -426,14 +357,8 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         }
     }
 
-    /// The speaker a renderer could not be started for. While it is still the
-    /// picked one, AirPlay reports no connection: routed apps fall back to the
-    /// Mac and show as unavailable instead of claiming AirPlay while playing
-    /// locally, and builds stop being retried. Picking again clears it.
     private var streamingFailedFor: String?
 
-    /// Main thread. A renderer already replaced reports nothing about the
-    /// speaker the current one plays to.
     private func rendererFailed(_ renderer: AirPlayRenderer) {
         streamLock.lock()
         let current = airPlayRenderer === renderer
@@ -441,25 +366,20 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
         if current { reportStreamingFailure() }
     }
 
-    /// Main thread: a build could not get a renderer.
     func reportStreamingFailure() {
         dispatchPrecondition(condition: .onQueue(.main))
         streamingFailedFor = cachedSpeakerName ?? ""
         refreshActiveDevice()
     }
 
-    /// Makes sure a renderer is running before an engine taps its app, so a
-    /// failure here never mutes the app or reads as a missing permission.
     func prepareToStream() -> Bool {
         streamLock.lock()
         defer { streamLock.unlock() }
-        // Paused for silence after a renderer already worked: nothing to prove.
         if !idleTimer.startsRendererForNewStream { return true }
         startRendererIfNeeded()
         return airPlayRenderer != nil
     }
 
-    /// Stops a renderer that a failed build started and nobody uses.
     func stopIfIdle() {
         streamLock.lock()
         defer { streamLock.unlock() }
@@ -481,9 +401,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
     private func startRendererIfNeeded() {
         guard airPlayRenderer == nil else { return }
         guard let renderer = AirPlayRenderer(source: mixerSource, manager: self) else { return }
-        // A renderer that fails or stops taking audio leaves the tapped apps
-        // silent everywhere; reported like one that could not start, they
-        // fall back to the Mac until the speaker is picked again.
         renderer.onFailure = { [weak self, weak renderer] in
             guard let self, let renderer else { return }
             self.rendererFailed(renderer)
@@ -500,9 +417,6 @@ final class AirPlayRouteManager: NSObject, ObservableObject {
 
 // MARK: - Private API access
 
-/// Reads from the private routing objects without trusting that this macOS
-/// still has the property: key-value coding raises for an unknown key, which
-/// would take the app down on the next poll instead of hiding AirPlay.
 enum AirPlayPrivateAPI {
     static func string(_ object: NSObject, _ key: String) -> String? {
         guard object.responds(to: NSSelectorFromString(key)) else { return nil }
@@ -512,13 +426,7 @@ enum AirPlayPrivateAPI {
 
 // MARK: - Availability
 
-/// AirPlay is offered only when every private piece it depends on is there.
-/// Each one matters on its own: without the context id or the picker's
-/// context setter the picker falls back to the whole Mac's route, and without
-/// the renderer binding the stream would play on the Mac.
 enum AirPlayAvailability {
-    /// A speaker counts as connected when the context has one with a name,
-    /// unless streaming to that very speaker just failed.
     static func isConnected(hasDevice: Bool, speakerName: String?, failedSpeakerName: String?) -> Bool {
         guard hasDevice, let speakerName else { return false }
         return speakerName != failedSpeakerName
@@ -529,9 +437,6 @@ enum AirPlayAvailability {
         mixerSupported && hasContext && !(contextID?.isEmpty ?? true) && pickerCanBind && rendererCanBind
     }
 
-    /// The backup check runs only while a renderer streams to the speaker.
-    /// A stream paused for silence sends it nothing, so nothing wakes up on
-    /// a schedule until the next sound starts a renderer again.
     static func runsBackupCheck(rendererRunning: Bool, mixerActive: Bool, available: Bool) -> Bool {
         rendererRunning && mixerActive && available
     }
@@ -539,26 +444,12 @@ enum AirPlayAvailability {
 
 // MARK: - Silence
 
-/// When the AirPlay stream should pause because nothing routed is playing,
-/// and how it comes back. Unknown counts as playing, so a stream is never
-/// stopped before the mixer has said anything; a short gap between tracks
-/// does not stop it either. The manager tells it what the mixer and the
-/// renderer do and carries out what it answers.
 struct AirPlayIdleTimer {
     static let delay: TimeInterval = 10
-    /// A pause at least this long resumes on a fresh renderer. Paused from a
-    /// phone, the speaker pauses its own session, and the renderer that fed it
-    /// stays silent after playback resumes; only a new stream wakes it. A
-    /// shorter gap (between tracks) keeps the stream running.
     static let freshStreamAfter: TimeInterval = 1
     private var silentSince: TimeInterval?
-    /// The renderer was stopped because nothing routed played. One already
-    /// ran, so AirPlay is known to work.
     private var isPaused = false
 
-    /// A report from the mixer, with when the renderer running now started
-    /// (nil while none runs). Answers whether to replace that renderer with a
-    /// fresh one; repeated reports of the same state answer false.
     @discardableResult
     mutating func update(active: Bool, now: TimeInterval, rendererStartedAt: TimeInterval?) -> Bool {
         guard active else {
@@ -573,28 +464,16 @@ struct AirPlayIdleTimer {
             isPaused = false
             return true
         }
-        // Only a renderer that played through the pause can feed a session
-        // the speaker paused. One started since, for an app routed meanwhile
-        // or a rebuild, is fresh already: replacing it would only open a
-        // second session on the speaker.
         guard let pauseBegan, let rendererStartedAt, rendererStartedAt < pauseBegan else { return false }
         return now - pauseBegan >= Self.freshStreamAfter
     }
 
-    /// Seconds left before the stream may stop, or nil while something plays.
-    /// A renderer started during the silence, for an app routed meanwhile,
-    /// counts from its own start: the speaker only just saw its session
-    /// begin, and stopping it at once would leave the first play waiting for
-    /// another.
     func secondsUntilStop(now: TimeInterval, rendererStartedAt: TimeInterval?) -> TimeInterval? {
         guard let silentSince else { return nil }
         let quietSince = max(silentSince, rendererStartedAt ?? silentSince)
         return max(0, quietSince + Self.delay - now)
     }
 
-    /// Answers whether the renderer that started at `rendererStartedAt` (nil
-    /// while none runs) stops because nothing routed has played for the whole
-    /// delay. The stream then stays paused until the next sound.
     mutating func stopsForSilence(now: TimeInterval, rendererStartedAt: TimeInterval?) -> Bool {
         guard rendererStartedAt != nil,
               let remaining = secondsUntilStop(now: now, rendererStartedAt: rendererStartedAt),
@@ -603,19 +482,12 @@ struct AirPlayIdleTimer {
         return true
     }
 
-    /// Whether an engine joining the mix starts a renderer. Not while paused:
-    /// a silent app rebuilt meanwhile joins without waking the speaker, and
-    /// the next sound starts one.
     var startsRendererForNewStream: Bool { !isPaused }
 
-    /// The last stream ended, and its renderer with it. Nothing is left to
-    /// pause, so the next engine proves AirPlay with a renderer of its own.
     mutating func lastStreamEnded() {
         isPaused = false
     }
 
-    /// The mixer stopped reporting: until it says something again, nothing
-    /// counts as silent.
     mutating func forgetSilence() {
         silentSince = nil
     }
@@ -623,12 +495,6 @@ struct AirPlayIdleTimer {
 
 // MARK: - Stream registrations
 
-/// Which engines currently feed the AirPlay mix. An app is heard once: its
-/// lane plays the newest live registration for that app. A replacement engine
-/// registers while it is still being built, before the old one is stopped, so
-/// it takes the lane over at once instead of adding a second copy; ending a
-/// registration removes only that registration, and if it was the one being
-/// heard (a discarded build) the lane falls back to the previous live one.
 final class AirPlayStreamRegistry: @unchecked Sendable {
     private struct Entry {
         let token: Int
@@ -638,7 +504,6 @@ final class AirPlayStreamRegistry: @unchecked Sendable {
     private let mixer: MixingAudioSource
     private let lock = NSLock()
     private var nextToken = 0
-    /// Per app, oldest first; the last entry is the audible one.
     private var lanes: [String: [Entry]] = [:]
 
     init(mixer: MixingAudioSource) {
@@ -652,10 +517,6 @@ final class AirPlayStreamRegistry: @unchecked Sendable {
         nextToken += 1
         let token = nextToken
         lanes[appID, default: []].append(Entry(token: token, buffer: buffer))
-        // The mixer is updated under the same lock, so its lanes always match
-        // this bookkeeping even when registrations race. A buffer that becomes
-        // audible starts at its newest audio, never at a backlog; the feed
-        // queue skips there on the lane's first read, since only it reads rings.
         mixer.setBuffer(buffer, forKey: appID, startingAt: buffer.writePosition)
         return AirPlayStreamRegistration(token: token, onEnd: onEnd)
     }
@@ -666,9 +527,6 @@ final class AirPlayStreamRegistry: @unchecked Sendable {
         return lanes.isEmpty
     }
 
-    /// Removes one registration; true when the mix has no lanes left.
-    /// Removing a registration that is already gone changes nothing and
-    /// reports false.
     func remove(_ token: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -680,10 +538,6 @@ final class AirPlayStreamRegistry: @unchecked Sendable {
         if let fallback = entries.last {
             lanes[appID] = entries
             if wasAudible {
-                // Nobody read the fallback while it was hidden, so it is full
-                // of old audio; playing that would delay the app for good. A
-                // feed step may still be reading it right now, so the skip is
-                // left to the lane's next read on the feed queue.
                 mixer.setBuffer(fallback.buffer, forKey: appID, startingAt: fallback.buffer.writePosition)
             }
         } else {
@@ -694,8 +548,6 @@ final class AirPlayStreamRegistry: @unchecked Sendable {
     }
 }
 
-/// One engine's place in the AirPlay mix. Ending it is idempotent, so a stop
-/// followed by the stop in `deinit` cannot touch anyone else's stream.
 final class AirPlayStreamRegistration: @unchecked Sendable {
     let token: Int
     private let lock = NSLock()
@@ -717,9 +569,6 @@ final class AirPlayStreamRegistration: @unchecked Sendable {
 
 // MARK: - Feed scheduling
 
-/// Runs a renderer's feed steps. All renderers share one serial queue, so two
-/// of them never read the mixing source at once. `stop()` returns only after a
-/// step that is already running has finished, and no step starts afterwards.
 final class AirPlayFeedDriver: @unchecked Sendable {
     static let sharedQueue = DispatchQueue(label: "com.vorssaint.utils.airplay.render", qos: .userInitiated)
     private static let queueKey = DispatchSpecificKey<Void>()
@@ -728,7 +577,6 @@ final class AirPlayFeedDriver: @unchecked Sendable {
     private let interval: DispatchTimeInterval
     private let timerLock = NSLock()
     private var timer: DispatchSourceTimer?
-    /// Read and written on `queue` only.
     private var isActive = false
 
     init(queue: DispatchQueue = AirPlayFeedDriver.sharedQueue, interval: DispatchTimeInterval = .milliseconds(25)) {
@@ -759,10 +607,8 @@ final class AirPlayFeedDriver: @unchecked Sendable {
         timerLock.unlock()
         source?.cancel()
         if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
-            // Called from a step itself: it finishes on return.
             isActive = false
         } else {
-            // Waits for a running step; any step queued behind it sees the flag.
             queue.sync { isActive = false }
         }
     }
@@ -770,21 +616,11 @@ final class AirPlayFeedDriver: @unchecked Sendable {
 
 // MARK: - Ring Buffer & Streaming Pipeline
 
-/// Lock-free single-producer / single-consumer ring buffer for interleaved stereo Float32 frames.
-/// Realtime-safe for the Core Audio IO proc producer.
-///
-/// Positions are 64-bit frame counts that only ever grow, so they never wrap
-/// in practice (a 32-bit count overflowed after about 12 hours at 48 kHz).
-/// Positions and samples live in manually allocated memory: the IO thread
-/// never goes through Swift array or property access.
 final class AudioRingBuffer: @unchecked Sendable {
     private let capacityFrames: Int
     private let storage: UnsafeMutablePointer<Float>
-    /// [0] = next frame to read (consumer), [1] = next frame to write
-    /// (producer), [2] = the bits of the current sample rate.
     private let positions: UnsafeMutablePointer<Int64>
 
-    /// `startingFramePosition` exists for tests that exercise long-running streams.
     init(sampleRate: Double = 44_100, capacityFrames: Int = 1 << 16, startingFramePosition: Int64 = 0) {
         var cap = 1
         while cap < capacityFrames { cap <<= 1 }
@@ -796,9 +632,6 @@ final class AudioRingBuffer: @unchecked Sendable {
         (positions + 2).initialize(to: Int64(bitPattern: (sampleRate > 0 ? sampleRate : 44_100).bitPattern))
     }
 
-    /// The rate the producer writes at. The device can renegotiate it under a
-    /// running tap (a headset switching to a call), so the reader looks it up
-    /// on every read instead of keeping the value from build time.
     var sampleRate: Double {
         get { Double(bitPattern: UInt64(bitPattern: OSAtomicAdd64Barrier(0, positions + 2))) }
         set {
@@ -819,9 +652,6 @@ final class AudioRingBuffer: @unchecked Sendable {
     private var head: UnsafeMutablePointer<Int64> { positions }
     private var tail: UnsafeMutablePointer<Int64> { positions + 1 }
 
-    /// Producer: Called from Core Audio realtime IO thread. Zero allocations, no locks.
-    /// `frames` holds `channels` interleaved samples per frame: a mono source
-    /// plays on both sides, and only the first two of more channels are kept.
     func write(frames: UnsafePointer<Float>, frameCount: Int, channels: Int = 2, gain: Float) {
         guard channels > 0 else { return }
         let t = OSAtomicAdd64Barrier(0, tail)
@@ -841,26 +671,20 @@ final class AudioRingBuffer: @unchecked Sendable {
         _ = OSAtomicAdd64Barrier(Int64(count), tail)
     }
 
-    /// How far the producer has written. Safe to read from any thread: it
-    /// only records a position for the consumer to skip to later.
     var writePosition: Int64 { OSAtomicAdd64Barrier(0, tail) }
 
-    /// Consumer (the feed queue) only: frames written and not yet read.
     var availableFrames: Int {
         let h = OSAtomicAdd64Barrier(0, head)
         let t = OSAtomicAdd64Barrier(0, tail)
         return max(0, Int(t - h))
     }
 
-    /// Consumer (the feed queue) only: moves the read position forward to
-    /// `position`, never past what has been written, never backwards.
     func skip(to position: Int64) {
         let h = OSAtomicAdd64Barrier(0, head)
         let target = min(position, OSAtomicAdd64Barrier(0, tail))
         if target > h { _ = OSAtomicAdd64Barrier(target - h, head) }
     }
 
-    /// Consumer: Called from the AirPlay streaming feed queue.
     @discardableResult
     func read(into destination: UnsafeMutablePointer<Float>, frameCount: Int) -> Int {
         let h = OSAtomicAdd64Barrier(0, head)
@@ -883,22 +707,15 @@ final class AudioRingBuffer: @unchecked Sendable {
     }
 }
 
-/// Resamples one provider's interleaved stereo Float32 frames to 44.1 kHz using linear interpolation.
 final class LinearResampler: @unchecked Sendable {
     private let buffer: AudioRingBuffer
     private var phase: Double = 0
     private var carry: [Float] = []
     private var scratch = [Float](repeating: 0, count: 8192 * 2)
 
-    /// Where this lane starts reading, applied by its first read on the feed
-    /// queue. Recorded when the lane is (re)assigned: a buffer that was not
-    /// heard kept filling, and that backlog must not play.
     private var startPosition: Int64?
 
-    /// Seconds of unread audio a lane may hold before it catches up. Normal
-    /// feeding keeps well under this (about one 2048-frame chunk).
     static let maximumBacklog = 0.2
-    /// Seconds kept when it catches up, so the next reads do not run dry.
     static let keptBacklog = 0.05
 
     init(buffer: AudioRingBuffer, startingAt position: Int64? = nil) {
@@ -911,10 +728,6 @@ final class LinearResampler: @unchecked Sendable {
             startPosition = nil
             buffer.skip(to: position)
         }
-        // While the renderer is not taking audio (the speaker connecting,
-        // being switched), the tap keeps writing. Played back later at the
-        // same rate, that backlog would stay as delay for the rest of the
-        // session, so anything past a small margin is skipped.
         let rate = buffer.sampleRate
         if buffer.availableFrames > Int(rate * Self.maximumBacklog) {
             buffer.skip(to: buffer.writePosition - Int64(rate * Self.keptBacklog))
@@ -973,21 +786,14 @@ final class LinearResampler: @unchecked Sendable {
     }
 }
 
-/// Sums audio from any number of active per-app ring buffers into a single 44.1 kHz Int16 stream.
 final class MixingAudioSource: @unchecked Sendable {
     private let lock = NSLock()
     private var resamplers: [String: LinearResampler] = [:]
     private var mixBus = [Float](repeating: 0, count: 4096 * 2)
     private var laneBus = [Float](repeating: 0, count: 4096 * 2)
-    /// A boosted app, or several loud ones together, can sum past full scale.
-    /// The same limiter the device path uses turns the mix down for just those
-    /// peaks instead of clipping them into crackle (issue #326).
     private let limiter = BoostLookaheadLimiter(channels: 2)
     private let limiterRelease = BoostLimiter.release(sampleRate: 44_100)
 
-    /// `startingAt` is where the lane begins reading (see `LinearResampler`).
-    /// Only the feed queue reads a ring, so only it may move the read
-    /// position; this just hands it the position to move to.
     func setBuffer(_ buffer: AudioRingBuffer, forKey key: String, startingAt position: Int64? = nil) {
         lock.lock()
         resamplers[key] = LinearResampler(buffer: buffer, startingAt: position)
@@ -1038,10 +844,6 @@ final class MixingAudioSource: @unchecked Sendable {
     }
 }
 
-/// Tells when a renderer has stopped taking audio for good: it failed, it
-/// never started playing, or, once playback got going, it has not been ready
-/// for more far longer than a hiccup lasts. A speaker that is slow to connect
-/// gets far longer than one that stops mid-stream. Reports once.
 struct AirPlayRendererWatch {
     static let stallLimit: TimeInterval = 10
     static let startLimit: TimeInterval = 60
@@ -1063,19 +865,13 @@ struct AirPlayRendererWatch {
     }
 }
 
-/// Streams 44.1 kHz Int16 stereo audio to the selected AirPlay device via AVSampleBufferAudioRenderer.
 final class AirPlayRenderer: @unchecked Sendable {
     private let source: MixingAudioSource
     private let renderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
     private let feed = AirPlayFeedDriver()
-    /// Set before `start()`; called on the main thread, once.
     var onFailure: (() -> Void)?
-    /// System uptime when it was made, right before it starts: tells the
-    /// renderer that played through a pause from one started during it,
-    /// which gets the whole silence delay of its own.
     let startedAt = ProcessInfo.processInfo.systemUptime
-    /// Feed queue only.
     private var watch = AirPlayRendererWatch()
 
     private let formatDescription: CMAudioFormatDescription
@@ -1102,8 +898,6 @@ final class AirPlayRenderer: @unchecked Sendable {
         ) == noErr, let format else { return nil }
         self.formatDescription = format
 
-        // Unbound, the renderer would play on the local default output while
-        // the app is muted by its tap and the UI claims AirPlay.
         guard manager.bindOutputContext(to: renderer) else { return nil }
         synchronizer.addRenderer(renderer)
     }
@@ -1119,8 +913,6 @@ final class AirPlayRenderer: @unchecked Sendable {
         }
     }
 
-    /// Returns only once no feed step is running or can start again, so a
-    /// replacement renderer never reads the shared mix at the same time.
     func stop() {
         guard started else { return }
         started = false
@@ -1140,8 +932,6 @@ final class AirPlayRenderer: @unchecked Sendable {
             let failure = onFailure
             DispatchQueue.main.async { failure?() }
         }
-        // A feed that fell behind the playback clock would enqueue late
-        // chunks back to back; restart the timeline just ahead of it instead.
         let now = synchronizer.currentTime()
         if CMTimeCompare(nextPTS, now) < 0 {
             nextPTS = CMTimeAdd(now, CMTime(value: CMTimeValue(sampleRate * 0.05), timescale: CMTimeScale(sampleRate)))
@@ -1158,7 +948,7 @@ final class AirPlayRenderer: @unchecked Sendable {
     private func makeSampleBuffer() -> CMSampleBuffer? {
         let format = formatDescription
         let frames = framesPerChunk
-        let byteCount = frames * 4 // 2ch * Int16
+        let byteCount = frames * 4
 
         var pcm = [Int16](repeating: 0, count: frames * 2)
         pcm.withUnsafeMutableBufferPointer { source.readFrames(into: $0.baseAddress!, frameCount: frames) }
@@ -1195,7 +985,6 @@ final class AirPlayRenderer: @unchecked Sendable {
 
 extension AirPlayRouteManager: AVRoutePickerViewDelegate {
     func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) {
-        // Picking again is a fresh try at streaming.
         streamingFailedFor = nil
         pickerGeneration += 1
         Self.isPresentingPicker = true
@@ -1203,11 +992,8 @@ extension AirPlayRouteManager: AVRoutePickerViewDelegate {
 
     func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) {
         let generation = pickerGeneration
-        // A picker already replaced, its window gone, leaves the flag to the
-        // one presenting now.
         let isCurrent = routePickerView === fallbackPicker
         if isCurrent {
-            // Asynchronously, so AppKit finishes tearing the picker down first.
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.fallbackPicker === routePickerView else { return }
                 self.fallbackWindow?.orderOut(nil)
@@ -1216,17 +1002,11 @@ extension AirPlayRouteManager: AVRoutePickerViewDelegate {
             }
         }
         refreshActiveDevice()
-        // Choosing a speaker completes about a second after the picker closes.
-        // The context's notifications normally report it; a few bounded checks
-        // cover a connection that finishes without one. Only after the picker
-        // was used, so nothing runs while AirPlay sits unused.
         for delay in [1.0, 2.5, 5.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.refreshActiveDevice()
             }
         }
-        // Stays set a moment, so the click that closed the list does not also
-        // close the panel. A list opened again meanwhile keeps it set.
         guard isCurrent else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self, self.pickerGeneration == generation else { return }

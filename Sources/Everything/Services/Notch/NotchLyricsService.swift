@@ -43,8 +43,6 @@ final class NotchLyricsService: ObservableObject {
         load(track)
     }
 
-    /// Called for actual adapter metadata, including an explicit empty snapshot.
-    /// A hidden view supplies no such evidence and must not discard an import.
     func playbackChanged(_ playback: NotchPlayback?) {
         guard NotchLyricsSupport.isEnabled() else { stop(); return }
         let next = playback.map(NotchMusicIdentity.init)
@@ -138,8 +136,6 @@ final class NotchLyricsService: ObservableObject {
         state = lyrics != nil ? .ready : failed ? .failed : .unavailable
     }
 
-    /// Sequential, bounded catalog fallback. Each callback
-    /// rechecks visibility, consent and song identity before issuing another request.
     private func search(_ track: NotchMusicIdentity, urls: [URL], candidates: [NotchLyricsSupport.Candidate],
                         failed: Bool, generation requested: UUID,
                         verifiedArtistAliases: [String] = [], mayResolveAliases: Bool = true, mayDiscover: Bool = true) {
@@ -184,8 +180,6 @@ final class NotchLyricsService: ObservableObject {
         }
     }
 
-    /// Alias verification is a last resort, not a request on every track. Only
-    /// exact metadata identity membership is accepted, never a search score.
     private func resolveArtist(_ track: NotchMusicIdentity, generation requested: UUID) {
         let key = NotchLyricsSupport.artistCacheKey(for: track)
         if let cached = artistCache[key], cached.expires > Date() {
@@ -230,8 +224,6 @@ final class NotchLyricsService: ObservableObject {
         }
     }
 
-    /// MusicBrainz requires at most one request per second. A cancelled or
-    /// superseded delayed request never leaves this process.
     private func requestArtistMetadata(_ url: URL, track: NotchMusicIdentity, generation requested: UUID,
                                        completion: @escaping (NotchLyricsDownloadResult) -> Void) {
         let delay = max(0, 1.05 - (ProcessInfo.processInfo.systemUptime - lastAliasRequest))
@@ -288,10 +280,7 @@ final class NotchLyricsService: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.message = FeatureStrings.notchMusicExtras(L10n.shared.language).importHint
-        // An attached sheet moves/reskins a borderless island. Keep the chooser
-        // independent and above its parent instead, without changing the pin.
         panel.level = NSWindow.Level(rawValue: parent.level.rawValue + 1)
-        // Like the sheet it replaces, it stays up while another app is active.
         panel.hidesOnDeactivate = false
         importPanel = panel
         let requested = generation
@@ -303,7 +292,6 @@ final class NotchLyricsService: ObservableObject {
                   self.canReturnToLyrics(parent, track: track) else { return }
             defer {
                 let returnGeneration = self.generation
-                // Dismissal restores the old key window after this callback.
                 DispatchQueue.main.async { [weak self, weak parent] in
                     guard let self, let parent, self.generation == returnGeneration,
                           self.importPanel == nil, self.canReturnToLyrics(parent, track: track) else { return }
@@ -335,10 +323,7 @@ final class NotchLyricsService: ObservableObject {
                 }
             }
         }
-        // isImporting keeps the music surface alive through activation and
-        // pointer exit. Completion restores focus after native dismissal.
         NSApp.activate(ignoringOtherApps: true)
-        // Activation alone can leave the nonactivating island holding focus.
         panel.makeKeyAndOrderFront(nil)
     }
 
@@ -351,8 +336,6 @@ final class NotchLyricsService: ObservableObject {
     }
 }
 
-/// An ephemeral request, bounded while bytes arrive. Redirects are refused
-/// so track metadata can only reach the hosts disclosed by the opt-in control.
 private final class NotchLyricsDownload: NSObject, URLSessionDataDelegate {
     private var data = Data()
     private var accepted = false

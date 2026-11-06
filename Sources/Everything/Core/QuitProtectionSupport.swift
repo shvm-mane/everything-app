@@ -10,7 +10,6 @@ enum QuitProtectionShortcut: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var character: String { self == .quit ? "q" : "w" }
-    /// The US position, used only while no layout and no character can be read.
     var fallbackKeyCode: Int64 { self == .quit ? 12 : 13 }
     var symbol: String { self == .quit ? "⌘Q" : "⌘W" }
 }
@@ -66,9 +65,6 @@ enum QuitProtectionSupport {
         return min(max(value, doublePressIntervalRange.lowerBound), doublePressIntervalRange.upperBound)
     }
 
-    /// CGEvent timestamps are monotonic nanoseconds. Confirmation uses them
-    /// directly so a busy main run loop cannot make a valid second press miss
-    /// its configured interval.
     static func isWithinDoublePressInterval(firstTimestamp: UInt64,
                                             secondTimestamp: UInt64,
                                             intervalMilliseconds: Double) -> Bool {
@@ -87,9 +83,6 @@ enum QuitProtectionSupport {
         if requiresSyntheticQuit(bundleIdentifier: bundleIdentifier) {
             return false
         }
-        // These send each held key on its own, not the flags of the replayed
-        // press, so with the extra modifier still down the other computer
-        // would get ⇧⌘Q or ⌃⌘Q. Quitting the app itself does less harm.
         if keyForwardingBundleIdentifiers.contains(bundleIdentifier) {
             return confirmedWithExtraModifier
         }
@@ -100,11 +93,7 @@ enum QuitProtectionSupport {
         bundleIdentifier == "com.valvesoftware.steam"
     }
 
-    /// Remote screens and virtual machines pass ⌘Q on to the computer they
-    /// show, which quits its own app. Terminating one of them instead quits
-    /// the local window onto that computer.
     static let keyForwardingBundleIdentifiers: Set<String> = [
-        // Remote screens
         "com.apple.ScreenSharing",
         "com.apple.RemoteDesktop",
         "com.microsoft.rdc.macos",
@@ -126,7 +115,6 @@ enum QuitProtectionSupport {
         "com.vmware.horizon",
         "tv.parsec.www",
         "com.moonlight-stream.Moonlight",
-        // Virtual machines
         "com.parallels.desktop.console",
         "com.parallels.desktop.appstore",
         "com.vmware.fusion",
@@ -135,17 +123,11 @@ enum QuitProtectionSupport {
         "codes.rambo.VirtualBuddy",
     ]
 
-    /// The WindowServer rows for macOS's own app switcher, forward and back.
     static let nativeAppSwitcherIDs: Set<Int32> = [
         SwitcherNativeSymbolicHotKey.commandTab.rawValue,
         SwitcherNativeSymbolicHotKey.commandShiftTab.rawValue,
     ]
 
-    /// Whether a key down opens or steps macOS's own app switcher. The rows
-    /// are the WindowServer's, so a remapped switcher key is followed and one
-    /// switched off, as the App Switcher's take-over does while it owns ⌘Tab,
-    /// is not. `nil` rows mean the private calls are gone, and only the
-    /// factory ⌘Tab, forward or back, is assumed.
     static func opensNativeSwitcher(keyCode: Int64,
                                     flags: CGEventFlags,
                                     entries: [LiveSystemShortcut]?) -> Bool {
@@ -171,9 +153,6 @@ enum QuitProtectionSupport {
         }
     }
 
-    /// Only the exact Command shortcut is protected by hold/double press.
-    /// Extra-modifier mode deliberately claims the bare shortcut too, so a
-    /// user cannot bypass protection by pressing plain Command-Q/Command-W.
     static func isBaseShortcut(keyCharacter: String?,
                                keyCode: Int64,
                                commandLabel: String?,
@@ -211,9 +190,6 @@ enum QuitProtectionSupport {
                                       shortcut: shortcut)
     }
 
-    /// `commandLabel` is what the layout's Command table types on this key, the
-    /// table macOS resolves Command-Q through; `keyCharacter` is the bare one,
-    /// "й" on Russian and ";" on Greek for the very key that quits.
     static func matchesKey(keyCharacter: String?,
                            keyCode: Int64,
                            commandLabel: String?,

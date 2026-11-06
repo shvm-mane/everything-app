@@ -3,8 +3,6 @@
 
 import AVFoundation
 
-/// The two sound sources a take can carry. Their stable identifiers live in
-/// track metadata so new recordings never depend on track order.
 enum RecorderAudioSource: String, CaseIterable, Hashable {
     case system
     case microphone
@@ -41,8 +39,6 @@ enum RecorderAudioSource: String, CaseIterable, Hashable {
             }
         }
 
-        // Takes from before track metadata existed carried only system sound.
-        // The fallback also keeps hand-authored files usable in the editor.
         for source in allCases where result[source] == nil {
             guard !unmatched.isEmpty else { break }
             result[source] = unmatched.removeFirst()
@@ -51,14 +47,7 @@ enum RecorderAudioSource: String, CaseIterable, Hashable {
     }
 }
 
-/// Turns the stretches of a recording that survive the trim and the cuts into
-/// one continuous asset.
-///
-/// Both the editor preview and the export read from this, which is what makes
-/// the preview honest: a piece cut out of the middle is genuinely absent while
-/// scrubbing, not hidden by a player that skips over it.
 enum RecorderComposition {
-
     struct Result {
         let asset: AVMutableComposition
         let audioTrackIDs: [RecorderAudioSource: CMPersistentTrackID]
@@ -124,9 +113,6 @@ enum RecorderComposition {
             do {
                 try video.insertTimeRange(window, of: sourceVideo, at: cursor)
             } catch {
-                // A range the source cannot serve is skipped rather than
-                // failing the whole export; the rest of the recording is still
-                // worth having.
                 continue
             }
             for pair in audio {
@@ -143,9 +129,6 @@ enum RecorderComposition {
         guard cursor.seconds > 0 else { return nil }
         let timing = RecorderExportTiming(speed: playbackSpeed)
         if timing.speed != 1 {
-            // Scale the whole edited timeline once, including audio gaps and
-            // offsets. Retiming only video timestamps would leave PCM audio
-            // at its old duration. The default preview path stays untouched.
             let outputDuration = CMTime(
                 seconds: timing.outputTime(forSourceTime: cursor.seconds),
                 preferredTimescale: 60_000)
@@ -161,8 +144,6 @@ enum RecorderComposition {
     }
 }
 
-/// A small, fixed summary of an audio track for the editor timeline. Reading
-/// happens once off the main thread and keeps no decoded audio afterwards.
 enum RecorderAudioWaveform {
     static func load(asset: AVAsset,
                      track: AVAssetTrack,

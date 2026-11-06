@@ -35,10 +35,6 @@ final class ScreenshotShareService: ObservableObject {
         configuration.timeoutIntervalForResource = 90
         configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
-        // An expiry that came due during sleep never triggers its timer: the
-        // deadline below is armed on a clock that stops with the Mac, so a link
-        // that ran out overnight stays listed as live for as long as the Mac
-        // slept. Waking up recomputes and catches the miss.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main) { [weak self] _ in
@@ -88,9 +84,6 @@ final class ScreenshotShareService: ObservableObject {
                                                            duration: duration)
         else { throw ScreenshotShareError.invalidEndpoint }
 
-        // Do not create a link unless its private deletion token has a place
-        // to live. A successful upload must never disappear from the app just
-        // because local persistence was already unavailable.
         do {
             try saveRecords(normalizedRecords(try loadRecords() + records))
         } catch {
@@ -129,10 +122,6 @@ final class ScreenshotShareService: ObservableObject {
         do {
             try saveRecords(updated)
         } catch {
-            // The preflight succeeded, so this is a narrow race. Revoke the
-            // new link when possible instead of leaving its deletion token
-            // only in memory. If revocation also fails, keep the record visible
-            // so it can still be copied or deleted from Settings this session.
             if (try? await deleteRemote(record)) != nil {
                 removedRecordIDs.insert(record.id)
                 throw ScreenshotShareError.localStorage
@@ -152,9 +141,6 @@ final class ScreenshotShareService: ObservableObject {
         let remaining = normalizedRecords((stored ?? []) + records)
         records = remaining
         scheduleExpiryRefresh()
-        // Remote deletion already succeeded (or expiration already removed
-        // the image), so a local cleanup problem must not report a false
-        // deletion failure to the person.
         if stored != nil, (try? saveRecords(remaining)) != nil {
             removedRecordIDs.remove(record.id)
         }

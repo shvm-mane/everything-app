@@ -6,11 +6,6 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Draws annotations into a CGContext. The editor canvas and the exporter
-/// share this code, so what is on screen is exactly what leaves the app.
-/// All geometry is in image pixels with a top-left origin; `scale` is the
-/// capture's pixels per point, keeping stroke weights and text sizes visually
-/// constant across 1x and Retina captures.
 enum ScreenshotRenderer {
     private static let blurContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -28,7 +23,6 @@ enum ScreenshotRenderer {
         CGFloat(textSize) * scale
     }
 
-    /// Measures a text annotation's box for hit-testing and the inline editor.
     static func textBounds(_ text: String,
                            at origin: CGPoint,
                            textSize: Int,
@@ -41,11 +35,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Annotation pass
 
-    /// Draws every annotation over the base content. `blurSources` holds what
-    /// blur areas paint from. Text being edited inline is skipped so the live
-    /// field is the only visible copy. The spotlight dim lands where the
-    /// topmost region that lights part of the image sits in the layer order,
-    /// so marks above it stay bright.
     static func drawAnnotations(_ annotations: [ScreenshotSupport.Annotation],
                                 in context: CGContext,
                                 blurSources: BlurSources,
@@ -62,8 +51,6 @@ enum ScreenshotRenderer {
         for (index, annotation) in annotations.enumerated() {
             switch annotation.tool {
             case .pixelate:
-                // Every style paints what lies below the area, pasted images
-                // included, and only images its paint reads change what that is.
                 let images = ImageLayerCache.images(below: annotation, among: precedingImages,
                                                     textRuns: blurSources.textRuns, imageSize: imageSize)
                 if ImageLayerCache.usesCapture(annotation, below: images) {
@@ -72,7 +59,6 @@ enum ScreenshotRenderer {
                     for: annotation, images: images, original: blurSources) {
                     drawBlurArea(annotation, in: context, sources: sources, imageSize: imageSize)
                 } else {
-                    // Without a sample of what is below, the area stays covered.
                     context.saveGState()
                     context.setBlendMode(.copy)
                     context.setFillColor(CGColor(gray: 0, alpha: 1))
@@ -132,8 +118,6 @@ enum ScreenshotRenderer {
         }
     }
 
-    /// The part of a spotlight region on the image, or nil when it lights
-    /// nothing there: still a bare press, or cropped away.
     private static func litRegion(_ annotation: ScreenshotSupport.Annotation,
                                   within bounds: CGRect) -> CGRect? {
         guard annotation.tool == .spotlight else { return nil }
@@ -141,10 +125,6 @@ enum ScreenshotRenderer {
         return region.isEmpty ? nil : region
     }
 
-    /// Darkens the image outside the union of the spotlight regions. Only
-    /// the parts of regions on the image count, so one cropped away or still
-    /// a bare press dims nothing. Source atop keeps the capture's alpha:
-    /// transparent window corners stay transparent.
     private static func drawSpotlight(_ annotations: [ScreenshotSupport.Annotation],
                                       dimStrength: CGFloat,
                                       imageSize: CGSize,
@@ -156,8 +136,6 @@ enum ScreenshotRenderer {
         let lit = regions.dropFirst().reduce(CGPath(rect: first, transform: nil)) {
             $0.union(CGPath(rect: $1, transform: nil))
         }
-        // Even-odd over the bounds plus the lit union fills only the outside,
-        // and overlapping regions are never dimmed twice.
         let dimmed = CGMutablePath()
         dimmed.addRect(bounds)
         dimmed.addPath(lit)
@@ -226,8 +204,6 @@ enum ScreenshotRenderer {
                                                            strokeWidth: width,
                                                            style: annotation.arrowStyle,
                                                            seed: annotation.scribbleSeed) {
-            // Shaft and head in one stroke: the shadow falls on the whole arrow
-            // once, instead of the head shading the shaft where they meet.
             context.addPath(outline)
             context.strokePath()
         } else {
@@ -252,8 +228,6 @@ enum ScreenshotRenderer {
         context.setLineCap(.round)
         context.beginPath()
         context.move(to: annotation.points[0])
-        // Quadratic curves through midpoints smooth hand jitter without
-        // drifting from the stroke.
         for index in 1..<annotation.points.count {
             let current = annotation.points[index]
             let previous = annotation.points[index - 1]
@@ -286,7 +260,6 @@ enum ScreenshotRenderer {
             attributes[.shadow] = shadow
         }
         context.saveGState()
-        // NSAttributedString draws in an unflipped space; flip locally.
         let previous = NSGraphicsContext.current
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
         annotation.text.draw(at: CGPoint(x: annotation.rect.minX + 2, y: annotation.rect.minY),
@@ -355,12 +328,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Blur areas
 
-    /// What blur areas paint from. The editor keeps one sampled mosaic or soft
-    /// blur per level in use, the capture and its finished fills for erasing,
-    /// and the text runs recognition found. `textRuns` stays nil until
-    /// recognition has read the capture, and text only areas cover all of
-    /// themselves until then. `imageOrigin` is where `image` starts on the
-    /// canvas: an erase sample over pasted images holds only what its area reads.
     struct BlurSources {
         var mosaics: [Int: CGImage] = [:]
         var softBlurs: [Int: CGImage] = [:]
@@ -379,15 +346,12 @@ enum ScreenshotRenderer {
                                      imageSize: CGSize) {
         let rect = annotation.rect.standardized
         guard rect.width > 0, rect.height > 0 else { return }
-        // A whole area is a single run. A text only area covers each run of
-        // recognized text inside it.
         let runs = annotation.blurTextOnly
             ? ScreenshotSupport.blurTextRuns(in: rect, from: sources.textRuns)
             : [rect]
         guard !runs.isEmpty else { return }
         switch annotation.blurStyle {
         case .pixelate:
-            // Nearest-neighbor keeps the mosaic's blocks sharp.
             guard let mosaic = sources.mosaics[annotation.blurLevel] else { return }
             drawSample(mosaic, in: context, imageSize: imageSize,
                        clippedTo: runs.map { $0.intersection(rect) }, interpolation: .none)
@@ -397,13 +361,8 @@ enum ScreenshotRenderer {
                        clippedTo: runs.map { $0.intersection(rect) }, interpolation: .high)
         case .erase:
             guard let image = sources.image else { return }
-            // Fills are made in the image's own pixels and drawn back on the canvas.
             let origin = sources.imageOrigin
             let local = { (canvas: CGRect) in canvas.offsetBy(dx: -origin.x, dy: -origin.y) }
-            // The fill is read around the whole run, so an area that cuts
-            // through a word never samples the word itself. Text runs are
-            // skipped while reading, and a run's own never lies in what is
-            // read around it, so one list serves every run.
             let text = (annotation.blurTextOnly ? (sources.textRuns ?? []) : []).map(local)
             let bounds = CGRect(origin: .zero, size: imageSize)
             for run in runs {
@@ -412,10 +371,7 @@ enum ScreenshotRenderer {
                 let target = patch.rect.offsetBy(dx: origin.x, dy: origin.y)
                 context.saveGState()
                 context.clip(to: run.intersection(rect).intersection(bounds))
-                // Replace what is under the run. Blending would let text in a
-                // translucent capture show through a fill with alpha.
                 context.setBlendMode(.copy)
-                // CGContext.draw expects an unflipped space, so flip around the patch.
                 context.translateBy(x: 0, y: target.minY + target.maxY)
                 context.scaleBy(x: 1, y: -1)
                 context.interpolationQuality = .high
@@ -425,8 +381,6 @@ enum ScreenshotRenderer {
         }
     }
 
-    /// Expands a capture-wide sample under the clip. Keeping samples small
-    /// avoids one capture-sized bitmap per blur level.
     private static func drawSample(_ sample: CGImage,
                                    in context: CGContext,
                                    imageSize: CGSize,
@@ -435,10 +389,7 @@ enum ScreenshotRenderer {
         context.saveGState()
         context.clip(to: CGRect(origin: .zero, size: imageSize))
         context.clip(to: regions)
-        // Replace what is under the regions. Blending would let text in a
-        // translucent capture show through a sample with alpha.
         context.setBlendMode(.copy)
-        // Flip locally because CGContext.draw expects an unflipped space.
         context.translateBy(x: 0, y: imageSize.height)
         context.scaleBy(x: 1, y: -1)
         context.interpolationQuality = interpolation
@@ -457,10 +408,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Watermark
 
-    /// Draws the mark over the finished annotations, so a redaction or an
-    /// arrow can never erase it, and inside the capture, so a backdrop's
-    /// margin stays clean. The picture of an image mark is loaded by the
-    /// editor; nil draws nothing, the way a vanished backdrop file does.
     static func drawWatermark(_ style: ScreenshotSupport.WatermarkStyle,
                               image: CGImage?,
                               in context: CGContext,
@@ -487,7 +434,6 @@ enum ScreenshotRenderer {
             let measured = style.text.size(withAttributes: attributes)
             contentSize = CGSize(width: ceil(measured.width), height: ceil(measured.height))
             draw = { rect in
-                // NSAttributedString draws in an unflipped space; flip locally.
                 let previous = NSGraphicsContext.current
                 NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
                 style.text.draw(at: rect.origin, withAttributes: attributes)
@@ -500,8 +446,6 @@ enum ScreenshotRenderer {
             contentSize = CGSize(width: width,
                                  height: width * CGFloat(image.height) / CGFloat(image.width))
             draw = { rect in
-                // CGContext.draw expects an unflipped space; flip around the
-                // mark's center, which is the origin by now.
                 context.scaleBy(x: 1, y: -1)
                 context.interpolationQuality = .high
                 context.draw(image, in: rect)
@@ -515,13 +459,10 @@ enum ScreenshotRenderer {
         else { return }
 
         context.saveGState()
-        // One layer for the whole mark: its opacity and shadow then apply to
-        // the composite rather than to every glyph on its own.
         applyShadow(context, scale: scale, enabled: shadowsEnabled)
         context.setAlpha(CGFloat(style.opacity))
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         context.translateBy(x: placement.center.x, y: placement.center.y)
-        // The context is flipped, where a positive angle turns clockwise.
         context.rotate(by: -CGFloat(style.rotation) * .pi / 180)
         context.scaleBy(x: placement.fit, y: placement.fit)
         draw(CGRect(x: -contentSize.width / 2, y: -contentSize.height / 2,
@@ -532,7 +473,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Blur samples
 
-    /// A low-resolution mosaic with per-block color variation.
     static func pixelatedImage(from image: CGImage,
                                level: Int = ScreenshotSupport.BlurStrength.defaultLevel,
                                referenceSize: CGSize? = nil) -> CGImage? {
@@ -554,11 +494,6 @@ enum ScreenshotRenderer {
         return small.makeImage()
     }
 
-    /// A soft blur kept small: the capture is averaged into four samples per
-    /// mosaic block, shaken by the same noise and blurred across about a
-    /// block. That wipes out everything finer than the mosaic of the same
-    /// level keeps, and neighboring samples end up close enough that the
-    /// stretch back to full size stays smooth.
     static func softBlurredImage(from image: CGImage,
                                  level: Int = ScreenshotSupport.BlurStrength.defaultLevel,
                                  referenceSize: CGSize? = nil) -> CGImage? {
@@ -587,15 +522,10 @@ enum ScreenshotRenderer {
         return blurContext.createCGImage(blurred, from: input.extent)
     }
 
-    /// Shifts every sampled pixel by a small random amount, so the same text
-    /// never samples to the same values twice.
     private static func scrambleSamples(in context: CGContext) {
         guard let data = context.data else { return }
         let bytes = data.bindMemory(to: UInt8.self,
                                     capacity: context.bytesPerRow * context.height)
-        // Random bytes come a row at a time. Asking a generator for every
-        // sample is slow in unoptimized builds, and a soft blur sample can
-        // hold over a million of them.
         var randomRow = [UInt8](repeating: 0, count: context.width)
         for row in 0..<context.height {
             arc4random_buf(&randomRow, randomRow.count)
@@ -612,9 +542,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Erasing
 
-    /// Erase fills already made, so a redraw does not read the pixels around
-    /// every erased area again. Fills belong to one capture and its text
-    /// runs, and are dropped when either changes.
     final class EraseCache {
         private struct Key: Hashable {
             let x, y, width, height: Int
@@ -632,14 +559,8 @@ enum ScreenshotRenderer {
         private var patches: [Key: Entry] = [:]
         private var pass = 0
 
-        /// Starts a redraw. Dragging an area makes a new fill on every move,
-        /// so once there are many, the fills the last redraw did not use are
-        /// dropped. That happens only here, so a redraw with many erased runs
-        /// keeps every fill it needs for the next one.
         func beginPass(image: CGImage?, textRuns: [CGRect]?) {
             if self.image !== image || self.textRuns != textRuns {
-                // A fill skipped the text runs of its time, and new runs
-                // can change what it should have read.
                 self.image = image
                 self.textRuns = textRuns
                 patches.removeAll()
@@ -649,8 +570,6 @@ enum ScreenshotRenderer {
             pass += 1
         }
 
-        /// The runs skipped while reading are the ones `beginPass` was given,
-        /// so whether any were skipped is all the key needs to know about them.
         func patch(for region: CGRect, in image: CGImage,
                    skipping text: [CGRect] = []) -> (image: CGImage, rect: CGRect)? {
             if self.image !== image {
@@ -671,15 +590,6 @@ enum ScreenshotRenderer {
         }
     }
 
-    /// A smooth fill for `region` made of the pixels just around it, with the
-    /// rect to draw it in. Each side is read as medians along a thin strip
-    /// past that edge, which ignores the odd glyph touching it, and every
-    /// point blends the sides by how close it is to each. A flat background
-    /// comes back exactly, and so does a straight gradient. Sides past the
-    /// edge of the capture are left out, and an area as large as the capture
-    /// reads its own border instead. Pixels inside `text`, the other runs of
-    /// recognized text, are not background and are skipped while anything
-    /// else is left to read.
     static func erasePatch(for region: CGRect, in image: CGImage,
                            skipping text: [CGRect] = []) -> (image: CGImage, rect: CGRect)? {
         let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
@@ -697,9 +607,6 @@ enum ScreenshotRenderer {
         }
         guard !sides.isEmpty else { return nil }
 
-        // A node on each edge and every few pixels between: the fill then
-        // meets its surroundings right at its border, and neighboring nodes
-        // differ too little for the stretch to full size to show.
         let cell = max(4, max(area.width, area.height) / 128)
         let columns = Int((area.width / cell).rounded(.up)) + 1
         let rows = Int((area.height / cell).rounded(.up)) + 1
@@ -707,8 +614,6 @@ enum ScreenshotRenderer {
         let height = Float(area.height)
         let xs = (0..<columns).map { Float($0) / Float(columns - 1) * width }
         let ys = (0..<rows).map { Float($0) / Float(rows - 1) * height }
-        // 1 / distance blends each pair of opposite sides linearly. A missing
-        // side weighs nothing.
         func weights(_ edge: EraseSide.Edge, _ distances: [Float]) -> [Float] {
             guard let side = sides[edge] else { return [Float](repeating: 0, count: distances.count) }
             return distances.map { 1 / max(0.5, $0 + side.offset) }
@@ -753,15 +658,11 @@ enum ScreenshotRenderer {
                                   provider: provider, decode: nil,
                                   shouldInterpolate: true, intent: .defaultIntent)
         else { return nil }
-        // Each pixel of the patch is centered on its node, so it is drawn half
-        // a cell past the area on every side and clipped back.
         let cellWidth = area.width / CGFloat(columns - 1)
         let cellHeight = area.height / CGFloat(rows - 1)
         return (patch, area.insetBy(dx: -cellWidth / 2, dy: -cellHeight / 2))
     }
 
-    /// The capture's own color space when bitmaps can be drawn in it, so the
-    /// fill matches the pixels it sits beside, and sRGB otherwise.
     private static func eraseColorSpace(for image: CGImage) -> CGColorSpace {
         if let own = image.colorSpace, own.model == .rgb, own.supportsOutput,
            CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
@@ -771,9 +672,6 @@ enum ScreenshotRenderer {
         return CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
     }
 
-    /// One side of an area being erased: the medians of a thin strip of pixels
-    /// along that edge, RGBA in order, and how far the strip's middle sits
-    /// from the edge.
     private struct EraseSide {
         enum Edge: CaseIterable {
             case top, bottom, left, right
@@ -783,8 +681,6 @@ enum ScreenshotRenderer {
         let count: Int
         let offset: Float
 
-        /// The strip's color across from each position, between the two
-        /// nearest medians, RGBA in order.
         func colors(at positions: [Float], along length: Float) -> [Float] {
             var colors = [Float](repeating: 0, count: positions.count * 4)
             for (index, position) in positions.enumerated() {
@@ -801,8 +697,6 @@ enum ScreenshotRenderer {
             return colors
         }
 
-        /// About one median per few strip widths: enough to follow a gradient,
-        /// long enough for a stray glyph to stay a minority.
         static func segmentCount(along length: CGFloat, band: CGFloat) -> Int {
             max(1, min(48, Int(length / max(12, band * 4))))
         }
@@ -840,8 +734,6 @@ enum ScreenshotRenderer {
             let depth = alongX ? Int(visible.height) : width
             let count = Self.segmentCount(along: CGFloat(length), band: band)
             let skipped = text.filter { $0.intersects(visible) }
-            // Up to 32 pixels per segment, spread along it and across the
-            // strip, are plenty for a median.
             let limit = 32
             var medians = [Float](repeating: 0, count: count * 4)
             var found = [Bool](repeating: false, count: count)
@@ -883,8 +775,6 @@ enum ScreenshotRenderer {
                 }
             }
             guard found.contains(true) else { return nil }
-            // A segment covered by text takes the median of the nearest one
-            // that was read.
             for segment in 0..<count where !found[segment] {
                 let nearest = (0..<count).filter { found[$0] }
                     .min { abs($0 - segment) < abs($1 - segment) } ?? segment
@@ -894,13 +784,9 @@ enum ScreenshotRenderer {
             }
             self.medians = medians
             self.count = count
-            // Inside strips stand on the edge itself, outside ones half their
-            // thickness past it.
             offset = outside ? Float(depth) / 2 : 0
         }
 
-        /// RGBA bytes of `rect`, top row first, in the capture's color space so
-        /// the fill matches the pixels it sits beside.
         private static func pixels(of rect: CGRect, in image: CGImage, space: CGColorSpace) -> [UInt8]? {
             guard let cropped = image.cropping(to: rect) else { return nil }
             let width = Int(rect.width)
@@ -921,28 +807,17 @@ enum ScreenshotRenderer {
 
     // MARK: - Export
 
-    /// What actually paints behind the capture, resolved by the editor from
-    /// the persisted style (image files loaded and cached there).
     enum BackdropFill {
         case none
-        /// 1 color = solid, 2 colors = gradient.
         case colors([(red: Double, green: Double, blue: Double)])
         case image(CGImage)
     }
 
-    /// A finished picture together with the pixels per point it was rendered
-    /// at, so every file and pasteboard item it becomes can say how big it is
-    /// on screen: a Retina capture then opens at its own size in Preview,
-    /// Quick Look and documents, the way a system screenshot does, instead of
-    /// twice as large and softened by the upscale.
     struct Export {
         let image: CGImage
         let scale: CGFloat
     }
 
-    /// Flattens the base image, annotations and watermark, rounds the card's
-    /// corners, optionally composes the padded backdrop fill behind it,
-    /// optionally downscaled to 1x.
     static func renderExport(baseImage: CGImage,
                              annotations: [ScreenshotSupport.Annotation],
                              blurSources: BlurSources,
@@ -970,7 +845,6 @@ enum ScreenshotRenderer {
 
         var result = flattened
         if case .none = fill {
-            // Rounded corners without a backdrop become transparency.
             if corner > 0, let rounded = roundedAlpha(flattened, corner: corner) {
                 result = rounded
             }
@@ -1032,7 +906,6 @@ enum ScreenshotRenderer {
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
         context.draw(baseImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        // Flip to the annotations' top-left space.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
         drawAnnotations(annotations,
@@ -1085,15 +958,10 @@ enum ScreenshotRenderer {
         context.setShadow(offset: CGSize(width: 0, height: -6 * scale),
                           blur: 22 * scale,
                           color: CGColor(gray: 0, alpha: 0.4))
-        // A window brings its own rounded corners, which the shadow follows
-        // so no square of it shows past them. The picture is clipped only to
-        // the user's corners, so its own edge is never shaved.
         let outline = CGPath(roundedRect: imageRect,
                              cornerWidth: outlineCorner, cornerHeight: outlineCorner, transform: nil)
         let path = CGPath(roundedRect: imageRect,
                           cornerWidth: corner, cornerHeight: corner, transform: nil)
-        // Keep the shadow outside the card without painting an opaque plate
-        // behind translucent captures.
         context.addRect(CGRect(x: 0, y: 0, width: width, height: height))
         context.addPath(outline)
         context.clip(using: .evenOdd)
@@ -1109,8 +977,6 @@ enum ScreenshotRenderer {
         return context.makeImage()
     }
 
-    /// Blurs a finished background plate while extending its edge pixels, so
-    /// the effect never creates a transparent seam around the canvas.
     static func blurredBackdrop(_ image: CGImage, factor: CGFloat) -> CGImage {
         let radius = ScreenshotSupport.backdropBlurRadius(
             for: CGSize(width: image.width, height: image.height),
@@ -1146,7 +1012,6 @@ enum ScreenshotRenderer {
                 }
             }
         case .image(let backdropImage):
-            // Aspect fill, centered, like a wallpaper on a desktop.
             let imageWidth = CGFloat(backdropImage.width)
             let imageHeight = CGFloat(backdropImage.height)
             guard imageWidth > 0, imageHeight > 0 else { break }
@@ -1178,8 +1043,6 @@ enum ScreenshotRenderer {
 
     // MARK: - Encoding
 
-    /// PNG carrying the picture's pixels per point as standard DPI, the same
-    /// convention the system screenshot tool writes and the store reads back.
     static func pngData(from image: CGImage, scale: CGFloat) -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
@@ -1194,9 +1057,6 @@ enum ScreenshotRenderer {
         return data as Data
     }
 
-    /// TIFF for the pasteboard with the same density as the PNG: the point
-    /// size is what the TIFF stores as its resolution, so a paste lands at
-    /// the capture's on-screen size.
     static func tiffData(from image: CGImage, scale: CGFloat) -> Data? {
         let bitmap = NSBitmapImageRep(cgImage: image)
         bitmap.size = NSSize(width: CGFloat(image.width) / scale,

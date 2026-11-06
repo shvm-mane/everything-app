@@ -5,19 +5,9 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The floating permission guide: a small non-activating card that appears
-/// when a permission request sends the person to System Settings, walks them
-/// through the three steps and notices the grant by itself (the app's
-/// permission refresh already observes it). The trip to System Settings and
-/// back is where most people give up; this card keeps them company.
-///
-/// Nothing exists while the card is hidden: the window, the hosting view and
-/// the Combine subscription are created on show and released on dismiss.
 final class PermissionGuideOverlay {
     static let shared = PermissionGuideOverlay()
 
-    /// Onboarding walks the person through permissions with its own UI, so
-    /// the floating card stays out of its way.
     static var suppressed = false
 
     private var panel: NSPanel?
@@ -25,8 +15,6 @@ final class PermissionGuideOverlay {
     private var dismissWork: DispatchWorkItem?
     private var staleWork: DispatchWorkItem?
     private let pollingDemandID = UUID()
-    /// Long enough for the trip to System Settings and back; short enough
-    /// that someone staring at a switch that is already on is not left alone.
     private static let staleAfter: TimeInterval = 12
 
     private init() {}
@@ -66,8 +54,6 @@ final class PermissionGuideOverlay {
                            y: visible.maxY - size.height - 20,
                            width: size.width, height: size.height)
 
-        // Non-activating, so System Settings keeps focus while the card
-        // floats above it; joins every Space so the trip back finds it.
         let panel = OverlayPanel(contentRect: frame,
                                  styleMask: [.borderless, .nonactivatingPanel],
                                  backing: .buffered, defer: false)
@@ -95,17 +81,11 @@ final class PermissionGuideOverlay {
                 model.granted = true
                 model.stale = false
                 self?.staleWork?.cancel()
-                // Granted is the end of the wait either way, so the fast
-                // polling this card asked for stops here, whether the card
-                // leaves or stays.
                 if let self { Permissions.shared.setActivePermissionSurface(self.pollingDemandID, visible: false) }
-                // Screen Recording applies to a fresh process only, so the
-                // card stays with a Relaunch button instead of leaving.
                 if kind == .accessibility { self?.scheduleDismiss() }
             }
     }
 
-    /// The success beat stays on screen for a moment, then the card leaves.
     private func scheduleDismiss() {
         dismissWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }
@@ -125,9 +105,6 @@ final class PermissionGuideOverlay {
     }
 }
 
-/// The card's mutable state: `granted` flips once when the grant arrives;
-/// `stale` once the wait has gone on long enough that the usual cause is an
-/// entry left by an earlier copy of the app.
 private final class PermissionGuideModel: ObservableObject {
     @Published var granted = false
     @Published var stale = false

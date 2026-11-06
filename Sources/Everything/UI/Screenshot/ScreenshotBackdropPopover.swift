@@ -4,12 +4,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The backdrop picker: gradient presets, the user's saved customs, the
-/// Mac's current wallpapers and any image from disk, plus a custom solid or
-/// gradient builder and the margin and corner sliders. Everything applies
-/// live; the save button keeps a custom look in the presets row.
-/// Values the picker shares across every editor that shows it. A generic view
-/// cannot hold stored statics, so they live here.
 enum BackdropPickerAssets {
     static func previewColors(for style: ScreenshotSupport.BackdropStyle) -> [Color] {
         let sanitized = style.sanitized()
@@ -37,7 +31,6 @@ enum BackdropPickerAssets {
                      blue: components[2], opacity: 1)
     }
 
-
     static func thumbnail(for url: URL) -> NSImage? {
         let key = url.path as NSString
         if let cached = BackdropPickerAssets.thumbnailCache.object(forKey: key) { return cached }
@@ -54,8 +47,6 @@ enum BackdropPickerAssets {
         return image
     }
 
-
-    /// The inline palette, so picking a color never leaves the popover.
     static let palette: [[Double]] = [
         [0.96, 0.26, 0.21], [1.00, 0.58, 0.00], [1.00, 0.80, 0.00], [0.55, 0.86, 0.25],
         [0.20, 0.78, 0.35], [0.10, 0.74, 0.61], [0.15, 0.78, 0.85], [0.04, 0.52, 1.00],
@@ -64,7 +55,6 @@ enum BackdropPickerAssets {
         [0.55, 0.55, 0.58], [0.85, 0.85, 0.87], [1.00, 1.00, 1.00], [0.99, 0.93, 0.85],
     ]
 
-    /// Small cached thumbnails for wallpaper and saved-image swatches.
     static let thumbnailCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 24
@@ -72,9 +62,6 @@ enum BackdropPickerAssets {
     }()
 }
 
-/// What the shared background picker needs from whichever editor is showing
-/// it. Both editors keep the same BackdropStyle and the same saved list, so a
-/// look built in one is a look the other already understands.
 protocol BackdropEditing: ObservableObject {
     var backdropStyle: ScreenshotSupport.BackdropStyle { get set }
     var backdropPresets: [ScreenshotSupport.BackdropStyle] { get }
@@ -93,8 +80,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
     @State private var solidComponents: [Double] = [0.20, 0.47, 0.96]
     @State private var gradientStartComponents: [Double] = [0.20, 0.47, 0.96]
     @State private var gradientEndComponents: [Double] = [0.45, 0.83, 0.98]
-    /// Which well the inline palette paints: 0 = solid or gradient start,
-    /// 1 = gradient end.
     @State private var activeWell = 0
 
     init(model: Model, showsAdjustments: Bool = true) {
@@ -286,7 +271,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
         }
     }
 
-    /// One editable color well; the ring marks which one the palette paints.
     private func well(components: [Double], index: Int) -> some View {
         let active = !customIsGradient || activeWell == index
         return Button {
@@ -308,7 +292,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
                                 ? strings.backdropGradientLabel : strings.backdropSolidLabel)
     }
 
-    /// Colors picked right here, never in a separate panel.
     private var palette: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 10),
                   spacing: 5) {
@@ -359,9 +342,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
             HStack(spacing: 8) {
                 Text(strings.backdropPaddingLabel)
                     .font(.system(size: 12))
-                    // The column keeps the sliders aligned; the longest of
-                    // these words runs past 64 points in Turkish and Spanish,
-                    // so it gives a little rather than being cut.
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .frame(width: 64, alignment: .leading)
@@ -373,9 +353,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
             HStack(spacing: 8) {
                 Text(strings.backdropCornersLabel)
                     .font(.system(size: 12))
-                    // The column keeps the sliders aligned; the longest of
-                    // these words runs past 64 points in Turkish and Spanish,
-                    // so it gives a little rather than being cut.
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .frame(width: 64, alignment: .leading)
@@ -386,9 +363,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
             HStack(spacing: 8) {
                 Text(strings.backdropBlurLabel)
                     .font(.system(size: 12))
-                    // The column keeps the sliders aligned; the longest of
-                    // these words runs past 64 points in Turkish and Spanish,
-                    // so it gives a little rather than being cut.
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .frame(width: 64, alignment: .leading)
@@ -426,7 +400,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
 
     // MARK: - Actions
 
-    /// Applies a look while keeping the user's slider positions.
     private func apply(_ style: ScreenshotSupport.BackdropStyle) {
         var applied = style
         applied.padding = model.backdropStyle.padding
@@ -492,7 +465,6 @@ struct ScreenshotBackdropPopover<Model: BackdropEditing>: View {
 
     // MARK: - Helpers
 
-    /// Two styles look the same when everything but the sliders matches.
     static func sameLook(_ lhs: ScreenshotSupport.BackdropStyle,
                          _ rhs: ScreenshotSupport.BackdropStyle) -> Bool {
         var left = lhs.sanitized()

@@ -4,9 +4,6 @@
 import CoreGraphics
 import Foundation
 
-/// Activation is useful evidence even before Accessibility can name a window.
-/// Keep it in the same timeline as focus, rather than filing a missed window
-/// behind every window seen earlier. Access is serialized by the tracker lock.
 struct WindowFocusHistory {
     struct Request: Equatable {
         let pid: pid_t
@@ -42,17 +39,12 @@ struct WindowFocusHistory {
             promote(.window(window, request))
             return true
         }
-        // Keep the activation identity after its first answer, so an in-flight
-        // focus change can still land at that activation's latest window.
         guard let anchor = recent.firstIndex(where: { use in
             switch use {
             case .app(let pending): return pending == request
             case .window(_, let pending): return pending == request
             }
         }) else { return false }
-        // Never move a window behind a newer confirmed use. Otherwise insert
-        // it at the anchor and discard its older occurrence, retaining the
-        // previous window's place when this is an intra-app focus change.
         recent.insert(.window(window, request), at: anchor)
         var seen = Set<CGWindowID>()
         recent = recent.filter { use in
@@ -67,7 +59,6 @@ struct WindowFocusHistory {
     }
 
     mutating func switched(to window: CGWindowID?, pid: pid_t, previous: CGWindowID?) {
-        // Invalidate an AX read already in flight before the explicit switch.
         if let current { invalidate(current.pid, keepingActivation: previous == nil) }
         invalidate(pid)
         let request = Request(pid: pid)
@@ -78,13 +69,10 @@ struct WindowFocusHistory {
     }
 
     mutating func reconcile(windows: Set<CGWindowID>, revision capturedRevision: UUID) {
-        // A WindowServer query must not erase focus recorded while it ran.
         guard revision == capturedRevision else { return }
         recent.removeAll {
             switch $0 {
             case .window(let id, _): return !windows.contains(id)
-            // The running-app snapshot can predate a launch notification.
-            // Only an actual termination removes activation evidence.
             case .app: return false
             }
         }
@@ -96,8 +84,6 @@ struct WindowFocusHistory {
         revision = UUID()
     }
 
-    /// Resolve an unresolved activation to that app's best available entry.
-    /// This does not promote its other windows or replace confirmed focus.
     func order(_ entries: [WindowUseOrder.Entry], baseline: [Int]) -> [Int] {
         var result: [Int] = []
         var seen = Set<Int>()
@@ -114,7 +100,6 @@ struct WindowFocusHistory {
         return result
     }
 
-    /// Superseded requests lose their anchors, but confirmed history remains.
     private mutating func invalidate(_ pid: pid_t, keepingActivation: Bool = false) {
         recent = recent.compactMap { use in
             switch use {
@@ -139,16 +124,9 @@ struct WindowFocusHistory {
     }
 }
 
-/// The rules that turn "what the user used, and when" into the order the
-/// switcher shows. Kept free of AppKit so the ordering can be tested on its
-/// own: getting this wrong is invisible in a build and obvious in daily use.
 enum WindowUseOrder {
-    /// How many windows are remembered. Well past any realistic session, and
-    /// small enough that the lookups stay trivial.
     static let limit = 256
 
-    /// One entry to place. `windowID` is nil for an app entry with no window,
-    /// which can never appear in the window history and is placed by its app.
     struct Entry: Equatable {
         let windowID: CGWindowID?
         let pid: pid_t
@@ -159,14 +137,6 @@ enum WindowUseOrder {
         }
     }
 
-    /// Positions for `entries`, most recently used first.
-    ///
-    /// A window the user actually focused is placed by that history alone, so
-    /// the entry right after the current one is always the window used before
-    /// it, whichever app owns it. Windows never seen focused cannot be ranked
-    /// that way, so they follow, most recently used app first and then in the
-    /// window server's front-to-back order — which is where an untouched
-    /// window's own recency lives.
     static func order(_ entries: [Entry],
                       windowHistory: [CGWindowID],
                       appHistory: [pid_t],
@@ -181,7 +151,6 @@ enum WindowUseOrder {
         }
     }
 
-    /// `entries` rearranged by `order`, for callers that just want the list.
     static func ordered(_ entries: [Entry],
                         windowHistory: [CGWindowID],
                         appHistory: [pid_t],
@@ -228,9 +197,6 @@ enum WindowUseOrder {
         return map
     }
 
-    /// Moves a window to the front of the history. `previous` becomes second,
-    /// which is what makes a quick repeat of the shortcut toggle straight back
-    /// to where the user came from.
     static func promoting(_ windowID: CGWindowID,
                           previous: CGWindowID? = nil,
                           in history: [CGWindowID],
@@ -245,12 +211,6 @@ enum WindowUseOrder {
         return capped(result, limit: limit)
     }
 
-    /// The history after the switcher committed to `target`.
-    ///
-    /// An entry standing for an app with no window of its own still moves the
-    /// window the user came from to the front: with nothing to switch to on
-    /// the other side, that window is now the most recently used one there is,
-    /// and a quick repeat of the shortcut has to find it there.
     static func promoting(target: CGWindowID?,
                           previous: CGWindowID?,
                           in history: [CGWindowID],
@@ -262,7 +222,6 @@ enum WindowUseOrder {
         return promoting(target, previous: previous, in: history, limit: limit)
     }
 
-    /// Same move-to-front, for the list of applications.
     static func promoting(_ pid: pid_t, in history: [pid_t], limit: Int = limit) -> [pid_t] {
         var result = history
         result.removeAll { $0 == pid }
@@ -270,14 +229,6 @@ enum WindowUseOrder {
         return capped(result, limit: limit)
     }
 
-    /// Drops windows that no longer exist and files any window that was never
-    /// focused while the history was being kept.
-    ///
-    /// Front-to-back order supplies both the very first history — a session
-    /// that starts with nothing remembered is still ordered sensibly, instead
-    /// of by the arbitrary order the window server hands out — and the place
-    /// for windows that appeared without ever taking focus, which are by
-    /// definition older than everything already known.
     static func reconciled(_ history: [CGWindowID],
                            existing: Set<CGWindowID>,
                            frontToBack: [CGWindowID],
@@ -291,10 +242,6 @@ enum WindowUseOrder {
         return capped(result, limit: limit)
     }
 
-    /// Drops applications that are no longer running, and files the ones never
-    /// seen in front by how deep their windows sit — the same reasoning as for
-    /// windows, so a session that starts with nothing remembered is still
-    /// ordered by something real.
     static func reconciled(_ history: [pid_t],
                            running: Set<pid_t>,
                            frontToBack: [pid_t] = [],

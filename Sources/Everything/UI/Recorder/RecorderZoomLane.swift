@@ -4,18 +4,7 @@
 import AppKit
 import SwiftUI
 
-/// The lane where the zooms live: a block for each one, which can be added,
-/// picked up, stretched from either end and thrown away.
-///
-/// One AppKit view rather than a stack of SwiftUI gestures, because eight
-/// different things start with a mouse-down in the same thirty points of
-/// height: create, select, move, two edge drags, duplicate. A single press
-/// decides which of those this drag is and stays with that decision, which is
-/// the only way the wrong one never fires. It is also what makes the pointer
-/// change shape over an edge, and without that the handles are invisible.
 struct RecorderZoomLane: NSViewRepresentable {
-    /// Which lane this is. They behave identically on purpose: one set of
-    /// gestures to learn, whatever kind of thing is on the rail.
     enum Kind {
         case zoom
         case text
@@ -42,7 +31,6 @@ struct RecorderZoomLane: NSViewRepresentable {
         nsView.refresh()
     }
 
-    /// One block on a lane, whatever it happens to be.
     struct Item {
         let id: UUID
         let start: Double
@@ -70,8 +58,6 @@ struct RecorderZoomLane: NSViewRepresentable {
         private var hoverX: CGFloat?
         private var tracking: NSTrackingArea?
 
-        /// Wide enough to grab without looking, never so wide that a short
-        /// block loses its body.
         private static let edgeHit: CGFloat = 11
         private static let snapPoints: CGFloat = 8
         private static let moveThreshold: CGFloat = 4
@@ -127,8 +113,6 @@ struct RecorderZoomLane: NSViewRepresentable {
             return nil
         }
 
-        /// The nearest thing worth landing on, in screen distance so it feels
-        /// the same whatever the recording's length.
         private func snapped(_ time: Double, ignoring id: UUID?) -> Double {
             guard let model else { return time }
             var targets: [Double] = [0, duration, model.sourceTime]
@@ -215,13 +199,8 @@ struct RecorderZoomLane: NSViewRepresentable {
             let point = convert(event.locationInWindow, from: nil)
             if case .pressed(let id, _, _) = mode, id == nil {
                 if selectedID != nil {
-                    // Something is selected: the first click on empty lane is
-                    // how you put it down, the way clicking away works
-                    // everywhere else. The next one adds.
                     model?.selectLaneItem(kind, id: nil)
                 } else {
-                    // A click on empty lane is how a block is born, which is
-                    // the one thing the empty state has to teach.
                     model?.addLaneItem(kind, at: snapped(time(for: point.x), ignoring: nil))
                 }
             }
@@ -233,7 +212,7 @@ struct RecorderZoomLane: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             switch Int(event.keyCode) {
-            case 51, 117: // Delete, forward delete
+            case 51, 117:
                 model?.removeSelectedLaneItem(kind)
             default:
                 super.keyDown(with: event)
@@ -289,9 +268,6 @@ struct RecorderZoomLane: NSViewRepresentable {
                 context.setFillColor(accent.withAlphaComponent(0.22).cgColor)
                 context.fillPath()
 
-                // The hold reads brighter than the two ramps, so a block shows
-                // its own easing without anything having to explain it. A blur
-                // has no ramp: it is either hiding something or it is not.
                 let ramp: Double
                 switch kind {
                 case .zoom: ramp = RecorderMotion.zoomRampIn

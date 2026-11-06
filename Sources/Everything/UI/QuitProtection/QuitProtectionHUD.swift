@@ -4,26 +4,17 @@
 import AppKit
 import QuartzCore
 
-/// Small, non-activating feedback panel. It is intentionally independent from
-/// Settings so showing a confirmation never changes the target application.
 final class QuitProtectionHUD {
     private static let minimumSize = CGSize(width: 300, height: 48)
     private static let textInset: CGFloat = 12
     private var size = QuitProtectionHUD.minimumSize
     private var panel: NSPanel?
 
-    /// The confirmation lines are localized and formatted with the shortcut
-    /// symbol, so their rendered width is only known at show time. The widest
-    /// translations need more than the fixed 300pt panel left for text. The
-    /// labels are asked rather than the strings measured, so whatever inset
-    /// their cells add is inside the answer.
     private static func fittingSize(_ content: ContentView) -> CGSize {
         CGSize(width: max(minimumSize.width, (content.textWidth + textInset * 2).rounded(.up)),
                height: minimumSize.height + (content.showsProgress ? 8 : 0))
     }
 
-    /// `screen` is for callers that already place a panel of their own, so the
-    /// confirmation cannot land on a different display than what it confirms.
     func show(title: String, detail: String, on screen: NSScreen? = nil,
               holdDeadline: Date? = nil) {
         if panel == nil {
@@ -45,8 +36,6 @@ final class QuitProtectionHUD {
         }
 
         guard let content = panel?.contentView as? ContentView else { return }
-        // Fill the labels first: the width comes out of them, not out of a
-        // separate measurement of the same strings.
         content.update(title: title, detail: detail, showsProgress: holdDeadline != nil)
         size = Self.fittingSize(content)
         panel?.setContentSize(size)
@@ -55,8 +44,6 @@ final class QuitProtectionHUD {
         panel?.orderFrontRegardless()
         content.layoutSubtreeIfNeeded()
         content.animateProgress(until: holdDeadline)
-        // Event taps can arrive between normal AppKit drawing passes. Draw now
-        // so a short confirmation never waits for another app event to appear.
         panel?.display()
     }
 
@@ -85,8 +72,6 @@ final class QuitProtectionHUD {
 
         var showsProgress: Bool { !progressTrack.isHidden }
 
-        /// Width the two labels need for what they currently hold, straight
-        /// from the cells that draw them.
         var textWidth: CGFloat {
             max(title.fittingSize.width, detail.fittingSize.width)
         }
@@ -105,7 +90,6 @@ final class QuitProtectionHUD {
             progressTrack.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
             progressTrack.cornerRadius = 1.5
             progressTrack.masksToBounds = true
-            // Visibility must change with the labels, even for a 250 ms hold.
             progressTrack.actions = ["hidden": NSNull()]
             progressTrack.isHidden = true
             progressFill.backgroundColor = NSColor.white.withAlphaComponent(0.8).cgColor
@@ -137,7 +121,6 @@ final class QuitProtectionHUD {
             self.detail.stringValue = detail
             setAccessibilityLabel([title, detail].filter { !$0.isEmpty }.joined(separator: ". "))
             needsLayout = true
-            // The pill is drawn from bounds, so a width change has to repaint.
             needsDisplay = true
         }
 

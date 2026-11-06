@@ -3,14 +3,9 @@
 
 import Foundation
 
-/// Where the price list comes from: the copy inside the app, the last one
-/// downloaded, and the one published with the project, fetched at most once a
-/// day while the AI section is on and the person keeps prices up to date. The
-/// request carries no usage and nothing from this Mac.
 enum AgentPriceSource {
     static let remote = URL(string: "https://raw.githubusercontent.com/vorssaint/vorssaint-utils/main/Resources/agent-prices.json")!
     static let refreshInterval: TimeInterval = 86_400
-    /// After a failed download, the next attempt waits this long.
     static let retryInterval: TimeInterval = 6 * 3_600
     private static let fileName = "agent-prices.json"
 
@@ -24,7 +19,6 @@ enum AgentPriceSource {
         PrivateFileStore.containerURL?.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    /// The last list downloaded and when it was saved.
     static func cached() -> (list: AgentPriceList, saved: Date)? {
         guard let url = cacheURL, let data = try? Data(contentsOf: url),
               let list = AgentPriceList.decode(data) else { return nil }
@@ -38,8 +32,6 @@ enum AgentPriceSource {
         PrivateFileStore.write(data, to: url)
     }
 
-    /// The published list, checked before it is handed over; nil on any
-    /// failure, which leaves the current list in place.
     static func download(completion: @escaping ((data: Data, list: AgentPriceList)?) -> Void) {
         AgentDownload.start(remote, limit: AgentPriceList.maximumSize) { data in
             guard let data, let list = AgentPriceList.decode(data) else { completion(nil); return }
@@ -48,8 +40,6 @@ enum AgentPriceSource {
     }
 }
 
-/// One bounded request without cookies or cache that follows no redirect off
-/// its own host.
 private final class AgentDownload: NSObject, URLSessionDataDelegate {
     private let limit: Int
     private let host: String?

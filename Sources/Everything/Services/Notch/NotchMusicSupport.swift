@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// A colour taken from the cover art, deepened so it reads as a halo over the
-/// notch's black base. Artwork with no real colour of its own returns nothing,
-/// which keeps a grey smudge from appearing behind neutral covers.
 struct NotchArtworkTint: Equatable {
     let red: Double
     let green: Double
@@ -18,16 +15,12 @@ struct NotchArtworkTint: Equatable {
               highest > 0.05 else { return nil }
         let range = highest - lowest
         guard range / highest >= 0.12 else { return nil }
-        // Stretch the channels onto a fixed range so every cover glows with the
-        // same strength instead of following its own exposure.
         let stretched = channels.map { min(1, max(0, ($0 - lowest) / range * 0.86 + 0.06)) }
         return NotchArtworkTint(red: stretched[0], green: stretched[1], blue: stretched[2])
     }
 }
 
 struct NotchPlayback: Equatable {
-    /// How long a song stays shown after a reading finds nothing playing,
-    /// which a player moving on to its next song can report for a moment.
     static let gapGracePeriod: TimeInterval = 1.5
 
     let track: RadialNowPlayingSnapshot
@@ -41,12 +34,9 @@ struct NotchPlayback: Equatable {
     var itemIdentifier: String? = nil
     var commandContext: NotchPlaybackContext? = nil
     var canSendCommandsDirectly = false
-    /// Nil when the player's commands could not be read.
     var canSkipNext: Bool? = nil
     var canSkipPrevious: Bool? = nil
 
-    /// The same recording from the same player. Readings without a name
-    /// share no recording, so only their player tells them apart.
     static func sameRecording(_ first: NotchPlayback?, _ second: NotchPlayback?) -> Bool {
         first?.commandContext == second?.commandContext && first?.track.appPID == second?.track.appPID
     }
@@ -97,12 +87,6 @@ struct NotchPlayback: Equatable {
     }
 }
 
-/// Keeps one decoded cover in memory. Metadata-only updates of the same song
-/// retain it; a new song gets a short grace period while its artwork arrives.
-/// The deadline never moves with repeated missing-artwork replies.
-/// A player can report a new song before replacing the old cover. The same
-/// bytes on a new song stay visible, but become its own cover only if no
-/// missing-artwork reply follows within that song's grace period.
 struct NotchArtworkCache<Artwork> {
     static var transitionDuration: TimeInterval { 1.5 }
     private struct Identity: Equatable {
@@ -158,19 +142,11 @@ struct NotchArtworkCache<Artwork> {
     }
 }
 
-/// Tells a new song from the updates a playing one keeps sending. A player
-/// reports its song again for every pause, seek and cover, can fill in the
-/// artist a moment after the title, and a reader that starts or changes source
-/// first reports what was already on; none of that is a new song. Each player
-/// keeps its own song, so another one standing in between tracks changes
-/// nothing, and a song counts once it plays: some players report the next one
-/// paused for a moment before it starts.
 struct NotchTrackChange {
     private struct Song {
         let title: String
         let artist: String?
 
-        /// A reading without the artist still names the same song.
         func matches(_ other: Song) -> Bool {
             title == other.title && (artist == nil || other.artist == nil || artist == other.artist)
         }
@@ -178,9 +154,6 @@ struct NotchTrackChange {
 
     private var songs: [String: Song] = [:]
 
-    /// Whether `playback` is a player moving on to another song. `first` marks
-    /// the first reading since the reader started or changed source, which
-    /// only sets where each player is.
     mutating func isNewSong(_ playback: NotchPlayback?, first: Bool) -> Bool {
         guard let playback, let player = Self.player(of: playback), let song = Self.song(of: playback) else { return false }
         guard !first else { songs[player] = song; return false }
@@ -189,13 +162,6 @@ struct NotchTrackChange {
         return !previous.matches(song)
     }
 
-    /// Whether `next`, read after `current`, can be a player between songs:
-    /// nothing playing, or a song that is not playing and is not the one that
-    /// played, such as another player's paused song standing in or the next
-    /// song reported before it starts. The same song paused is a pause. So is
-    /// another player's song while the player that played still lists a song
-    /// in `sources`, since that player was paused and automatic playback moved
-    /// to the other.
     static func isBetweenSongs(_ next: NotchPlayback?, after current: NotchPlayback,
                                sources: [NotchPlaybackSource] = []) -> Bool {
         guard let next else { return true }

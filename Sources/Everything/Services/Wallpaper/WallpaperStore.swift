@@ -3,15 +3,6 @@
 
 import Foundation
 
-// Sonoma+ Index.plist + kill WallpaperAgent = Show on all Spaces
-// (setDesktopImageURL alone only hits the current Space)
-//
-// Backup policy:
-// - One-shot copy of Index.plist before the first apply-all write, kept under
-//   the app Application Support folder (cleared with the rest of the app).
-// - Feature uninstall deletes that copy. Later applies never overwrite it.
-// - No in-app restore path; AppKit current-space apply remains the soft fallback
-//   when the store patch cannot run.
 enum WallpaperStore {
     static var indexURL: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory,
@@ -24,7 +15,6 @@ enum WallpaperStore {
             .appendingPathComponent("Index.plist", isDirectory: false)
     }
 
-    // lives with the app, not in the system wallpaper store
     static var backupURL: URL {
         let fallback = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library/Application Support/com.vorssaint.utils",
@@ -34,13 +24,11 @@ enum WallpaperStore {
                                                 isDirectory: false)
     }
 
-    // leftover from when the bak lived next to Index.plist
     private static var legacySystemBackupURL: URL {
         indexURL.deletingLastPathComponent()
             .appendingPathComponent("Index.plist.vorssaint-bak", isDirectory: false)
     }
 
-    // move a pristine system-side bak into App Support once (older builds)
     static func migrateLegacyBackupIfNeeded() {
         let backup = backupURL
         let legacy = legacySystemBackupURL
@@ -53,7 +41,6 @@ enum WallpaperStore {
             try FileManager.default.copyItem(at: legacy, to: backup)
             try? FileManager.default.removeItem(at: legacy)
         } catch {
-            // leave legacy in place for a later apply/migrate
         }
     }
 
@@ -97,12 +84,10 @@ enum WallpaperStore {
         }
 
         guard shouldContinue() else { return false }
-        // agent keeps the old tree until restarted
         _ = Shell.run("/usr/bin/killall", ["WallpaperAgent"])
         return true
     }
 
-    // first pre-feature copy only; never overwrite with a later apply
     private static func ensureBackup(of index: URL) -> Bool {
         migrateLegacyBackupIfNeeded()
         let backup = backupURL

@@ -4,9 +4,6 @@
 import CoreGraphics
 import Foundation
 
-/// A block that can be picked up and stretched on a lane: a caption, a
-/// picture, a blur. They behave identically on the timeline, so one
-/// implementation of moving and stretching serves every kind.
 protocol RecorderTimelineBlock {
     var id: UUID { get }
     var start: Double { get set }
@@ -14,19 +11,9 @@ protocol RecorderTimelineBlock {
     var duration: Double { get }
 }
 
-/// The editable timeline: what is kept, what is cut out of the middle, and
-/// where the picture leans in.
-///
-/// Everything is keyed in the RECORDING's own time, never in the finished
-/// video's time. That single choice is what makes cutting a piece out of the
-/// middle safe: the pointer track, the zooms and anything else keyed to time
-/// all keep pointing at the same moments, and only one function has to know
-/// how the two clocks line up.
 enum RecorderTimeline {
-
     // MARK: - Pieces
 
-    /// A stretch of the recording that is thrown away.
     struct Cut: Codable, Equatable {
         var start: Double
         var end: Double
@@ -34,16 +21,11 @@ enum RecorderTimeline {
         var duration: Double { max(0, end - start) }
     }
 
-    /// One lean-in. Generated from a click to begin with, then owned by
-    /// whoever touches it: the recorder never quietly regenerates these,
-    /// because that is how an editor loses somebody's work.
     struct ZoomSegment: Codable, Equatable, Identifiable {
         var id: UUID
         var start: Double
         var end: Double
         var amount: Double
-        /// Where it looks, in the recorded area's own 0...1 space. Nil means
-        /// follow the pointer, which is what an automatic zoom does.
         var focusX: Double?
         var focusY: Double?
 
@@ -71,16 +53,11 @@ enum RecorderTimeline {
         }
     }
 
-    /// Short enough to be a beat, long enough to be seen. A drag that would
-    /// make a piece shorter than this stops instead of producing something
-    /// that cannot be grabbed again.
     static let minimumSegment: Double = 0.4
     static let minimumCut: Double = 0.1
 
     // MARK: - Normalizing
 
-    /// Cuts, in order, merged where they touch, inside the recording, and
-    /// never so short that they would be invisible.
     static func normalized(cuts: [Cut], duration: Double) -> [Cut] {
         guard duration > 0 else { return [] }
         let clamped = cuts.compactMap { cut -> Cut? in
@@ -103,9 +80,6 @@ enum RecorderTimeline {
         return merged
     }
 
-    /// Zooms in order and never overlapping. An overlap is resolved by moving
-    /// the later one's start, not by dropping either: the person put both
-    /// there on purpose.
     static func normalized(segments: [ZoomSegment], duration: Double) -> [ZoomSegment] {
         guard duration > 0 else { return [] }
         let clamped = segments.compactMap { segment -> ZoomSegment? in
@@ -134,9 +108,6 @@ enum RecorderTimeline {
 
     // MARK: - What is kept
 
-    /// The stretches of the recording that survive the trim and the cuts, in
-    /// order. This is the list the export turns into a composition, and the
-    /// list the two clocks are derived from.
     static func keptRanges(trim: RecorderSupport.Trim, cuts: [Cut]) -> [ClosedRange<Double>] {
         guard trim.duration > 0 else { return [] }
         var ranges: [ClosedRange<Double>] = []
@@ -156,8 +127,6 @@ enum RecorderTimeline {
         keptRanges(trim: trim, cuts: cuts).reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
     }
 
-    /// Finished-video time to recording time. The composer draws frames the
-    /// player and the export ask for, and they ask in finished-video time.
     static func sourceTime(forOutput output: Double,
                            trim: RecorderSupport.Trim,
                            cuts: [Cut]) -> Double {
@@ -172,8 +141,6 @@ enum RecorderTimeline {
         return ranges[ranges.count - 1].upperBound
     }
 
-    /// Recording time to finished-video time, or nil when that moment was cut
-    /// out and does not exist in the finished video at all.
     static func outputTime(forSource source: Double,
                            trim: RecorderSupport.Trim,
                            cuts: [Cut]) -> Double? {
@@ -189,19 +156,12 @@ enum RecorderTimeline {
 
     // MARK: - Evaluating
 
-    /// How far into a lean-in the picture is at a moment of the recording,
-    /// how strong that lean-in is, and where it is aimed. Nothing is happening
-    /// when the progress is zero.
     struct ZoomState: Equatable {
         var progress: Double
         var amount: Double
         var focus: CGPoint?
     }
 
-    /// The segment that OWNS this moment always wins over the one before it
-    /// fading out. Two zooms that touch have to hand over directly: reading
-    /// the earlier one's ramp-out first would zoom the picture all the way
-    /// back out and then snap into the second one.
     static func zoomState(at time: Double, segments: [ZoomSegment]) -> ZoomState {
         var fadingOut: ZoomSegment?
         for segment in segments {
@@ -232,9 +192,6 @@ enum RecorderTimeline {
 
     // MARK: - Generating and editing zooms
 
-    /// The first set of zooms a recording gets, straight from its clicks.
-    /// Produced ONCE, when a recording is opened and has none; after that they
-    /// are the person's, and only an explicit ask rebuilds them.
     static func generatedSegments(clicks: [RecorderMotion.Click],
                                   typingTimes: [Double] = [],
                                   duration: Double,
@@ -246,9 +203,6 @@ enum RecorderTimeline {
         }
     }
 
-    /// Where a new zoom should go when the person adds one at the playhead:
-    /// a comfortable default length, pushed off anything already there, and
-    /// refused rather than squeezed when there is genuinely no room.
     static let addedSegmentLength: Double = 2.0
 
     static func slotForNewSegment(at time: Double,
@@ -257,12 +211,10 @@ enum RecorderTimeline {
         guard duration > minimumSegment else { return nil }
         let ordered = existing.sorted { $0.start < $1.start }
         var start = max(0, min(time, duration - minimumSegment))
-        // The gap the playhead is standing in.
         var limit = duration
         for segment in ordered {
             if segment.end <= start { continue }
             if segment.start <= start {
-                // Standing inside a zoom: the new one starts where it ends.
                 start = segment.end
                 continue
             }
@@ -273,8 +225,6 @@ enum RecorderTimeline {
         return (start: start, end: min(limit, start + addedSegmentLength))
     }
 
-    /// Moving a whole segment, kept inside the recording and off its
-    /// neighbours, so a drag can never produce an overlap to resolve later.
     static func moved(_ segment: ZoomSegment,
                       to start: Double,
                       among others: [ZoomSegment],
@@ -292,8 +242,6 @@ enum RecorderTimeline {
         return moved
     }
 
-    /// Dragging one edge. The opposite edge stays put and the segment can
-    /// never be shortened past the point where it could be grabbed again.
     static func resized(_ segment: ZoomSegment,
                         edge: Edge,
                         to time: Double,

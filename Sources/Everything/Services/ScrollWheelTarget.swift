@@ -4,8 +4,6 @@
 import AppKit
 import CoreGraphics
 
-/// AppKit state is published on main; the pointer tap only reads the cache
-/// and occasionally the WindowServer list. It never waits for main.
 final class ScrollWheelTarget {
     static let shared = ScrollWheelTarget()
 

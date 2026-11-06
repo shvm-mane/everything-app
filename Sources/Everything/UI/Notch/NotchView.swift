@@ -9,7 +9,6 @@ struct NotchView: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var launcher = QuickLauncherService.shared
-    @ObservedObject private var updates = UpdateService.shared
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -18,12 +17,6 @@ struct NotchView: View {
 
     var body: some View {
         surface
-            // An activity arriving over the resting companion fades in as the
-            // companion fades out, and one ending fades back into it, instead
-            // of cutting from one to the other in a frame. A song leaving has its
-            // own departure. A companion that stays to react is drawn over the
-            // new strip where it stood, so the swap under it is left
-            // unanimated: two of it crossfading in one place would dim it.
             .transaction(value: service.compactActivity) { transaction in
                 guard !reduceMotion, !service.mascotLingers else { return }
                 let arrives = service.compactActivity != nil && service.mascotJustRested
@@ -34,20 +27,8 @@ struct NotchView: View {
             }
             .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
             .foregroundStyle(.white)
-            // The window server leaves SwiftUI content that ignores hit tests
-            // out of its own hit test unless it is fully opaque. The backdrop
-            // ignores them (allowsHitTesting(false) in NotchSurfaceBackground),
-            // and open glass has no opaque black beneath it, so a click or a
-            // wheel over empty glass would reach the window behind: the page
-            // stops scrolling between cards and the island loses focus. A fill
-            // too faint to see takes hit tests and keeps the surface in this
-            // window, as the opaque black of a black island does.
             .background(shape.offset(x: service.surfaceShift).fill(Color.black.opacity(0.01)))
             .contentShape(shape.offset(x: service.surfaceShift))
-            // The backdrop is a separate, non-interactive hosting view. Claim
-            // empty space here so SwiftUI keeps the taps that land on it. This
-            // draws nothing, so it does not hold a click in this window at the
-            // window server; the fill above does.
             .onTapGesture { }
             .onChange(of: reduceTransparency) {
                 DispatchQueue.main.async { service.refreshPresentation(animated: false) }
@@ -66,8 +47,6 @@ struct NotchView: View {
     private var usesGlassSurface: Bool {
 #if compiler(>=6.2)
         if #available(macOS 26, *), glass, !reduceTransparency {
-            // Resting wings, compact activities and small status notices keep
-            // blending into the physical camera cutout.
             return service.usesGlassSurface
         }
 #endif
@@ -106,7 +85,6 @@ struct NotchView: View {
         } else if service.dragPlaceholder {
             Group {
                 if service.mascotOn {
-                    // The companion stands by the hint and watches the file come.
                     HStack(spacing: 8) {
                         NotchMascotView(look: NotchMascotSupport.look(), size: 20, followsDrag: true)
                             .frame(width: 20, height: 20)
@@ -140,7 +118,6 @@ struct NotchView: View {
                 } label: {
                     Group {
                         if floats {
-                            // A departing notice keeps its own row while the capsule closes.
                             NotchCapsuleNoticeView(notice: notice, geometry: service.geometry,
                                                    size: service.notice == nil ? service.capsuleNoticeSurface(notice)
                                                        : service.surfaceSize)
@@ -148,14 +125,9 @@ struct NotchView: View {
                             NotchNoticeView(notice: notice, geometry: service.geometry, hidesMascot: service.mascotBridging)
                         }
                     }
-                    // Beside a camera the notice reaches further toward its
-                    // wider side, and takes clicks all the way to its end.
                     .contentShape(Rectangle().offset(x: floats ? 0
                         : service.geometry.noticeShift(notice.wings(in: service.geometry))))
                 }
-                // A floating capsule lights up under the pointer. Beside a
-                // camera the wash would outline the housing, so the notch keeps
-                // its notices plain, as its other strips are.
                 .buttonStyle(NotchButtonStyle(cornerRadius: 14, lifts: false, highlights: floats))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(notice.accessibilityText)
@@ -194,9 +166,6 @@ struct NotchView: View {
                         .padding(.vertical, NotchActivityPickerLayout.verticalInset)
                 }
             } else {
-                // Hover grows the capsule around its strip, as it grows the
-                // notch around its wings. Drawn at the grown size, a song's
-                // cover and bars jumped out at once while the shape still grew.
                 let strip = service.compactStripSize(for: activity, companion: service.compactCompanion)
                 activityStrip(activity, size: strip)
                     .modifier(NotchMascotActivityVisit(service: service,
@@ -220,14 +189,10 @@ struct NotchView: View {
         }
     }
 
-    /// The island floats as a capsule, whose strips run end to end.
     private var floats: Bool { service.geometry.floats }
 
-    /// A strip and the companion at rest swap through black, where a
-    /// crossfade would show it half faded over the strip's text.
     private var companionSwap: AnyTransition { service.mascotAtRest ? .notchFadeThrough : .opacity }
 
-    /// `size` is the capsule's; a hanging strip keeps the camera's geometry.
     @ViewBuilder private func activityStrip(_ activity: NotchCompactActivity, size: CGSize) -> some View {
         if floats {
             switch activity {
@@ -240,9 +205,6 @@ struct NotchView: View {
             case .keepAwake: NotchCapsuleKeepAwakeStrip(service: service, size: size)
             }
         } else {
-            // Handed down, the wings stay as they were drawn while a strip
-            // whose activity just ended leaves, instead of following the
-            // service to an island with no activity, where they are empty.
             let geometry = service.compactActivityGeometry
             switch activity {
             case .timer: NotchTimerStrip(service: service, displayGeometry: geometry)
@@ -258,16 +220,10 @@ struct NotchView: View {
 
     private var compact: some View { NotchRestingStrip(service: service) }
 
-    /// EVERYTHING has no Command Bar; the page is empty if ever asked for.
     private var commandBarPage: some View { Color.clear }
 
     private var showsDetail: Bool { service.showingAppPanel || service.selectedMetric != nil }
 
-    /// The open island names no page. Its top row holds the page's own
-    /// controls, beside the camera where they fit, as a phone's island wraps
-    /// its camera, and the page takes the rest; the player wraps the camera
-    /// itself. Pin, Settings and Close live in the island's menu, a secondary
-    /// click away anywhere on it, and Settings on Command-Comma too.
     private var expanded: some View {
         let geometry = service.expandedGeometry
         let band = NotchBand(geometry: geometry, contentWidth: service.contentSize.width)
@@ -275,11 +231,8 @@ struct NotchView: View {
         return page
             .frame(width: service.contentSize.width, height: service.contentSize.height, alignment: .top)
             .clipShape(NotchPageClip(top: geometry.pageTopInset))
-            // With no title on screen, VoiceOver still names the page.
             .accessibilityElement(children: .contain)
             .accessibilityLabel(pageName)
-            // The island's own actions sit in its secondary-click menu, with
-            // no button of their own in the row; VoiceOver lists them here.
             .accessibilityAction(named: service.pinned ? text.unpin : text.pin) { service.pinned.toggle() }
             .accessibilityAction(named: l10n.s.menuSettings) { service.openSettings() }
             .accessibilityAction(named: text.collapse) { service.collapse() }
@@ -288,8 +241,6 @@ struct NotchView: View {
                 if geometry.headerRowHeight > 0 {
                     bandRow(items, band: band, wraps: wraps)
                 } else if let feedback = headerFeedback {
-                    // With no row, the reading covers the page's top corner on
-                    // the side a row would give it, for the moment it shows.
                     NotchExpandedLevelView(notice: feedback)
                         .padding(.horizontal, 10)
                         .frame(width: 170, height: 28)
@@ -304,8 +255,6 @@ struct NotchView: View {
             .frame(width: service.expandedSize.width, height: service.expandedSize.height, alignment: .top)
             .contentShape(Rectangle())
             .contextMenu { islandMenu }
-            // Opening the island makes its panel key, so Keyboard navigation would ring
-            // the first control. Show the ring once keyboard input begins.
             .focusEffectDisabled(!service.showsKeyboardFocus)
             .onAppear { UpdateService.shared.checkIfStale() }
     }
@@ -332,13 +281,8 @@ struct NotchView: View {
         }
     }
 
-    /// The row: the island's way back or to the sections leads it, and an
-    /// update or the pin ends it, around what the page puts there. A page
-    /// that wraps the camera lays out the leading side itself.
     private func bandRow(_ items: NotchBandItems, band: NotchBand, wraps: Bool) -> some View {
         let feedback = headerFeedback
-        // Across a full row the home page's levels fill the leading side, so
-        // a reading takes the trailing end and they make room for it.
         let homeRow = !band.besideCamera && service.selected == .controls && !showsDetail
             && !service.showingSections && !service.modules.isEmpty
         let homeReading = homeRow
@@ -346,8 +290,6 @@ struct NotchView: View {
         let side: HorizontalEdge = wraps || homeReading != nil ? .trailing : .leading
         let readingWidth = homeReading ?? (band.besideCamera ? band.side : min(band.side, 220))
         let makesRoom = homeReading != nil && feedback != nil
-        // A level reading covers its side for the moment it shows; the
-        // controls there stay mounted, so a search keeps its focus.
         return NotchBandRow(band: band, covered: feedback == nil ? nil : side) {
             if !wraps {
                 bandLeading(band)
@@ -357,9 +299,6 @@ struct NotchView: View {
             if makesRoom {
                 Color.clear.frame(width: readingWidth)
             } else {
-                // The island's own marks follow the page's controls while they
-                // fit their side, never pushing them under the camera; the menu
-                // offers the same actions either way.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 6) { items.trailing; trailingSections(band); updateControl(band); pinMark }
                     HStack(spacing: 6) {
@@ -371,7 +310,6 @@ struct NotchView: View {
                 }
             }
         }
-        // The levels ease aside for the reading and back.
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: makesRoom)
         .overlay(alignment: side == .leading ? .leading : .trailing) {
             if let feedback {
@@ -379,13 +317,9 @@ struct NotchView: View {
                     .frame(width: readingWidth)
             }
         }
-        // Drawn here rather than in the page, the row's controls read the
-        // island's language for their dates and numbers, as the page does.
         .environment(\.locale, l10n.language.formattingLocale())
     }
 
-    /// A page that lays out its leading side itself ends its row with the
-    /// way to the sections, after its own controls, where they fit together.
     @ViewBuilder private func trailingSections(_ band: NotchBand) -> some View {
     }
 
@@ -393,16 +327,10 @@ struct NotchView: View {
         NotchUpdateControl(action: service.showUpdate, compact: band.besideCamera)
     }
 
-    /// A kept-open island says so, and one click lets it go.
     @ViewBuilder private var pinMark: some View {
         if service.pinned {
-            NotchIconButton(symbol: "pin.fill", title: text.unpin, selected: true) { service.pinned = false }
+            NotchIconButton(symbol: "pin.fill", title: "Unpin", selected: true) { service.pinned = false }
         }
-    }
-
-    private var updateOffered: Bool {
-        if case .available = updates.state { return true }
-        return false
     }
 
     @ViewBuilder private func bandLeading(_ band: NotchBand) -> some View {
@@ -411,37 +339,22 @@ struct NotchView: View {
         }
     }
 
-    /// The island's own actions, on a secondary click anywhere a page has no
-    /// menu of its own. The floating buttons and the keys reach them too.
     @ViewBuilder private var islandMenu: some View {
         Button {
             service.pinned.toggle()
         } label: {
-            Label(service.pinned ? text.unpin : text.pin, systemImage: service.pinned ? "pin.slash" : "pin")
+            Label(service.pinned ? "Unpin" : "Pin", systemImage: service.pinned ? "pin.slash" : "pin")
         }
         Button(action: service.openSettings) {
             Label(l10n.s.menuSettings, systemImage: "gearshape")
         }
-        // An offer the row has no room for still reaches the island.
-        if updateOffered {
-            Button(action: service.showUpdate) {
-                Label(l10n.s.updateBannerAction, systemImage: "arrow.down.circle")
-            }
-        }
-        Divider()
-        Button(action: service.collapse) {
-            Label(text.collapse, systemImage: "chevron.up")
-        }
     }
 
-    /// Keep each page's minimum usable layout reachable when a custom height
-    /// or the display leaves less room. The outer silhouette stays unchanged.
     private var pageSize: CGSize {
         var size = service.contentSize
         guard !showsDetail else { return size }
         switch service.selected {
         case .mixer:
-            // Shorten the tracks before pushing mute and level controls offscreen.
             size.height = max(size.height, NotchLayout.mixerMinimumHeight)
         case .music:
             size.height = max(size.height, NotchLayout.musicPlayerHeight(band: service.expandedGeometry.musicBandHeight,
@@ -459,11 +372,6 @@ struct NotchView: View {
     private var headerFeedback: NotchNotice? {
         guard let notice = service.notice, notice.level != nil,
               [.volume, .brightness, .keyboardLight].contains(notice.event) else { return nil }
-        // The home page shows its levels in the top row, or just below it,
-        // where they already move with the key; a reading over one would only
-        // repeat it. A level key's event shares its name with the level it moves.
-        // Brightness moves there only while its slider shows the display the
-        // key moved.
         return notice
     }
 
@@ -494,7 +402,6 @@ struct NotchView: View {
         .help(text.open)
     }
 
-    /// EVERYTHING's pages: Now Playing, the scratchpad and Claude Pro usage.
     @ViewBuilder private var content: some View {
         switch service.selected {
         case .scratchpad: NotchScratchpadView(service: service)
@@ -504,9 +411,7 @@ struct NotchView: View {
     }
 }
 
-/// The charge the closed island rests with, beside a camera or in the capsule.
 enum NotchRestingBattery {
-    /// Both halves of the charge turn amber, then red, together as it runs low.
     static func tint(for power: PowerReading, tint: Bool, threshold: Int,
                      early: Bool, earlyThreshold: Int) -> Color {
         switch NotchSupport.batteryWarning(percent: power.chargePercent,
@@ -519,7 +424,6 @@ enum NotchRestingBattery {
         }
     }
 
-    /// The icon empties with the charge, as the menu bar's does.
     static func symbol(for power: PowerReading) -> String {
         BatteryPowerSupport.menuBarSymbol(percent: power.chargePercent ?? 100,
                                           isCharging: power.isCharging,
@@ -527,13 +431,8 @@ enum NotchRestingBattery {
     }
 }
 
-/// The closed island at rest beside a camera: the wings with the charge,
-/// the song or the AI allowance the person chose, when the menus leave room.
-/// The companion rests in a wing when nothing else is there, and walks
-/// through on its visits.
 struct NotchRestingStrip: View {
     @ObservedObject var service: NotchService
-    /// Another display's strip, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var music = NotchMusicService.shared
     @AppStorage(DefaultsKey.notchLowBatteryTint) private var lowBatteryTint = false
@@ -551,15 +450,10 @@ struct NotchRestingStrip: View {
 
     private var batterySymbol: String { NotchRestingBattery.symbol(for: service.power) }
 
-    /// Centre battery content inside the wing's visible area, past its curved shoulder.
     private var restingBatteryInset: CGFloat {
-        // Leave enough of the 44-point wing for the full 100% label at every height.
         min(16, NotchLayout.shoulder(height: geometry.stripHeight) + NotchLayout.compactEdgeGap)
     }
 
-    /// A visit walks over what the island rests with, which steps aside
-    /// meanwhile. Reacting in its own wing, it takes only that one, as over
-    /// an activity, and the other side stays in view.
     private func wingStepsAside(_ side: NotchMascotSide) -> Bool {
         guard service.mascotStepsAside, !service.mascotAtRest else { return false }
         return service.mascotVisit?.kind.takesOnlyItsWing != true || side == service.mascotSide
@@ -569,8 +463,6 @@ struct NotchRestingStrip: View {
         ZStack {
             HStack(spacing: 0) {
                 if service.idleContent != .none, geometry.restingWingWidth > 0 {
-                    // Each wing keeps its width even when it has nothing to
-                    // show, or the other one slides toward the camera.
                     ZStack(alignment: .trailing) {
                         Color.clear
                         switch service.idleContent {
@@ -632,16 +524,12 @@ struct NotchRestingStrip: View {
                                      mood: service.mascotRestingMood, reaction: service.mascotReaction,
                                      yieldsToActivities: true)
                     .frame(width: geometry.collapsed.width, height: geometry.stripHeight)
-                    // The window's own layer shows it while the island closes around it.
                     .opacity(service.mascotBridging && displayGeometry == nil ? 0 : 1)
                     .animation(nil, value: service.mascotBridging)
                     .allowsHitTesting(false)
             }
         }
         .foregroundStyle(.white.opacity(0.9))
-        // The strip stays in its band at the top: hover grows the island
-        // around it, and centring it in the taller shape dropped it half
-        // the growth in one frame.
         .frame(height: geometry.stripHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
@@ -652,15 +540,12 @@ struct NotchRestingStrip: View {
 struct NotchShape: Shape {
     var attached: Bool
     var radius: CGFloat
-    /// A capsule floating this far inside the top and bottom of the rect,
-    /// with its own corners, instead of the outline hanging from the edge.
     var floatingGap: CGFloat? = nil
     var animatableData: CGFloat {
         get { radius }
         set { radius = newValue }
     }
 
-    /// The island's outline at a surface of `height`, as its display draws it.
     static func island(height: CGFloat, geometry: NotchGeometry) -> NotchShape {
         NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: height), floatingGap: geometry.floatingGap)
     }
@@ -717,11 +602,7 @@ extension NotchModule: PanelOrderItem {
     }
 }
 
-/// A page may draw into the island's own margins and behind its header, which
-/// the silhouette already bounds: the artwork's halo and hover growth fade out
-/// there instead of ending at a hard edge. The header stays above the page.
 private struct NotchPageClip: Shape {
-    /// From the top of the page to the top of the island.
     let top: CGFloat
 
     func path(in rect: CGRect) -> Path {
@@ -731,13 +612,11 @@ private struct NotchPageClip: Shape {
     }
 }
 
-/// The strip the picker shows, a new one for each choice.
 private struct NotchPickedStrip: Hashable {
     let activity: NotchCompactActivity
     let companion: NotchCompactActivity?
 }
 
-/// Named choices appear below the camera, with the current activity highlighted.
 struct NotchActivityPicker: View {
     @Namespace private var choice
     let activities: [NotchCompactActivity]

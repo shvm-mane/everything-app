@@ -4,8 +4,6 @@
 import Foundation
 import IOBluetooth
 
-/// Only values cross into presentation; reading an IOBluetoothDevice there
-/// would put a synchronous Bluetooth request back on the main thread.
 enum NotchAccessoryConnectionEvent: Equatable {
     case connected(name: String, majorClass: UInt32, minorClass: UInt32)
     case disconnected(name: String?)
@@ -17,16 +15,12 @@ protocol NotchAccessoryConnectionSource: AnyObject {
     func stop()
 }
 
-/// Lifecycle belongs to the main thread. Native work and cleanup share one
-/// run loop, even across disable/enable, so a stuck request cannot create a
-/// growing set of Bluetooth workers. Neither start nor stop waits for it.
 final class NotchAccessoryConnectionMonitor {
     typealias Perform = (@escaping () -> Void) -> Void
 
     private final class Session {
         private let lock = NSLock()
         private var cancelled = false
-        // Accessed only by the Bluetooth worker.
         var source: NotchAccessoryConnectionSource?
 
         var isCancelled: Bool { lock.withLock { cancelled } }
@@ -50,7 +44,6 @@ final class NotchAccessoryConnectionMonitor {
 
     deinit { stop() }
 
-    /// Publishes on the main queue only while this activation is still alive.
     func start(onEvent: @escaping (NotchAccessoryConnectionEvent) -> Void) {
         stop()
         let session = Session()
@@ -75,8 +68,6 @@ final class NotchAccessoryConnectionMonitor {
     func stop() {
         guard let session else { return }
         self.session = nil
-        // Invalidate immediately, including while start is inside the system
-        // framework. Unregistration can wait for that call to return.
         session.cancel()
         perform {
             session.source?.stop()
@@ -85,8 +76,6 @@ final class NotchAccessoryConnectionMonitor {
     }
 }
 
-/// IOBluetooth does not promise a callback queue. Its selectors only enqueue
-/// work, without querying devices or synchronously calling into the UI.
 private final class NotchAccessoryBluetoothSource: NSObject, NotchAccessoryConnectionSource {
     private let perform: NotchAccessoryConnectionMonitor.Perform
     private var isCancelled: () -> Bool = { true }
@@ -120,7 +109,6 @@ private final class NotchAccessoryBluetoothSource: NSObject, NotchAccessoryConne
         guard !isCancelled() else { return }
         let notification = IOBluetoothDevice.register(forConnectNotifications: self,
             selector: #selector(deviceConnected(_:device:)))
-        // A framework call can run a nested run loop and finish after stop.
         if isCancelled() { notification?.unregister() }
         else { connectNotification = notification }
     }
@@ -174,8 +162,6 @@ private final class NotchAccessoryBluetoothSource: NSObject, NotchAccessoryConne
     }
 }
 
-/// Starts lazily and asynchronously. A serial dispatch queue alone is not a
-/// stable thread/run loop for IOBluetooth's notification registrations.
 private final class NotchAccessoryBluetoothRunLoop {
     static let shared = NotchAccessoryBluetoothRunLoop()
     private let lock = NSLock()
@@ -204,9 +190,6 @@ private final class NotchAccessoryBluetoothRunLoop {
         }
     }
 
-    // Keep the drain reserved until the active native call returns: a nested
-    // framework run loop must not start another source or unregister the
-    // source whose start is still on the stack.
     private func scheduleDrain(on runLoop: CFRunLoop) {
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { self.drain() }
         CFRunLoopWakeUp(runLoop)
@@ -223,7 +206,6 @@ private final class NotchAccessoryBluetoothRunLoop {
 
     private func run() {
         let runLoop = CFRunLoopGetCurrent()!
-        // No polling: the port only keeps the run loop alive between events.
         RunLoop.current.add(NSMachPort(), forMode: .common)
         lock.withLock {
             self.runLoop = runLoop

@@ -3,8 +3,6 @@
 
 import SwiftUI
 
-/// Export settings are edited as one undoable document change. The draft
-/// stays local until Done, so scrubbing the slider does not fill the undo stack.
 struct RecorderExportSpeedControl: View {
     @ObservedObject var model: RecorderEditorModel
     @ObservedObject private var l10n = L10n.shared

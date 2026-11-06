@@ -6,33 +6,15 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// ImageIO's multi-image GIF encoder builds one palette for a clip and stores
-/// only the changed part of each later frame, but it holds every frame until
-/// it finalizes. Frames therefore go through it in chunks: each chunk is one
-/// multi-image destination, and its frames are appended to the file on disk
-/// before the next chunk starts. A clip that fits in one chunk keeps exactly
-/// what that encoder made. A longer one starts each chunk on a full picture,
-/// and frames whose chunk palette differs from the file's carry it locally,
-/// which GIF89a permits for every image.
-///
-/// We retain the native encoder's palettes, offsets, disposal, transparency
-/// and LZW data rather than implementing a color quantizer or compressor.
 final class RecorderGIFWriter {
     enum Failure: Error { case invalidFrame, closed, empty }
 
-    /// How many frames ImageIO holds at once. It is the frame budget the
-    /// in-memory encoder always had (300 decoded frames, ~1.6 MB each at the
-    /// large size), so every clip within it comes out as that encoder made it.
-    /// On top of those frames, the chunk's encoded bytes are held up to three
-    /// times while ImageIO's output is parsed.
     static let framesPerChunk = 300
 
     private let file: FileHandle
     private let fps: Int
     private let chunkLength: Int
     private var pending: [CGImage] = []
-    /// The last frame of the previous chunk. It is written once the next
-    /// chunk shows whether it has to clear the canvas behind it.
     private var held: (picture: Picture, image: CGImage)?
     private var canvas: (width: Int, height: Int)?
     private var globalTable: Data?
@@ -44,8 +26,6 @@ final class RecorderGIFWriter {
         guard (1...100).contains(fps), framesPerChunk > 0 else { throw Failure.invalidFrame }
         self.fps = fps
         chunkLength = framesPerChunk
-        // The scratch folder is private. The file keeps the ordinary mode, so
-        // the saved copy can be shared like any other export.
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -84,26 +64,18 @@ final class RecorderGIFWriter {
 
     private func flush() throws {
         guard !pending.isEmpty, let canvas else { return }
-        // ImageIO's autoreleased quantizer and frame data must be released on
-        // every chunk, including exports run on a long-lived worker task.
         try autoreleasepool {
             let chunk = try Self.encode(pending)
             guard chunk.width == canvas.width, chunk.height == canvas.height,
                   chunk.frames.count == pending.count else { throw Failure.invalidFrame }
             if !headerWritten { try writeHeader(chunk) }
             if var previous = held {
-                // A chunk opens on a full picture. Wherever that picture is
-                // transparent, the previous chunk's last frame must not show
-                // through, so it becomes a whole picture that clears the
-                // canvas once its time is up.
                 if !chunk.frames[0].covers(width: canvas.width, height: canvas.height)
                     || Self.hasTransparency(pending[0]) {
                     previous.picture = try clearingPicture(of: previous.image)
                 }
                 try emit(previous.picture)
             }
-            // Each picture is written as soon as it is built, so the chunk's
-            // encoded bytes are not copied once more.
             for frame in chunk.frames.dropLast() { try emit(picture(for: frame, in: chunk)) }
             let last = try picture(for: chunk.frames[chunk.frames.count - 1], in: chunk)
             self.held = (last, pending[pending.count - 1])
@@ -116,7 +88,6 @@ final class RecorderGIFWriter {
         header.append(contentsOf: Self.word(chunk.width) + Self.word(chunk.height))
         header.append(chunk.screen)
         if let table = chunk.globalTable { header.append(table) }
-        // Infinite animation loop, matching the previous exporter.
         header.append(contentsOf: [0x21, 0xFF, 11])
         header.append(Data("NETSCAPE2.0".utf8))
         header.append(contentsOf: [3, 1, 0, 0, 0])
@@ -155,8 +126,6 @@ final class RecorderGIFWriter {
     }
 
     private func emit(_ picture: Picture) throws {
-        // GIF ticks are centiseconds. Quantize the cumulative clock, not
-        // each delay, so 12/15 fps do not drift over a long recording.
         let start = (Double(emitted) * 100 / Double(fps)).rounded()
         let end = (Double(emitted + 1) * 100 / Double(fps)).rounded()
         var block = Data([0x21, 0xF9, 4, ((picture.disposal & 7) << 2) | picture.transparency])
@@ -175,15 +144,12 @@ final class RecorderGIFWriter {
         }
         for image in images { CGImageDestinationAddImage(encoder, image, nil) }
         guard CGImageDestinationFinalize(encoder) else { throw Failure.invalidFrame }
-        // Bridging NSMutableData to Data would copy the whole chunk once more.
         return try withExtendedLifetime(data) {
             try chunk(from: Data(bytesNoCopy: data.mutableBytes, count: data.length,
                                  deallocator: .none))
         }
     }
 
-    /// Whether any pixel is less than opaque. Only the opening picture of a
-    /// chunk is checked, once per chunk.
     private static func hasTransparency(_ image: CGImage) -> Bool {
         switch image.alphaInfo {
         case .none, .noneSkipFirst, .noneSkipLast: return false
@@ -201,7 +167,6 @@ final class RecorderGIFWriter {
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
-        // Unknown is treated as transparent: clearing is always correct.
         guard drawn else { return true }
         return stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] < 255 }
     }
@@ -210,7 +175,6 @@ final class RecorderGIFWriter {
         var disposal: UInt8
         let transparency: UInt8
         let transparentIndex: UInt8
-        /// Image descriptor, color table and LZW data, ready to append.
         let block: Data
     }
 
@@ -222,10 +186,8 @@ final class RecorderGIFWriter {
         let top: Int
         let width: Int
         let height: Int
-        /// The ten-byte image descriptor, from the separator to its flags.
         let descriptor: Data
         let localTable: Data?
-        /// LZW minimum code size, data sub-blocks and their terminator.
         let pixels: Data
 
         func covers(width: Int, height: Int) -> Bool {
@@ -236,16 +198,11 @@ final class RecorderGIFWriter {
     struct Chunk {
         let width: Int
         let height: Int
-        /// Logical screen flags, background index and aspect ratio.
         let screen: Data
         let globalTable: Data?
         let frames: [Frame]
     }
 
-    /// Parses native ImageIO GIF output. Reject missing palettes, frames
-    /// outside the canvas and truncated sub-blocks rather than publishing a
-    /// broken animation. The compressed bytes and interlace flag are kept
-    /// verbatim.
     static func chunk(from data: Data) throws -> Chunk {
         let bytes = [UInt8](data)
         guard bytes.count >= 13,
@@ -310,14 +267,13 @@ final class RecorderGIFWriter {
                     throw Failure.invalidFrame
                 }
                 let pixelsStart = offset
-                offset += 1 // LZW minimum code size
+                offset += 1
                 try skipBlocks(&offset)
                 frames.append(Frame(disposal: disposal, transparency: transparency,
                                     transparentIndex: transparentIndex,
                                     left: left, top: top, width: frameWidth, height: frameHeight,
                                     descriptor: descriptor, localTable: localTable,
                                     pixels: Data(bytes[pixelsStart..<offset])))
-                // A graphic control extension applies to the next image only.
                 disposal = 0
                 transparency = 0
                 transparentIndex = 0

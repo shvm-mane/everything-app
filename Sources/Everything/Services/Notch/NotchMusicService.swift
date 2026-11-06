@@ -9,11 +9,7 @@ final class NotchMusicService: ObservableObject {
     @Published private(set) var playback: NotchPlayback?
     @Published private(set) var sources: [NotchPlaybackSource] = []
     @Published private(set) var sourceIsAutomatic = true
-    /// The chosen source, which the automatic player can stand in for while
-    /// it waits for its next track.
     @Published private(set) var selectedSourcePID: Int32?
-    /// True from the first request until the adapter's first reply. Until then
-    /// a missing playback is unknown, not "nothing playing".
     @Published private(set) var awaitingPlayback = false
     @Published private(set) var artwork: NSImage?
     @Published private(set) var artworkTint: NotchArtworkTint?
@@ -33,14 +29,8 @@ final class NotchMusicService: ObservableObject {
     @Published private(set) var queueLoading = false
     @Published private(set) var queueActionPending = false
     @Published private(set) var queueActionFailed = false
-    /// A player moved on to another song; see NotchTrackChange. Sent before
-    /// the song is published, while every surface still shows the old one.
     let trackChanges = PassthroughSubject<Void, Never>()
-    /// The song shown stops, and no other plays yet: a gap between songs
-    /// outlasted its grace period, or another player's paused song took over
-    /// from a pause. Sent before that reading is published.
     let trackEnds = PassthroughSubject<Void, Never>()
-    /// Immediate visual acknowledgement of an accepted swipe, before metadata arrives.
     let gestureSkips = PassthroughSubject<Bool, Never>()
     private var trackChange = NotchTrackChange()
     static let appleMusic = "com.apple.Music"
@@ -52,7 +42,6 @@ final class NotchMusicService: ObservableObject {
         let automatic: Bool?
         let selectedPID: Int32?
     }
-    /// An empty reading waiting out a gap between songs; see receive(_:).
     private var gapReading: Reading?
     private var gapWork: DispatchWorkItem?
     private var queueVisible = false
@@ -67,9 +56,6 @@ final class NotchMusicService: ObservableObject {
     private var restartCount = 0
     private var restartWork: DispatchWorkItem?
     private var launchedAt: TimeInterval?
-    /// The adapter keeps an explicit choice only while it runs, and it stops
-    /// on lock, sleep or when the page closes. Tied to a process, so it is
-    /// never saved across launches of the app.
     private var chosenSource: NotchPlaybackSource.Selection?
     private var restoringSource = false
     private var artworkCache = NotchArtworkCache<(image: NSImage, tint: NotchArtworkTint?)>()
@@ -118,8 +104,6 @@ final class NotchMusicService: ObservableObject {
         let process = Process()
         let output = Pipe()
         let input = Pipe()
-        // A child can exit between checking isRunning and writing a command.
-        // Keep that race an error, never a SIGPIPE that terminates the app.
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else { connectionEnded(); return }
         let requested = UUID()
         generation = requested
@@ -128,9 +112,6 @@ final class NotchMusicService: ObservableObject {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         process.standardInput = input
-        // The adapter's `artworkUnchanged` stands for the player's own last
-        // cover, never one found from a tab or Apple, so a later song that
-        // keeps the same small cover still gets a lookup of its own.
         var playerArtwork: Data?
         var cachedArtwork: Data?
         var cachedImage: NSImage?
@@ -163,8 +144,6 @@ final class NotchMusicService: ObservableObject {
                                            commandContext: reply.flatMap(NotchPlaybackContext.init(reply:)),
                                            canSendCommandsDirectly: reply?["canSendCommandsDirectly"] as? Bool == true)
             playerArtwork = next?.track.artworkData
-            // A cover already found for a Firefox-family browser replaces
-            // the player's missing or small cover before it is decoded.
             if let playback = next, let cover = NotchBrowserArtwork.shared.artwork(for: playback) {
                 next = playback.withArtwork(cover)
             }
@@ -181,12 +160,6 @@ final class NotchMusicService: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, self.generation == requested,
                       self.acceptsSourceReply(automatic: automatic, sources: sources) else { return }
-                // A pipe reply may still be decoding when the player stops
-                // or restarts. Only the accepted adapter may start or cancel
-                // a lookup, including while a chosen source is restored.
-                // Everything: the player is Apple Music's alone. Another app
-                // playing (a browser, Spotify) is never shown; when it is
-                // the system's now playing, the adapter is pointed back at Music.
                 let music = sources.first { $0.bundleIdentifier == Self.appleMusic }
                 let shown = next?.track.appBundleIdentifier == Self.appleMusic ? next : nil
                 if shown == nil, let music, !(automatic == false && selectedPID == music.pid) {
@@ -223,16 +196,11 @@ final class NotchMusicService: ObservableObject {
         }
     }
 
-    /// A new adapter starts in Automatic. It finishes its first discovery
-    /// before reading any command, so it checks the choice against fresh sources.
     private func restoreSource() {
         guard let chosenSource else { restoringSource = false; return }
         restoringSource = send(.source(chosenSource))
     }
 
-    /// A restarted adapter reads once in Automatic before the restored choice
-    /// reaches it. That reading is not shown, so the automatic player does not
-    /// flash. A choice the adapter reports gone is forgotten.
     private func acceptsSourceReply(automatic: Bool?, sources: [NotchPlaybackSource]) -> Bool {
         let restoring = restoringSource
         restoringSource = false
@@ -244,17 +212,7 @@ final class NotchMusicService: ObservableObject {
         return !restoring
     }
 
-    /// A player moving on to its next song can clear its metadata for a
-    /// moment, which reads as nothing playing or as another player's paused
-    /// song standing in, or report the next song paused before it starts. The
-    /// page would empty or change and shrink, and the compact strip leave,
-    /// until the next song plays. The last song stays through such a gap and
-    /// the next reading replaces it at once. Later readings of the gap never
-    /// extend the grace period.
     private func receive(_ reading: Reading) {
-        // A player that still lists a song when another player's paused song
-        // takes its place was paused. During a gap it had left, the song it
-        // lists again can be its next one, still loading.
         let listing = gapWork == nil ? reading.sources : []
         if let current = playback, !awaitingPlayback,
            NotchTrackChange.isBetweenSongs(reading.playback, after: current, sources: listing) {
@@ -299,8 +257,6 @@ final class NotchMusicService: ObservableObject {
     }
 
     private func connectionEnded() {
-        // An adapter that ran for over a minute is not crash looping, so its
-        // exit gets a fresh budget instead of leaving music off until a restart.
         if let launchedAt, ProcessInfo.processInfo.systemUptime - launchedAt > 60 { restartCount = 0 }
         launchedAt = nil
         disconnect()
@@ -316,26 +272,16 @@ final class NotchMusicService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(restartCount), execute: work)
     }
 
-    /// The redraw checks the track playing now, since the adapter can change
-    /// it before this queued update reaches the main thread.
     private func requestBrowserArtwork(for playback: NotchPlayback?) {
         NotchBrowserArtwork.shared.request(for: playback) { [weak self] in
             DispatchQueue.main.async { self?.applyBrowserArtwork() }
         }
     }
 
-    /// The option in Settings changed. The adapter replies only when the
-    /// player changes, so the track playing now is looked up, or its lookup
-    /// stops, at once. A song held through a gap gives way to the reading
-    /// that replaces it.
     func syncBrowserCovers() {
         requestBrowserArtwork(for: gapWork == nil ? playback : gapReading?.playback)
     }
 
-    /// The adapter only replies when the player changes, so a cover that
-    /// arrives between replies goes in here for the track still playing.
-    /// `playback` itself stays put, since a changed track would reset a scrub
-    /// in progress. The next reply carries the cover from the lookup anyway.
     private func applyBrowserArtwork() {
         guard let playback, let cover = NotchBrowserArtwork.shared.artwork(for: playback),
               let image = ImageThumbnailer.thumbnail(data: cover, pointSize: 160, scale: 2) else { return }
@@ -361,28 +307,8 @@ final class NotchMusicService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: work)
     }
 
-    /// One averaged pixel is all a halo needs, and it costs nothing next to
-    /// decoding the cover itself. Runs on the reader's queue, once per cover.
     private static func artworkTint(of image: NSImage) -> NotchArtworkTint? {
-        // Everything: the player's progress, bars and controls are always white.
         return nil
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        var pixel = [UInt8](repeating: 0, count: 4)
-        let drawn = pixel.withUnsafeMutableBytes { buffer -> Bool in
-            guard let base = buffer.baseAddress,
-                  let context = CGContext(data: base, width: 1, height: 1, bitsPerComponent: 8,
-                                          bytesPerRow: 4, space: space,
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-            else { return false }
-            context.interpolationQuality = .medium
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-            return true
-        }
-        guard drawn else { return nil }
-        return NotchArtworkTint.from(red: Double(pixel[0]) / 255,
-                                     green: Double(pixel[1]) / 255,
-                                     blue: Double(pixel[2]) / 255)
     }
 
     func stop() {
@@ -440,9 +366,6 @@ final class NotchMusicService: ObservableObject {
     typealias Command = NotchPlaybackCommand
 
     func selectSource(_ selection: NotchPlaybackSource.Selection?) {
-        // Choosing what is already in effect changes nothing in the adapter,
-        // so the page, its lyrics and the island's size stay as they are. A
-        // choice stays in effect while the automatic player fills its gap.
         if selection == nil ? sourceIsAutomatic
             : !sourceIsAutomatic && selectedSourcePID == selection?.pid { return }
         guard selection == nil || sources.contains(where: { $0.selection == selection }),
@@ -450,8 +373,6 @@ final class NotchMusicService: ObservableObject {
         chosenSource = selection
         cancelAutomationAction()
         setQueueVisible(false)
-        // Remove the old controls while the adapter validates and reads the
-        // new source. No gesture can borrow the previous player's context.
         endPlaybackGap()
         playback = nil
         artwork = nil
@@ -572,8 +493,6 @@ final class NotchMusicService: ObservableObject {
         }
         guard process?.isRunning == true, let input else { return false }
         if command.requiresPlaybackContext {
-            // A song held through a gap has no player left to reach, and a
-            // command would come back as a failure.
             guard gapWork == nil, let context, context == playback?.commandContext else { return false }
             guard !commandPending, let playback else { return false }
             if !playback.canSendCommandsDirectly { return beginAutomation(command, playback: playback) }
@@ -611,7 +530,6 @@ final class NotchMusicService: ObservableObject {
         return available.capabilities.event(for: command, isPlaying: playback.isPlaying) != nil
     }
 
-    /// The player itself says it cannot skip this way, so the button is hidden.
     func lacksTrackSkipping(_ command: Command) -> Bool {
         guard let playback, playback.canSendCommandsDirectly else { return false }
         switch command {
@@ -642,10 +560,6 @@ final class NotchMusicService: ObservableObject {
         let cancellation = DispatchWorkItem {}
         automationDiscovery = cancellation
         automationTarget = target
-        // Every page that shows the controls asks for a fresh look at the
-        // same player. Its last answer stays on screen until the new one
-        // lands, instead of the fallback row flashing on each open; sending
-        // checks access again anyway. Another player starts from nothing.
         if automationAvailability?.target != target { automationAvailability = nil }
         let requested = generation
         queue.async { [weak self] in
@@ -659,8 +573,6 @@ final class NotchMusicService: ObservableObject {
         }
     }
 
-    /// Consent never queues the old gesture. The next press supplies a fresh
-    /// recording context, which is re-read again before any Apple Event is sent.
     func requestAutomationAccess() {
         guard !requestingAutomation, let available = automationAvailability,
               available.access == .consent, available.target.isCurrent else { return }
@@ -737,8 +649,6 @@ final class NotchMusicService: ObservableObject {
 
 }
 
-/// Pipe callbacks may split a UTF-8 character or join several replies. Parsing
-/// stays serial and bounded before any metadata reaches the main thread.
 private final class NotchMusicPipeReader {
     private let queue = DispatchQueue(label: "com.vorssaint.notch-music-reader", qos: .utility)
     private var buffer = Data()
@@ -746,8 +656,6 @@ private final class NotchMusicPipeReader {
     init(receive: @escaping (Data) -> Void) { self.receive = receive }
 
     func append(_ data: Data) {
-        // Backpressure keeps native metadata bursts from queuing unbounded
-        // buffers. The pipe invokes this off-main and delivery never waits on UI.
         queue.sync {
             self.buffer.append(data)
             if self.buffer.count > RadialNowPlayingSupport.maximumAdapterReplyBytes {

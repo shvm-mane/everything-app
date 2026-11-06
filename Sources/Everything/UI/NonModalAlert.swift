@@ -3,19 +3,7 @@
 
 import AppKit
 
-/// Shows an `NSAlert` in its own window, without a modal session.
-///
-/// `runModal()` keeps the main run loop in the modal panel mode until the
-/// alert closes, so default-mode timers stop meanwhile and a running
-/// recording's timer stops counting (issue #1665). The modal loop still runs
-/// main-queue blocks in that mode, unless it was started inside a main-queue
-/// block. The disk image installer opened both of its alerts inside such a
-/// block (the hop after the mount check and the one after the install), and
-/// that nesting held a global shortcut's work back until the alert was
-/// dismissed. The alert keeps its buttons, key equivalents, accessory view
-/// and the modal panel level; its response arrives in `completion` instead.
 final class NonModalAlert: NSObject {
-    /// Open alerts own their presentation until they answer.
     private static var open: [NonModalAlert] = []
 
     let alert: NSAlert
@@ -29,8 +17,6 @@ final class NonModalAlert: NSObject {
         self.completion = completion
     }
 
-    /// `retaining` keeps objects the alert only references weakly, such as
-    /// the target of an accessory checkbox, alive until the alert answers.
     @discardableResult
     static func present(_ alert: NSAlert,
                         retaining retained: [AnyObject] = [],
@@ -40,8 +26,6 @@ final class NonModalAlert: NSObject {
                         },
                         completion: @escaping (NSApplication.ModalResponse) -> Void) -> NonModalAlert {
         let presentation = NonModalAlert(alert: alert, retained: retained, completion: completion)
-        // An alert without buttons shows an OK button that `buttons` may not
-        // list, so nothing would point it at `respond`. Add that button here.
         if alert.buttons.isEmpty {
             alert.addButton(withTitle: Bundle(for: NSAlert.self)
                 .localizedString(forKey: "OK", value: "OK", table: "Common"))
@@ -60,8 +44,6 @@ final class NonModalAlert: NSObject {
 
     var isOpen: Bool { completion != nil }
 
-    /// Closes the alert as if `response` had been chosen. An alert that
-    /// already answered stays answered.
     func dismiss(with response: NSApplication.ModalResponse) {
         guard let completion else { return }
         self.completion = nil

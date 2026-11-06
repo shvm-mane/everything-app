@@ -54,8 +54,6 @@ enum SuperKeySource: String, CaseIterable, Identifiable {
     }
 }
 
-/// What a tap of the super key on its own does, when no other key was pressed
-/// while it was held.
 enum SuperKeySoloAction: String, CaseIterable, Identifiable {
     case none, capsLock, inputSource, escape
 
@@ -67,33 +65,17 @@ enum SuperKeySoloAction: String, CaseIterable, Identifiable {
     }
 }
 
-/// One entry of the keyboard's key mapping table: a source key that arrives as
-/// a destination key, both written as HID usage values.
 struct SuperKeyMapping: Equatable {
     let source: UInt64
     let destination: UInt64
 }
 
-/// Why the key mapping could not be applied. Every refusal carries one, so
-/// the feature can say what stopped it instead of switching itself back off
-/// with nothing on screen.
 enum SuperKeyMappingFailure: Equatable, CaseIterable {
-    /// Another app's key mapping is in the way.
     case foreignMapping
-    /// hidutil refused the read, the write, or the readback.
     case systemRefused
-    /// The keyboard event tap could not be created, so the key cannot add modifiers.
     case keyboardTapRefused
 }
 
-/// The pure half of the super key: which keys are involved, how the mapping
-/// table is read and written, and the small state machine that decides what to
-/// do with each key event while the key is held.
-///
-/// Caps Lock cannot be held: the keyboard reports it as a lock that flips on
-/// one press and off on the next, so no software above the driver ever sees it
-/// go down and up. The mapping table below turns it into an ordinary key
-/// first, which is what makes holding it possible at all.
 enum SuperKeySupport {
     static let defaultModifiers: GlobalShortcutModifiers = .validMask
 
@@ -122,32 +104,16 @@ enum SuperKeySupport {
             .storageTokens.joined(separator: "+")
     }
 
-    /// F18 is the destination: a key defined by the standard, so the system
-    /// delivers it like any other, and one no portable keyboard carries.
     static let triggerUsage: UInt64 = 0x70000006D
     static let userMappingProperty = "UserKeyMapping"
 
-    /// Virtual key code of the destination key, as it arrives in key events.
     static let triggerKeyCode: Int64 = 79
 
-    /// What the held-key watchdog does when its deadline fires.
     enum HeldKeyWatchdogOutcome {
-        /// The key is still physically down: the hold is real, so watch again.
         case reArm
-        /// The key is up (its release was missed) or the hold is already gone:
-        /// let the modifiers go.
         case forget
     }
 
-    /// Decides whether a hold that reached its deadline survives, from three
-    /// independent facts that must ALL be true to keep it:
-    ///   - `physicalKeyDown`: the real hardware key state (ground truth)
-    ///   - `stateThinksHeld`: what our state machine currently believes
-    ///   - `tapAlive`: whether the tap can still stamp the modifiers
-    /// Any disagreement means let go: a stale belief, a lost key-up, or a dead
-    /// tap each end the hold. A held F18 never autorepeats, so the deadline
-    /// alone cannot tell a steady hold from a lost release — only the physical
-    /// key state can.
     static func heldKeyWatchdogOutcome(physicalKeyDown: Bool,
                                        stateThinksHeld: Bool,
                                        tapAlive: Bool) -> HeldKeyWatchdogOutcome {
@@ -156,9 +122,6 @@ enum SuperKeySupport {
 
     // MARK: - Key mapping table
 
-    /// The table to write for the wanted state. A mapping the user set up
-    /// elsewhere stays as it is; only the entries created for this feature are
-    /// removed when it is turned off.
     static func mappings(enablingSuperKey enabled: Bool,
                          existing: [SuperKeyMapping],
                          source: SuperKeySource = .capsLock,
@@ -171,9 +134,6 @@ enum SuperKeySupport {
         return [SuperKeyMapping(source: source.usage, destination: triggerUsage)] + others
     }
 
-    /// The source can have only one destination. A mapping shaped like ours is
-    /// owned only when the persistent marker says a prior confirmed write made
-    /// it; otherwise activation is refused instead of claiming external state.
     static func hasMappingConflict(in mappings: [SuperKeyMapping],
                                    source: SuperKeySource = .capsLock,
                                    ownedSource: SuperKeySource? = nil) -> Bool {
@@ -187,11 +147,6 @@ enum SuperKeySupport {
         lhs.count == rhs.count && lhs.allSatisfy(rhs.contains)
     }
 
-    /// Returns one safe table only when every matched keyboard has the same
-    /// external mappings. A newly connected keyboard may differ solely by the
-    /// entries this feature already owns; those are removed before comparison
-    /// so repair and cleanup can still converge without copying someone else's
-    /// device-specific mapping onto every keyboard.
     static func consistentMappings(_ report: String,
                                    property: String,
                                    ownedSource: SuperKeySource? = nil) -> [SuperKeyMapping]? {
@@ -222,17 +177,12 @@ enum SuperKeySupport {
         return tables
     }
 
-    /// `hidutil --matching keyboard` reports one table per keyboard. A merged
-    /// set is insufficient: one mapped keyboard and one empty table must not be
-    /// accepted as a successful global write.
     static func mappingReportConfirms(_ report: String,
                                       expected: [SuperKeyMapping]) -> Bool {
         let tables = mappingTables(report, property: userMappingProperty)
         return !tables.isEmpty && tables.allSatisfy { mappingsMatch($0, expected) }
     }
 
-    /// An unconfirmed clear never changes the write-ahead machine-state
-    /// marker, so a failed clear remains eligible for retry.
     static func mappingMarkerAfterClear(previous: Bool,
                                         readbackConfirmed: Bool) -> Bool {
         readbackConfirmed ? false : previous
@@ -245,7 +195,6 @@ enum SuperKeySupport {
         requestGeneration == currentGeneration && tapIsCurrent && !stopping
     }
 
-    /// The mapping table as the command line takes it.
     static func mappingArgument(_ mappings: [SuperKeyMapping]) -> String {
         let entries = mappings.map {
             "{\"HIDKeyboardModifierMappingSrc\":\($0.source),\"HIDKeyboardModifierMappingDst\":\($0.destination)}"
@@ -253,8 +202,6 @@ enum SuperKeySupport {
         return "{\"UserKeyMapping\":[\(entries.joined(separator: ","))]}"
     }
 
-    /// Reads the mapping table back. The report lists one block per keyboard,
-    /// so the same entry shows up once per device and is kept once.
     static func parseMappings(_ report: String) -> [SuperKeyMapping] {
         var result: [SuperKeyMapping] = []
         for block in report.components(separatedBy: "{").dropFirst() {
@@ -310,36 +257,23 @@ enum SuperKeySupport {
 
     // MARK: - What each event means
 
-    /// A key event, reduced to the only distinctions the decision needs.
     enum Event: Equatable {
-        /// The key the super key arrives as, pressed (or repeating while held).
         case triggerDown(isRepeat: Bool, hasPrimaryModifiers: Bool, timestamp: UInt64)
         case triggerUp(timestamp: UInt64)
-        /// Any other key going down or up.
         case otherKey
-        /// The raw source key, which means that keyboard is not mapped yet.
         case sourceKey
-        /// Any other modifier changing state.
         case otherModifier
     }
 
     enum Decision: Equatable {
-        /// The event belongs to the super key and goes no further.
         case swallow
-        /// The configured modifiers ride along with this key.
         case addModifiers
-        /// The event carries on untouched.
         case pass
-        /// The key was tapped with nothing else, so its solo action runs.
         case soloTap(repeated: Bool)
-        /// The key was held on its own long enough for its hold action.
         case soloHold(repeated: Bool)
-        /// A raw source key is kept out while its keyboard mapping is repaired.
         case interceptAndRemap
     }
 
-    /// Holding the key is the whole feature, so the state tracks whether it is
-    /// down, whether anything else has happened and when it went down.
     struct State: Equatable {
         static let soloHoldThresholdNanoseconds: UInt64 = 500_000_000
 
@@ -392,8 +326,6 @@ enum SuperKeySupport {
             }
         }
 
-        /// Forgets the press in progress. Used when the tap goes away, so a key
-        /// held across a teardown cannot leave the state stuck down.
         mutating func reset() {
             isHeld = false
             isAlone = false

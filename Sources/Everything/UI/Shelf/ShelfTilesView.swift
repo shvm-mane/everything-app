@@ -4,8 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// A transparent strip that moves the whole panel when dragged. Used over the
-/// header and empty shelf space; tiles stay free to start item drags.
 struct WindowMoveHandle: NSViewRepresentable {
     var acceptsDrops = false
 
@@ -83,21 +81,14 @@ class ShelfPanelMoveView: NSView {
     }
 }
 
-/// The shelf's item tiles, in AppKit so they can do what SwiftUI's `.onDrag`
-/// can't: drag several selected items out at once, and remove them from the
-/// shelf once the drop is accepted somewhere.
 struct ShelfTilesView: NSViewRepresentable {
     var items: [ShelfService.Item]
-    /// Only here to make this view compare unequal after an in-place item
-    /// swap; see ShelfService.contentRevision. Never read.
     var contentRevision: Int
     var selection: Set<UUID>
     var expandedBatches: Set<UUID>
     var pinnedIDs: Set<UUID>
     var revealID: UUID?
     var revealSerial: Int
-    /// The island lays tiles out sideways: rows fill its height and columns
-    /// continue past its edge, so a short strip never scrolls down.
     var sideways = false
 
     static let tileSize = NSSize(width: 78, height: 88)
@@ -105,12 +96,8 @@ struct ShelfTilesView: NSViewRepresentable {
     static let inset: CGFloat = 4
 
     func makeNSView(context: Context) -> NSScrollView {
-        // A view built now has nothing to reveal: the docked shelf rebuilds
-        // one whenever a drag comes near, and it must open where it left off.
         context.coordinator.revealedSerial = revealSerial
         let scroll = ResizingScrollView()
-        // SwiftUI lays the strip out before it has a size, so the sideways
-        // strip lays out again on resize, keeping its tiles while one is dragged.
         let coordinator = context.coordinator
         scroll.sizeChanged = { [weak scroll, sideways] in
             guard sideways, let scroll, let items = coordinator.lastRebuiltItems,
@@ -129,8 +116,6 @@ struct ShelfTilesView: NSViewRepresentable {
         scroll.verticalScrollElasticity = sideways ? .none : .allowed
         scroll.contentView.drawsBackground = false
         let document = FlippedView()
-        // The island's own surface takes drops there, so a media drop can
-        // still offer optimizing instead of landing straight on the shelf.
         document.acceptsDrops = !sideways
         document.sideways = sideways
         scroll.documentView = document
@@ -142,19 +127,6 @@ struct ShelfTilesView: NSViewRepresentable {
                           pinnedIDs: pinnedIDs, revealID: revealID, revealSerial: revealSerial, coordinator: context.coordinator)
     }
 
-    /// Lays out every tile from scratch. Shared with `ShelfTileView`, which
-    /// calls this directly (bypassing SwiftUI) right after a successful
-    /// merge onto a tile, whether the drag came from outside the app or from
-    /// another tile: SwiftUI's own `updateNSView` observably lags behind the
-    /// mutation while an AppKit drag session is still unwinding, so the
-    /// merged tile otherwise stays visually stale until some later,
-    /// unrelated event forces a redraw.
-    ///
-    /// Skips the teardown/rebuild entirely when nothing has actually
-    /// changed since the last call for this view: SwiftUI calls updateNSView
-    /// on every re-render of the enclosing view, not only when this view's
-    /// own inputs change, so without this guard every unrelated re-render
-    /// destroys and recreates every tile.
     static func rebuildTiles(scroll: NSScrollView,
                              items: [ShelfService.Item],
                              selection: Set<UUID>,
@@ -168,8 +140,6 @@ struct ShelfTilesView: NSViewRepresentable {
         let tile = Self.tileSize
         let inset = Self.inset
         let spacing = Self.spacing
-        // The document remembers its flow, so a rebuild started by a tile
-        // after a merge lays out the same way SwiftUI did.
         let sideways = (document as? FlippedView)?.sideways == true
         let contentWidth = max(scroll.contentSize.width, 276)
         let columns = ShelfTileLayout.columnCount(contentWidth: contentWidth,
@@ -186,12 +156,6 @@ struct ShelfTilesView: NSViewRepresentable {
                 : ShelfTileLayout.tileFrame(index: index, columns: columns, tileSize: tile, spacing: spacing, inset: inset)
         }
 
-        // Item.== is id-only (by design, for selection/lookup purposes
-        // elsewhere), which isn't the question this cache needs answered:
-        // ShelfService.replaceItem swaps in a same-id item with a healed
-        // URL/title/icon after a moved or renamed file's bookmark
-        // resolves, and an id-only comparison would call that "unchanged"
-        // and leave the tile showing the stale pre-heal name indefinitely.
         let unchanged = coordinator.map {
             items.count == $0.lastRebuiltItems?.count
                 && zip(items, $0.lastRebuiltItems ?? []).allSatisfy { $0.hasSameContent(as: $1) }
@@ -201,8 +165,6 @@ struct ShelfTilesView: NSViewRepresentable {
                 && scroll.contentSize == $0.lastRebuiltContentSize
         } ?? false
         if unchanged {
-            // Revealing does not require rebuilding any tile, so keep the
-            // add-serial check independent from the redraw cache.
             if let coordinator {
                 revealIfNeeded(in: document, frame: frame, items: items,
                                revealID: revealID, revealSerial: revealSerial, coordinator: coordinator)
@@ -247,11 +209,6 @@ struct ShelfTilesView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    /// Remembers which add has been honored, so the shelf scrolls once per
-    /// arrival and stays put for every other redraw. Keyed on the add serial
-    /// rather than the resolved target: the target alone changes when a pile
-    /// is expanded or collapsed with nothing added, and repeats when two
-    /// files land in the same collapsed pile back to back.
     final class Coordinator {
         var revealedSerial: Int?
         var lastRebuiltItems: [ShelfService.Item]?
@@ -261,9 +218,6 @@ struct ShelfTilesView: NSViewRepresentable {
         var lastRebuiltContentSize: NSSize?
     }
 
-    /// Brings a newly added tile into view. scrollToVisible already does
-    /// nothing when the rect is on screen, so a shelf with room to spare
-    /// never moves.
     private static func revealIfNeeded(in document: NSView,
                                        frame: (Int) -> CGRect,
                                        items: [ShelfService.Item],
@@ -274,9 +228,6 @@ struct ShelfTilesView: NSViewRepresentable {
               ShelfRevealSupport.shouldReveal(serial: revealSerial, lastHonored: coordinator.revealedSerial)
         else { return }
         guard let index = items.firstIndex(where: { $0.id == revealID }) else { return }
-        // Ordered after the index lookup so each guard reads as its own
-        // precondition, rather than recording the serial ahead of a check
-        // that still has to pass.
         coordinator.revealedSerial = revealSerial
         let target = frame(index)
         NSAnimationContext.runAnimationGroup { context in
@@ -284,8 +235,6 @@ struct ShelfTilesView: NSViewRepresentable {
             context.allowsImplicitAnimation = true
             document.scrollToVisible(target)
         }
-        // The animated bounds change above doesn't post the notification the
-        // scroller listens for, so nudge it directly or its knob lags behind.
         if let scrollView = document.enclosingScrollView {
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
@@ -305,8 +254,6 @@ struct ShelfTilesView: NSViewRepresentable {
         var sideways = false
         override var isFlipped: Bool { true }
 
-        // The island is a fixed window, so its empty tile space must not
-        // drag it the way it drags the floating shelf.
         override func mouseDown(with event: NSEvent) {
             guard !sideways else { return }
             super.mouseDown(with: event)
@@ -314,9 +261,6 @@ struct ShelfTilesView: NSViewRepresentable {
     }
 }
 
-/// One tile. Click toggles selection; dragging starts a drag of the whole
-/// selection (or just this tile if it isn't selected); a successful drop
-/// removes the dragged tiles from the shelf.
 final class ShelfTileView: NSView, NSDraggingSource {
     private let item: ShelfService.Item
     private let isSelected: Bool
@@ -377,9 +321,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
         iconWell.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
         addSubview(iconWell)
 
-        // Not `isImage`: an image whose thumbnail has not been decoded yet
-        // (or could not be) is still wearing the generic fallback icon, and
-        // that wants the generic inset until the real frame arrives.
         let hasThumbnail = item.hasContentThumbnail
         let imageView = NSImageView(frame: iconWell.bounds.insetBy(dx: hasThumbnail ? 4 : 13,
                                                                    dy: hasThumbnail ? 4 : 8))
@@ -429,7 +370,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
             addSubview(badge)
         }
 
-        // Shares the corner with the remove button, which takes over on hover.
         if isPinned {
             let badge = NSImageView(frame: NSRect(x: 58, y: 4, width: 17, height: 17))
             badge.image = NSImage(systemSymbolName: "pin.circle.fill", accessibilityDescription: nil)
@@ -480,11 +420,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
         }
     }
 
-    /// The one part of this that has to touch the filesystem: the system's
-    /// own localized description of what kind of file this is, the same
-    /// text Finder's Get Info panel shows. A missing file or any other read
-    /// failure is not worth surfacing here; the caller falls back to the
-    /// name alone.
     private static func resolvedFileKind(for url: URL) -> String? {
         (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey]))?.localizedTypeDescription
     }
@@ -526,9 +461,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    // A window that is not key, like the reopened island, only passes the
-    // first click to a view that accepts first mouse, which the thumbnail and
-    // title do not. The buttons keep their own clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
         return hit is NSButton ? hit : self
@@ -537,9 +469,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
     override func menu(for event: NSEvent) -> NSMenu? {
         ShelfService.shared.noteInteraction()
         let urls = ShelfService.shared.fileURLsForActions(startingAt: item)
-        // A tooltip already showing (or about to show, from a hover just
-        // before the right-click) has no reason to stick around once a
-        // context menu covers the same corner of the tile it anchors to.
         ShelfTooltipPopover.shared.hide()
 
         let strings = L10n.shared.s
@@ -550,7 +479,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
         pin.target = self
         pin.image = NSImage(systemSymbolName: isPinned ? "pin.slash" : "pin", accessibilityDescription: nil)
         menu.addItem(pin)
-        // Notes and links have nothing to open or reveal.
         guard !urls.isEmpty else { return menu }
         menu.addItem(.separator())
 
@@ -689,10 +617,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
         let candidates = shelf.selection.contains(item.id) ? shelf.selectedItems() : [item]
         let dragged = shelf.dragItems(for: candidates)
         guard !dragged.isEmpty else { return }
-        // A payload whose file vanished since it was shelved can never be
-        // dropped: every destination refuses the dead URL and the whole
-        // drag reads as broken. Only living payloads join the session; an
-        // all-dead grab explains itself instead of offering a ghost drag.
         let living = shelf.livingDragItems(in: dragged)
         guard !living.isEmpty else {
             shelf.handleDeadDrag(dragged)
@@ -702,7 +626,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
 
         let draggingItems: [NSDraggingItem] = living.map { entry in
             let draggingItem = NSDraggingItem(pasteboardWriter: shelf.pasteboardWriter(for: entry))
-            // Overlapping frames make AppKit stack them with a count badge.
             draggingItem.setDraggingFrame(bounds, contents: entry.icon)
             return draggingItem
         }
@@ -723,8 +646,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        // A non-empty operation means the drop was accepted somewhere — pull the
-        // dragged tiles out of the shelf. A cancelled drag leaves them.
         DispatchQueue.main.async {
             ShelfService.shared.completeInternalDrag(dropAccepted: operation != [])
             ShelfService.shared.absorbOwnDrag()
@@ -763,9 +684,6 @@ final class ShelfTileView: NSView, NSDraggingSource {
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
         setDropTargeted(false)
-        // Rebuilds here, not in performDragOperation: this is the last
-        // callback AppKit makes on this tile for the drag, so it's safe
-        // for the rebuild to remove it from the view hierarchy.
         guard pendingRebuildAfterDrag, let scroll = superview?.enclosingScrollView else { return }
         pendingRebuildAfterDrag = false
         ShelfTilesView.rebuildTiles(scroll: scroll,

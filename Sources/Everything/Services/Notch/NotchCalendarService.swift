@@ -5,7 +5,6 @@ import AppKit
 import Combine
 import EventKit
 
-/// EventKit objects stay on one actor; only immutable display values reach UI.
 private actor NotchCalendarReader {
     private lazy var store = EKEventStore()
 
@@ -48,16 +47,12 @@ private actor NotchCalendarReader {
     }
 }
 
-/// Owned by the notch lifecycle, including sleep and lock. No event text is
-/// persisted; events chosen for the countdown are kept by identifier only.
 final class NotchCalendarService: NSObject, ObservableObject {
     static let shared = NotchCalendarService()
     @Published private(set) var events: [NotchCalendarEvent] = []
     @Published private(set) var countdown: NotchCalendarCountdown?
     @Published private(set) var loading = false
-    /// The event the Calendar page scrolls to once, after a click on the countdown.
     @Published var revealing: String?
-    /// Countdown keys of the events chosen from their menu.
     @Published private(set) var chosenCountdowns = Set<String>()
     private var reader: NotchCalendarReader?
     private var task: Task<Void, Never>?
@@ -68,14 +63,11 @@ final class NotchCalendarService: NSObject, ObservableObject {
     private var visibleMonth: Date?
     private var countdownEnabled = false
     private var timeLeftEnabled = false
-    /// How long before a start the island counts down, from Settings.
     private(set) var countdownLeadTime = NotchCalendarSupport.countdownLeadTime()
     private var excludedCalendars = Set<String>()
 
     private override init() { super.init() }
 
-    /// Every event calendar on this Mac, for the Settings list. Works while
-    /// the island's reader is stopped, since the list is edited from Settings.
     func calendarChoices() async -> [NotchCalendarChoice] {
         await (reader ?? NotchCalendarReader()).calendars()
     }
@@ -84,7 +76,6 @@ final class NotchCalendarService: NSObject, ObservableObject {
         NotchCalendarSupport.isChosen(event, in: chosenCountdowns)
     }
 
-    /// Counts down to one event, or stops, whatever the countdown for every event does.
     func setCountdown(_ chosen: Bool, for event: NotchCalendarEvent) {
         NotchCalendarSupport.setCountdown(chosen, for: event)
         let keys = Set(NotchCalendarSupport.chosenCountdowns().keys)
@@ -199,9 +190,6 @@ final class NotchCalendarService: NSObject, ObservableObject {
 
     @objc private func timedRefresh() { refresh() }
 
-    /// A chosen event read again keeps its current end, and one that has
-    /// ended is forgotten. Only the week holding every countdown the island
-    /// can show is read; a choice further ahead keeps its end until then.
     private func updateChosenCountdowns(_ events: [NotchCalendarEvent], now: Date) {
         guard !chosenCountdowns.isEmpty,
               let choices = NotchCalendarSupport.refreshedChoices(NotchCalendarSupport.chosenCountdowns(),

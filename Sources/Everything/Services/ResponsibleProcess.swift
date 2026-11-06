@@ -4,9 +4,6 @@
 import AppKit
 import Darwin
 
-/// Maps helper processes to the app responsible for them and gives processes
-/// a human name. Shared by the resource breakdown and the volume mixer, so
-/// helper processes roll up into their app with its proper icon.
 enum ResponsibleProcess {
     private static let iconCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -15,11 +12,8 @@ enum ResponsibleProcess {
         return cache
     }()
 
-    /// `responsibility_get_pid_responsible_for_pid`, exported by libsystem and
-    /// used by the system for the same grouping; resolved at runtime so a
-    /// missing symbol degrades to per-process rows instead of breaking.
     private static let resolve: (@convention(c) (pid_t) -> pid_t)? = {
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2) /* RTLD_DEFAULT */,
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2) ,
                                  "responsibility_get_pid_responsible_for_pid")
         else { return nil }
         return unsafeBitCast(symbol, to: (@convention(c) (pid_t) -> pid_t).self)
@@ -31,10 +25,6 @@ enum ResponsibleProcess {
         return owner > 0 ? owner : pid
     }
 
-    /// The regular app to bill the process to, following the parent chain
-    /// when the responsibility API dead-ends on a helper that answers for
-    /// itself (browser audio helpers, issue #256). Nil when no ancestor is
-    /// a regular app — daemons and login items stay unlisted.
     static func regularAppOwner(of pid: pid_t) -> NSRunningApplication? {
         let responsible = owner(of: pid)
         let isRegular: (pid_t) -> Bool = { NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular }
@@ -58,8 +48,6 @@ enum ResponsibleProcess {
         return pid_t(info.pbi_ppid)
     }
 
-    /// Prefers the app's localized name; system processes fall back to their
-    /// kernel-reported name (e.g. "WindowServer"), then to the caller's hint.
     static func displayName(pid: pid_t, fallback: String) -> String {
         if let app = NSRunningApplication(processIdentifier: pid),
            let name = app.localizedName, !name.isEmpty {
@@ -70,9 +58,6 @@ enum ResponsibleProcess {
             let name = String(cString: buffer)
             if !name.isEmpty { return name }
         }
-        // macOS 27 refuses proc_name for another user's process, such as
-        // WindowServer or a daemon, and the GPU list showed "pid 100" for
-        // them. Their executable path stays readable.
         var path = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
         if proc_pidpath(pid, &path, UInt32(path.count)) > 0 {
             let name = (String(cString: path) as NSString).lastPathComponent
@@ -81,9 +66,6 @@ enum ResponsibleProcess {
         return fallback.trimmingCharacters(in: .whitespaces)
     }
 
-    /// The icon is cached as a bitmap of the requested point size, so callers
-    /// that draw it larger (the mixer rows) must ask for that size or the
-    /// upscale looks blurry.
     static func icon(for pid: pid_t,
                      pointSize: CGFloat = ImageThumbnailer.defaultPointSize) -> NSImage {
         let key = "\(pid)@\(Int(pointSize))" as NSString

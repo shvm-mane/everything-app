@@ -9,7 +9,6 @@ struct ScreenshotCanvasExpansionPreview: View {
     let fill: ScreenshotCanvasSupport.Fill
     let zoom: CGFloat
     let scale: CGFloat
-    /// The rounding of the capture card under the preview, in points.
     let cardCornerRadius: CGFloat
 
     static let checker: CGColor = {
@@ -60,20 +59,12 @@ struct ScreenshotCanvasExpansionPreview: View {
         .allowsHitTesting(false)
     }
 
-    /// Where the preview draws, in its own space. Each grip is centered on
-    /// the draft's edge, where a press picks it up, so the preview reaches
-    /// past the draft on every side; without that room its own frame cut the
-    /// rings. The room is whole 8 pt checker tiles, so the draft keeps the
-    /// pixels it had and a transparent fill's checkerboard still continues
-    /// the one the card shows.
     struct Layout {
         let size: CGSize
         let draft: CGRect
         let grips: [CGRect]
         let gripLineWidth: CGFloat
 
-        /// The grips match the selection handles: a 3.5 pt ring drawn with
-        /// a 1.5 pt line, scaled like the capture.
         init(draftSize: CGSize, displayScale: CGFloat) {
             let radius = 3.5 * displayScale
             let lineWidth = 1.5 * displayScale
@@ -90,16 +81,7 @@ struct ScreenshotCanvasExpansionPreview: View {
         }
     }
 
-    /// The part left open for the capture card. The card keeps its rounded
-    /// corners while the canvas grows, so where the new margin meets one a
-    /// plain rectangle left a dark wedge between it and the fill. Only those
-    /// corners are rounded, a point more than the card so the fill also
-    /// covers its soft edge. A corner the draft still shares stays square,
-    /// so the card's own rounding shows there, and before a drag nothing is
-    /// filled.
     static func cardHole(_ card: CGRect, in draft: CGRect, cornerRadius: CGFloat) -> CGPath {
-        // The draft grows by whole pixels, so edges this close are the same
-        // edge, apart only by rounding in the scaling.
         func moved(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) > 0.001 }
         let left = moved(card.minX, draft.minX), top = moved(card.minY, draft.minY)
         let right = moved(card.maxX, draft.maxX), bottom = moved(card.maxY, draft.maxY)

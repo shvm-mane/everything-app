@@ -5,8 +5,6 @@ import AVFoundation
 import AppKit
 import CoreMedia
 
-/// The two choices shown while the area is being picked. They write through to
-/// preferences immediately, so the selection and Settings always start alike.
 final class RecorderSelectionAudioOptions: ObservableObject {
     @Published var systemAudio: Bool {
         didSet { UserDefaults.standard.set(systemAudio, forKey: DefaultsKey.recorderSystemAudio) }
@@ -21,9 +19,6 @@ final class RecorderSelectionAudioOptions: ObservableObject {
     }
 }
 
-/// One recording, from the first frame to the closed file. Everything that
-/// only exists while recording lives here and dies with it, so the service
-/// itself keeps nothing running between recordings.
 private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
     let take: RecorderTakeStore.Take
     let region: RecorderSupport.Region
@@ -31,18 +26,9 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
     private let pauseClock: RecorderPauseClock
     private let microphone: RecorderMicrophoneCapture?
     private let capturesSystemAudio: Bool
-    /// The Mac's sound read once per process, when the audio system grants
-    /// one. Both it and the stream's audio run whenever the Mac's sound is
-    /// wanted; which of the two the file receives is settled in `start()`.
     private var systemAudioTap: RecorderSystemAudioTap?
     private var writesTapAudio = false
-    /// Raised when a device or process change costs the tap its reader mid
-    /// recording. One way, and read from the audio threads, so it is the flag
-    /// type rather than a plain Bool.
     private let tapReaderLost = RecorderAudioFlag()
-    /// Whether the stream heard sound at all, and whether it heard sound the
-    /// tap was there to hear. They differ only for an app's tap, which can be
-    /// built after the stream first hears the app.
     private let streamHeard = RecorderAudioFlag()
     private let streamHeardSinceTap = RecorderAudioFlag()
     private let pointer: RecorderPointerSampler
@@ -50,8 +36,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
     private let writerQueue = DispatchQueue(label: "com.vorssaint.recorder.writer",
                                             qos: .userInitiated)
     private let startGate = RecorderStartGate()
-    /// Immutable for the whole session, which is what makes it safe to touch
-    /// from the capture queue while the main thread watches the clock.
     private let writer: RecorderWriter
 
     var onUnexpectedStop: ((RecorderFailure) -> Void)?
@@ -91,9 +75,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
             systemAudioTap = await RecorderSystemAudioTap.make(hearing: Self.windowOwner(of: region))
         }
         let tap = systemAudioTap
-        // A tap that has not yet heard sound on this Mac may be waiting on a
-        // permission, and it answers that with silence, not an error. The
-        // stream's sound is written until the tap has proven itself.
         writesTapAudio = tap != nil
             && UserDefaults.standard.bool(forKey: DefaultsKey.recorderSystemAudioTapVerified)
         tap?.onSample = { [weak self] sampleBuffer in
@@ -119,14 +100,9 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
             await engine.stop()
             return .streamFailed
         }
-        // The tap starts before the microphone so the Mac's sound has the
-        // shortest possible gap at the head of the file while it comes up.
         let clock = CMClockGetHostTimeClock()
         if let tap {
             let started = await tap.start(synchronizingTo: clock)
-            // A trusted tap that could not build a reader this time (no output
-            // device, or a permission just revoked) would otherwise leave the
-            // file's sound silent, since the stream's copy is being dropped.
             if writesTapAudio, !started { writesTapAudio = false }
         }
         guard startGate.isAuthorized else {
@@ -145,10 +121,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
                 return .streamFailed
             }
         }
-        // This method is nonisolated and async, so its body runs on the
-        // cooperative pool however main-actor the caller was (SE-0338). The
-        // two samplers install AppKit event monitors, which belong to the
-        // main thread's dispatch, so they are started and stopped there.
         await MainActor.run {
             pointer.start()
             typing.start()
@@ -156,9 +128,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
         return nil
     }
 
-    /// The app whose window is being recorded, so the sound follows the
-    /// picture. Nothing for a display, and nothing for a window of our own:
-    /// this process plays the volume mixer's re-render of every other app.
     private static func windowOwner(of region: RecorderSupport.Region) -> pid_t? {
         RecorderSupport.systemAudioApp(
             windowOwner: region.windowID.flatMap(WindowServerSupport.ownerProcessID(ofWindowID:)),
@@ -179,8 +148,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
         pauseClock.elapsed(at: time)
     }
 
-    /// Stops the stream first and waits for it, so the file is closed knowing
-    /// no further frame can arrive.
     func stop() async -> Bool {
         let end = CMClockGetTime(CMClockGetHostTimeClock())
         let ownsFinalization = startGate.cancelAndClaimStop()
@@ -196,9 +163,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
             await engine.stop()
         }
         await tapStop
-        // A tap that lost its reader was cut short by a device or process
-        // change, not by a missing permission, so this recording proves
-        // nothing either way.
         if let tap, !tapReaderLost.value {
             UserDefaults.standard.set(
                 RecorderSupport.trustsSystemAudioTap(previously: writesTapAudio,
@@ -218,10 +182,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
         return written
     }
 
-    /// Whether the stream heard sound the tap should have heard too. An app's
-    /// tap that never ran through a recording in which the stream heard the
-    /// app cannot hear that app at all, so all of the stream's sound counts
-    /// against it, as against the whole Mac's tap.
     private func streamHeardSound(against tap: RecorderSystemAudioTap) -> Bool {
         tap.ranPipeline ? streamHeardSinceTap.value : streamHeard.value
     }
@@ -230,9 +190,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
                        didOutput sampleBuffer: CMSampleBuffer,
                        of kind: RecorderCaptureEngine.Kind) {
         if kind == .systemAudio {
-            // The stream keeps listening even when the tap is written: a tap
-            // that stays silent through sound the stream heard has lost its
-            // permission, and the next recording goes back to the stream.
             if !streamHeardSinceTap.value, RecorderAudioProbe.containsSound(sampleBuffer) {
                 streamHeard.raise()
                 let tap = systemAudioTap
@@ -264,12 +221,6 @@ private final class RecorderSession: NSObject, RecorderCaptureEngineDelegate {
     }
 }
 
-/// The screen recorder: picks an area the same way the screenshot tool does,
-/// records it with either optional sound source, and leaves a video file behind.
-///
-/// At rest it holds no recorder resource; the shared capture service owns the
-/// optional global shortcut. The stream, writer, floating indicator and the
-/// one timer that draws elapsed time are created only while recording.
 final class ScreenRecorderService: ObservableObject {
     static let shared = ScreenRecorderService()
 
@@ -287,11 +238,7 @@ final class ScreenRecorderService: ObservableObject {
     private var isAwaitingMicrophone = false
     private var isPreparingRecording = false
     private var sleepActivity: NSObjectProtocol?
-    /// Set while a stop is being finalized, so a second press of the shortcut
-    /// cannot start a recording on top of one still closing its file.
     private var isFinishing = false
-    /// Set while the disk is being asked how much room is left, so a slow
-    /// answer cannot pile the next second's question on top of it.
     private var isCheckingDisk = false
 
     private var strings: RecorderFeatureStrings {
@@ -310,9 +257,6 @@ final class ScreenRecorderService: ObservableObject {
         sweepTakes()
     }
 
-    /// Uninstalling the feature in the hub has to take everything off the
-    /// screen, but a recording in progress still finishes into a file: losing
-    /// what was already recorded would be worse than the delay.
     private func teardownSurfaces() {
         invalidatePendingStart()
         let recorderOwnedEditors = editors.filter {
@@ -355,8 +299,6 @@ final class ScreenRecorderService: ObservableObject {
 
     // MARK: - Entry
 
-    /// The one control the shortcut, the panel tile and the command bar all
-    /// use: it starts when nothing is running and stops when something is.
     func toggle() {
         if stopOrCancelActiveCapture() { return }
         ScreenCaptureService.shared.capture(initial: .recording)
@@ -523,9 +465,6 @@ final class ScreenRecorderService: ObservableObject {
         let take = session.take
         let region = session.region
         session.onUnexpectedStop = { [weak self] _ in
-            // The stream ended without being asked to. Whatever was recorded
-            // is still worth keeping, so this closes the file rather than
-            // throwing the take away.
             self?.stop()
         }
         session.onMicrophoneUnavailable = { [weak self] in
@@ -534,10 +473,6 @@ final class ScreenRecorderService: ObservableObject {
         }
         self.session = session
 
-        // The indicator goes up BEFORE the stream is asked to start, because
-        // the capture filter names the windows it leaves out and can only name
-        // the ones that already exist. Everything else this app shows stays in
-        // the picture.
         let indicator = indicator ?? RecorderIndicator(
             onPause: { [weak self] in self?.togglePause() },
             onStop: { [weak self] in self?.stop() })
@@ -551,14 +486,9 @@ final class ScreenRecorderService: ObservableObject {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            // The selection panels have just left the screen; the stream is
-            // told to start only once the window server has caught up, so the
-            // first frames are of the desktop and not of a fading overlay.
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard self.session === session,
                   self.pendingStartIsAuthorized(generation) else { return }
-            // Recording is exempt from the screenshot visibility preference,
-            // so editors and pins stay out of the stream either way.
             var chrome = Set(ScreenshotService.shared
                 .protectedWindowIDsForCapture(honoursVisibilityPreference: false)
                 .map(Int.init))
@@ -636,11 +566,6 @@ final class ScreenRecorderService: ObservableObject {
         indicator?.update(paused: isPaused)
     }
 
-    /// A recording that fills the disk is a much worse failure than one that
-    /// stopped early, so the free space is checked while it runs. Asking the
-    /// system how much room is left has to account for purgeable files, which
-    /// makes it slow enough that it can never ride the main thread: only the
-    /// decision to stop comes back.
     private func checkDiskSpace() {
         guard !isCheckingDisk, let asked = session?.take.id else { return }
         isCheckingDisk = true
@@ -650,8 +575,6 @@ final class ScreenRecorderService: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isCheckingDisk = false
-                // The answer belongs to the recording that asked for it: one
-                // that lands late says nothing about the one running now.
                 guard low, self.isRecording, self.session?.take.id == asked else { return }
                 self.stop(reason: self.strings.stoppedNoSpaceHUD)
             }
@@ -701,9 +624,6 @@ final class ScreenRecorderService: ObservableObject {
 
     // MARK: - Output
 
-    /// A finished recording either opens in the editor, which is where trim,
-    /// sound and format are decided, or goes straight to a file for whoever
-    /// only wanted the raw recording.
     private func deliver(_ take: RecorderTakeStore.Take, reason: String?) {
         if reason == nil, UserDefaults.standard.bool(forKey: DefaultsKey.recorderOpenEditor) {
             if openEditor(with: take) { return }
@@ -727,9 +647,6 @@ final class ScreenRecorderService: ObservableObject {
                           message: reason ?? String(format: strings.savedHUDFormat, folder))
     }
 
-    /// The configured folder when it still exists, otherwise the Desktop, with
-    /// a unique dated name. Deliberately the same shape the screenshot tool
-    /// uses, so both tools behave the same way about where things land.
     static func saveDestination(strings: RecorderFeatureStrings,
                                 fileExtension: String) -> URL {
         let manager = FileManager.default
@@ -780,8 +697,6 @@ final class ScreenRecorderService: ObservableObject {
     // MARK: - Retention
 
     private func sweepTakes() {
-        // Read on the main thread, where the editors live, and handed over as
-        // a value: a recording with a window on screen is never swept.
         var owned = Set(editors.map(\.takeID))
         if let session { owned.insert(session.take.id) }
         DispatchQueue.global(qos: .utility).async {

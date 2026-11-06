@@ -15,9 +15,6 @@ struct MixerInputDevice: Identifiable, Equatable {
     fileprivate let audioObjectID: AudioObjectID
 }
 
-/// Keeps Vorssaint's preferred microphone in sync with macOS' global input.
-/// This is intentionally separate from the per-app output mixer: selecting a
-/// microphone changes the system default input, without taps or audio capture.
 final class AudioInputDeviceManager: ObservableObject {
     static let shared = AudioInputDeviceManager()
 
@@ -30,8 +27,6 @@ final class AudioInputDeviceManager: ObservableObject {
     @Published private(set) var lastError: String?
 
     private var listenerInstalled = false
-    /// Stored so stop() can remove the HAL listeners when the mixer leaves
-    /// the hub.
     private var globalListeners: [AudioObjectPropertySelector] = []
     private var volumeDeviceID: AudioObjectID?
     private var volumeListenerAddresses: [AudioObjectPropertyAddress] = []
@@ -41,29 +36,14 @@ final class AudioInputDeviceManager: ObservableObject {
     private var applyingPreferred = false
     private var refreshPending = false
     private var lastListenerRefreshAt: CFAbsoluteTime = 0
-    /// Same arbitration as the mixer: the device sweep reads the audio HAL off
-    /// the main thread, one reader at a time, and a sweep the manager no longer
-    /// wants is dropped instead of publishing what it saw.
     private var refresh = MixerRefreshCoordinator()
-    /// Every CoreAudio call of a refresh runs here, and every HAL notification
-    /// is delivered here. A device being reconfigured can hold a property read
-    /// for as long as the audio daemon holds the device, and that is exactly
-    /// the moment the listeners fire.
     private let halQueue = DispatchQueue(label: "com.vorssaint.utils.audioinput.hal", qos: .userInitiated)
-    /// The system input before the singular preferred-microphone behavior
-    /// changed it, and the device that behavior applied. Priority selections
-    /// clear this pair and become the new system choice instead of a temporary
-    /// override that stop() would undo.
     private var inputDeviceBeforeOverride: String?
     private var appliedInputDeviceUID: String?
-    /// True while Audio device priority is steering the input: the singular
-    /// preferred-input enforcement steps aside so the two do not fight.
     private(set) var inputPriorityIsActive = false
 
     private init() {}
 
-    /// The microphone selector lives in the mixer panel section, so it
-    /// follows the mixer's hub availability.
     func syncWithPreferences() {
         inputPriorityIsActive = AppFeature.audioPriority.isAvailable
             && UserDefaults.standard.bool(forKey: DefaultsKey.audioPriorityInputEnabled)
@@ -87,8 +67,6 @@ final class AudioInputDeviceManager: ObservableObject {
 
     func stop() {
         removeVolumeListeners()
-        // Priority selections are meant to survive a quit and the next
-        // launch. Only the singular preferred-microphone override is restored.
         if !inputPriorityIsActive {
             restoreOriginalInputDevice()
         } else {
@@ -97,8 +75,6 @@ final class AudioInputDeviceManager: ObservableObject {
         }
         guard listenerInstalled else { return }
         listenerInstalled = false
-        // A sweep already reading the HAL must not publish into a manager that
-        // has stopped watching.
         refresh.discardInFlight()
         for selector in globalListeners {
             var address = AudioObjectPropertyAddress(mSelector: selector,
@@ -127,9 +103,6 @@ final class AudioInputDeviceManager: ObservableObject {
     func setPreferredInputDeviceUID(_ uid: String?) {
         volumeWriteLock.withLock { volumeWriteLifetime = UUID() }
         let sanitized = Defaults.sanitizedPreferredInputDeviceUID(uid)
-        // While priority owns input selection, the picker follows the actual
-        // current device. Keep the dormant single preferred choice untouched
-        // so it can resume when priority is disabled.
         if inputPriorityIsActive {
             if let sanitized { setCurrentInputDeviceUID(sanitized) }
             return
@@ -141,18 +114,10 @@ final class AudioInputDeviceManager: ObservableObject {
         }
         preferredInputDeviceUID = sanitized
         lastError = nil
-        // The choice supersedes a sweep still reading the HAL: that one saw the
-        // previous preference and would publish it back for an instant.
         refresh.discardInFlight()
         refreshAndApply()
     }
 
-    /// Points the system input at a concrete device without changing the
-    /// dormant preferred-microphone setting. A successful selection becomes
-    /// the new persistent system choice, so it also supersedes any restoration
-    /// record left by the singular preferred-microphone behavior. The HAL write
-    /// runs off-main: a device connecting or disappearing is exactly when
-    /// CoreAudio may block.
     func setCurrentInputDeviceUID(_ uid: String) {
         volumeWriteLock.withLock { volumeWriteLifetime = UUID() }
         guard listenerInstalled,
@@ -171,9 +136,6 @@ final class AudioInputDeviceManager: ObservableObject {
                     let message = "OSStatus \(status)"
                     if self.lastError != message { self.lastError = message }
                 }
-                // Do not claim the device synchronously. The HAL may publish
-                // the new default a moment later; this refresh is the source
-                // of truth for the picker and priority-list highlight.
                 self.refreshAndApply()
             }
         }
@@ -191,8 +153,6 @@ final class AudioInputDeviceManager: ObservableObject {
         if inputVolume != clamped { inputVolume = clamped }
         halQueue.async { [weak self] in
             guard let self else { return }
-            // Serialize with mute itself, including a mute requested while
-            // this adjustment was waiting for the audio device.
             MicMuteService.shared.withUnmutedInput(lifetime: muteLifetime) {
                 guard self.volumeWriteLock.withLock({ self.volumeWriteLifetime == lifetime }),
                       Self.defaultInputDeviceUID() == uid else { return }
@@ -204,17 +164,11 @@ final class AudioInputDeviceManager: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard self.volumeWriteLock.withLock({ self.volumeWriteLifetime == lifetime }) else { return }
-                // Success may still mean a rounded or ignored adjustment.
                 self.scheduleVolumeRefresh(for: device.audioObjectID)
             }
         }
     }
 
-    /// The smallest possible answer to a change: the system decides which
-    /// thread this arrives on, so it only asks the main thread for a refresh
-    /// and returns. The reading that follows happens away from the main
-    /// thread. Handing a closure back to be removed never matches the one that
-    /// was registered, so the plain callback is what makes stopping work.
     private static let listenerCallback: AudioObjectPropertyListenerProc = { _, _, _, client in
         guard let client else { return noErr }
         let manager = Unmanaged<AudioInputDeviceManager>.fromOpaque(client).takeUnretainedValue()
@@ -230,8 +184,6 @@ final class AudioInputDeviceManager: ObservableObject {
         return noErr
     }
 
-    /// Unretained is safe here and only here: this is a single instance that
-    /// lives as long as the app.
     private var listenerClient: UnsafeMutableRawPointer {
         Unmanaged.passUnretained(self).toOpaque()
     }
@@ -247,10 +199,6 @@ final class AudioInputDeviceManager: ObservableObject {
         globalListeners.append(selector)
     }
 
-    /// Same coalescing as AppVolumeMixer.scheduleListenerRefresh: one hardware
-    /// event fires both listeners back-to-back, and a busy audio HAL keeps the
-    /// stream going. Isolated notifications refresh immediately; bursts fold
-    /// into a single trailing refresh.
     private func scheduleListenerRefresh() {
         guard !refreshPending else { return }
         let now = CFAbsoluteTimeGetCurrent()
@@ -272,7 +220,6 @@ final class AudioInputDeviceManager: ObservableObject {
 
     private static let listenerRefreshInterval: CFAbsoluteTime = 0.2
 
-    /// The main-thread state one sweep needs, copied in.
     private struct RefreshRequest {
         let savedUID: String?
         let inputDeviceBeforeOverride: String?
@@ -282,7 +229,6 @@ final class AudioInputDeviceManager: ObservableObject {
         let volumeGeneration: Int
     }
 
-    /// Everything one sweep read from the HAL, handed back to the main thread.
     private struct RefreshSnapshot {
         let savedUID: String?
         let currentUID: String?
@@ -290,8 +236,6 @@ final class AudioInputDeviceManager: ObservableObject {
         let resolution: MixerInputRouteResolution
         let inputVolume: Double?
         let volumeGeneration: Int
-        /// Non-nil when this sweep actually pointed the system input at the
-        /// preferred device; the write has already happened on the HAL.
         let applied: AppliedInput?
     }
 
@@ -301,14 +245,8 @@ final class AudioInputDeviceManager: ObservableObject {
         let deviceBeforeOverride: String?
     }
 
-    /// Kicks off one sweep. Reading the devices and pointing the system input
-    /// at the preferred one are HAL calls and run on `halQueue`; every
-    /// published property is written back on the main thread.
     private func refreshAndApply() {
-        // A throttled refresh can land after stop(); watching is over.
         guard listenerInstalled else { return }
-        // One reader at a time; a request that arrives meanwhile is remembered
-        // and runs with the values the current sweep is about to publish.
         guard let generation = refresh.begin() else { return }
         let request = RefreshRequest(
             savedUID: Defaults.sanitizedPreferredInputDeviceUID(
@@ -327,7 +265,6 @@ final class AudioInputDeviceManager: ObservableObject {
         }
     }
 
-    /// Runs on `halQueue`. Every CoreAudio call of a sweep happens here.
     private static func readSnapshot(_ request: RefreshRequest) -> RefreshSnapshot {
         let savedUID = request.savedUID
         let currentUID = defaultInputDeviceUID()
@@ -356,8 +293,6 @@ final class AudioInputDeviceManager: ObservableObject {
                                    applied: nil)
         }
 
-        // Remembered once, at the first override: what the system had before
-        // the app started steering it.
         let before = request.inputDeviceBeforeOverride ?? currentUID
         let status = setDefaultInputDevice(device.audioObjectID)
         return RefreshSnapshot(savedUID: savedUID,
@@ -371,13 +306,8 @@ final class AudioInputDeviceManager: ObservableObject {
                                                      deviceBeforeOverride: before))
     }
 
-    /// Main thread. Publishes one sweep in the same order the synchronous
-    /// version used.
     private func apply(_ snapshot: RefreshSnapshot, generation: Int) {
         guard refresh.finish(generation) else {
-            // The sweep is stale (the manager stopped, or the preference
-            // changed, while it was reading), but a system input change it
-            // already made on the HAL still has to be restorable on quit.
             if let applied = snapshot.applied, applied.status == noErr {
                 if inputDeviceBeforeOverride == nil {
                     inputDeviceBeforeOverride = applied.deviceBeforeOverride
@@ -390,10 +320,6 @@ final class AudioInputDeviceManager: ObservableObject {
         guard listenerInstalled else { return }
         defer { if refreshAgain { refreshAndApply() } }
 
-        // Publish only real changes: refreshes run on every CoreAudio
-        // notification, and assigning a @Published property signals SwiftUI
-        // even when the value is identical — a chatty HAL would otherwise
-        // re-render the mixer panel continuously.
         if preferredInputDeviceUID != snapshot.savedUID {
             preferredInputDeviceUID = snapshot.savedUID
         }
@@ -412,11 +338,6 @@ final class AudioInputDeviceManager: ObservableObject {
         }
         let effectiveDeviceID = snapshot.resolution.effectiveUID
             .flatMap { uid in snapshot.devices.first(where: { $0.uid == uid })?.audioObjectID }
-        // Rewiring listeners invalidates pending control reads. Capture the
-        // sweep's validity first so that initial wiring cannot invalidate the
-        // volume value discovered by this same sweep. A stale read is still
-        // useful when it belongs to a newly selected device: it must replace
-        // the old device's level while a slider drag is in flight.
         let sweepVolumeIsCurrent = volumeRefreshGeneration == snapshot.volumeGeneration
         let volumeDeviceChanged = volumeDeviceID != effectiveDeviceID
         updateVolumeListeners(for: effectiveDeviceID)
@@ -428,8 +349,6 @@ final class AudioInputDeviceManager: ObservableObject {
         applyPreferredInputDevice(applied)
     }
 
-    /// Main thread. Records the outcome of a system input change the sweep
-    /// already made on the HAL.
     private func applyPreferredInputDevice(_ applied: AppliedInput) {
         applyingPreferred = true
         defer { applyingPreferred = false }
@@ -469,13 +388,6 @@ final class AudioInputDeviceManager: ObservableObject {
         }
     }
 
-    /// Hands the system input back the way it was found. Only when the app is
-    /// still the last one to have set it: if something else picked a
-    /// microphone since, that choice stays.
-    ///
-    /// Deliberately synchronous on the main thread even though it reads and
-    /// writes the HAL: `stop()` runs while the app is quitting, so the system
-    /// setting has to go back before the process does.
     private func restoreOriginalInputDevice() {
         guard let originalUID = inputDeviceBeforeOverride,
               let appliedUID = appliedInputDeviceUID else { return }
@@ -543,8 +455,6 @@ final class AudioInputDeviceManager: ObservableObject {
         removeVolumeListeners()
         guard let deviceID else { return }
 
-        // The active device is also needed for explicit read-back when a
-        // driver cannot install notifications.
         volumeDeviceID = deviceID
         let addresses = Self.mainInputVolumeAddresses() + Self.channelInputVolumeAddresses(for: deviceID)
         for var address in addresses where Self.isSettable(deviceID, &address) {
@@ -577,8 +487,6 @@ final class AudioInputDeviceManager: ObservableObject {
         guard listenerInstalled, volumeDeviceID == deviceID else { return }
         volumeRefreshGeneration &+= 1
         let generation = volumeRefreshGeneration
-        // A drag can emit several property notifications for each step. Read
-        // once after the burst, and never let an older read replace newer UI.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
             guard let self,
                   self.listenerInstalled,
@@ -610,15 +518,10 @@ final class AudioInputDeviceManager: ObservableObject {
             var volume = Float32(0)
             var size = UInt32(MemoryLayout<Float32>.size)
             if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &volume) == noErr {
-                // A device can report infinity or NaN. Treat that as no
-                // usable gain control instead of publishing it to the UI.
                 return volume.isFinite ? min(max(volume, 0), 1) : nil
             }
         }
 
-        // Some input devices expose writable gain only on their individual
-        // channels. Represent those controls with their mean so they remain
-        // visible and editable through the single slider.
         let channelVolumes = channelInputVolumeAddresses(for: deviceID).compactMap { address -> Float32? in
             var address = address
             guard isSettable(deviceID, &address) else { return nil }
@@ -629,16 +532,12 @@ final class AudioInputDeviceManager: ObservableObject {
             }
             return volume
         }
-        // One unreadable channel makes the mean meaningless, so the whole
-        // control is treated as unavailable.
         guard !channelVolumes.isEmpty, channelVolumes.allSatisfy(\.isFinite) else { return nil }
         return min(max(channelVolumes.reduce(0, +) / Float32(channelVolumes.count), 0), 1)
     }
 
     private static func setInputVolume(_ volume: Float32, for deviceID: AudioObjectID) -> Bool {
         let clamped = min(max(volume, 0), 1)
-        // Prefer a master control and stop at the first successful selector so
-        // devices exposing both master and channels keep their channel balance.
         for var address in mainInputVolumeAddresses() where isSettable(deviceID, &address) {
             var nextVolume = clamped
             if AudioObjectSetPropertyData(deviceID, &address, 0, nil,
@@ -648,8 +547,6 @@ final class AudioInputDeviceManager: ObservableObject {
             }
         }
 
-        // With no usable master, every writable channel must be updated or a
-        // channel-only microphone would remain partially unchanged.
         var applied = false
         for var address in channelInputVolumeAddresses(for: deviceID) where isSettable(deviceID, &address) {
             var nextVolume = clamped

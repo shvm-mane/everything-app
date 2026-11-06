@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// How the app paints its own windows. `system` follows the Mac's Appearance
-/// setting, the other two keep the app light or dark whatever the Mac does.
 enum AppAppearance: String, CaseIterable, Identifiable {
     case system
     case light
@@ -14,8 +12,6 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
     static let fallback: AppAppearance = .system
 
-    /// A stored value from an older or hand-edited preference never breaks the
-    /// picker; anything unknown falls back to following the system.
     static func sanitized(_ raw: String?) -> AppAppearance {
         guard let raw, let value = AppAppearance(rawValue: raw) else { return fallback }
         return value

@@ -3,20 +3,6 @@
 
 import SwiftUI
 
-struct PanelRecentCapturesView: View {
-    var onClose: () -> Void
-
-    var body: some View {
-        RecentCapturesView(onClose: onClose)
-        .onAppear {
-            PanelInteractionState.shared.viewKeepsPopoverOpen = true
-        }
-        .onDisappear { PanelInteractionState.shared.viewKeepsPopoverOpen = false }
-    }
-}
-
-/// The same history surface is used by the menu panel and by the floating
-/// palette opened from editors and the Command Bar.
 struct RecentCapturesView: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var history = RecentCaptureService.shared
@@ -24,8 +10,6 @@ struct RecentCapturesView: View {
     @State private var confirmingClear = false
 
     var onClose: (() -> Void)?
-    /// Inside the island the list becomes a rail of cards that fill this
-    /// area and continue sideways.
     var notchSize: CGSize? = nil
 
     private var text: RecentCaptureStrings {
@@ -88,7 +72,6 @@ struct RecentCapturesView: View {
         }
     }
 
-    /// The dialog would hang from the island as a sheet; there it asks on its own.
     static func confirmClearAboveIsland() {
         DispatchQueue.main.async {
             let l10n = L10n.shared
@@ -194,8 +177,6 @@ struct RecentCapturesView: View {
     }
 }
 
-/// Borderless palette content. Its compact fixed width keeps the same list
-/// readable over either editor without covering the work area.
 struct RecentCapturesWindowView: View {
     var onClose: () -> Void
 

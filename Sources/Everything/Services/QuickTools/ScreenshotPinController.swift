@@ -5,11 +5,6 @@ import AppKit
 import Carbon.HIToolbox
 import UniformTypeIdentifiers
 
-/// Floating pinned screenshots keep a capture visible while working.
-/// Drag anywhere to move, resize from the edges keeping proportions, arrows
-/// nudge, double click or Esc closes, right click offers copy, save, opacity
-/// and click-through. A monitor exists only while a click-through pin needs
-/// its Option-click escape hatch.
 final class ScreenshotPinController {
     static let shared = ScreenshotPinController()
 
@@ -25,7 +20,6 @@ final class ScreenshotPinController {
     func pin(image: CGImage, scale: CGFloat) {
         let window = ScreenshotPinWindow(image: image, scale: scale, controller: self)
         pins.append(window)
-        // Cascade so consecutive pins never stack invisibly.
         let offset = CGFloat((pins.count - 1) % 5) * 26
         var origin = window.frame.origin
         origin.x += offset
@@ -47,9 +41,6 @@ final class ScreenshotPinController {
         refreshEscapeMonitor()
     }
 
-    /// While any pin ignores clicks, a global monitor watches for
-    /// Option-click inside it and restores interaction; without this a
-    /// click-through pin could never be caught again.
     fileprivate func refreshEscapeMonitor() {
         let needed = pins.contains { $0.ignoresMouseEvents }
         if needed, escapeMonitor == nil {
@@ -68,7 +59,6 @@ final class ScreenshotPinController {
     }
 }
 
-/// One pinned capture.
 private final class ScreenshotPinWindow: OverlayPanel {
     private let image: CGImage
     private let scale: CGFloat
@@ -187,9 +177,6 @@ private final class ScreenshotPinWindow: OverlayPanel {
     // MARK: Content
 
     private final class PinContentView: NSView {
-        /// Weak for the same reason the capture surface is: closing a pin
-        /// releases its window from inside this view's own event handling,
-        /// so a menu item or a second click can arrive with the window gone.
         private weak var pinWindow: ScreenshotPinWindow?
 
         init(image: CGImage, window: ScreenshotPinWindow) {

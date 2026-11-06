@@ -3,20 +3,10 @@
 
 import SwiftUI
 
-/// The window's name, scrolled instead of clipped while the pointer is on the
-/// card. A middle ellipsis is what a long name looks like at rest, and it eats
-/// exactly the part that tells two windows of one app apart -- but the pointer
-/// is already on the card by the time anybody is trying to read it, so that is
-/// where the name is allowed to move.
 struct ScrollingTitle: View {
     let text: String
     let weight: Font.Weight
     let width: CGFloat
-    /// Where a name short enough to fit sits in its band: centred under a grid
-    /// thumbnail, like every other label in the switcher, and on the leading
-    /// edge in a column that carries controls beside it. A name too long to fit
-    /// fills the band either way, and a scrolling one always starts from the
-    /// leading edge.
     let alignment: Alignment
     let scrolls: Bool
 
@@ -30,7 +20,6 @@ struct ScrollingTitle: View {
     private static let size: CGFloat = 13
     private static let speed: CGFloat = 26
     private static let gap: CGFloat = 20
-    /// Long enough that arriving on a card is a still frame, not a moving one.
     private static let startDelay: Double = 0.4
     private static let fade: CGFloat = 6
 
@@ -55,11 +44,6 @@ struct ScrollingTitle: View {
         .frame(width: width, alignment: alignment)
     }
 
-    /// Two copies a gap apart, slid left and wrapped, so the name reads
-    /// continuously instead of snapping back at the end. Time is counted from
-    /// the moment the pointer arrived, not from the clock: against the clock
-    /// the line appeared at whatever phase the cycle happened to be in, which
-    /// is why it looked like it started from the middle.
     private var scrollingLine: some View {
         let measured = SwitcherSupport.titleWidth(text,
                                                   fontSize: Self.size,
@@ -71,9 +55,6 @@ struct ScrollingTitle: View {
             let phase = context.date.timeIntervalSince(start).truncatingRemainder(dividingBy: cycle)
             let travelled = max(0, phase - Self.startDelay)
             let moved = CGFloat(travelled) * Self.speed
-            // The leading fade arrives with the movement. Drawn from the first
-            // frame it ate the first characters while the line was still parked
-            // at the edge, which read as the selection outline covering them.
             let lead = min(1, moved / Self.fade) * Self.fade / width
             HStack(spacing: Self.gap) {
                 Text(text).lineLimit(1).fixedSize()

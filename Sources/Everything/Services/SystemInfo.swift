@@ -9,14 +9,9 @@ struct BatteryInfo: Equatable {
     let percent: Int
     let isCharging: Bool
     let isOnBattery: Bool
-    /// Read from the power source state rather than taken as the opposite of
-    /// `isOnBattery`: a description that omits the key answers neither.
     let isOnExternalPower: Bool
 }
 
-/// Point-in-time system facts that need no special permissions.
-/// The battery snapshot feeds the keep-awake battery protection; the memory
-/// reading feeds the system monitor.
 enum SystemInfo {
     static func wallClockUptimeSeconds(now: Date = Date()) -> Int? {
         var bootTime = timeval()

@@ -30,8 +30,6 @@ enum NetworkProcessSupport {
         currentActivitySamples(arguments: nettopArguments, timeout: timeout) ?? []
     }
 
-    /// Uses socket-flow counters instead of interface counters. This stays idle
-    /// unless NetworkSampler detects that macOS stopped reporting inbound bytes.
     static func currentExternalActivitySamples(timeout: TimeInterval = 1) -> [NetworkProcessSample]? {
         currentActivitySamples(arguments: externalNettopArguments, timeout: timeout)
     }
@@ -46,8 +44,6 @@ enum NetworkProcessSupport {
         return parseNettopCSV(output)
     }
 
-    /// Parses CSV output from nettop logging mode. The last section is returned,
-    /// whether the command produced one cumulative section or multiple sections.
     static func parseNettopCSV(_ output: String) -> [NetworkProcessSample] {
         var currentSection: [NetworkProcessSample] = []
 
@@ -130,8 +126,6 @@ struct NetworkProcessDeltaTracker {
         self.maxGap = maxGap
     }
 
-    /// Whether the next `rates(from:now:)` call can produce deltas, or will
-    /// only prime the baseline and return nothing.
     func hasBaseline(now: TimeInterval) -> Bool {
         guard let previousAt else { return false }
         return now > previousAt && now - previousAt <= maxGap
@@ -172,42 +166,3 @@ struct NetworkProcessDeltaTracker {
     }
 }
 
-struct NetworkProcessDeltaStreamParser {
-    private var hasOpenSection = false
-    private var didSkipInitialCumulativeSection = false
-    private var currentSection: [NetworkProcessSample] = []
-
-    mutating func consumeCSVLine(_ line: String) -> [NetworkProcessSample]? {
-        let columns = NetworkProcessSupport.csvColumns(in: line)
-        guard !columns.isEmpty else { return nil }
-
-        if columns[0] == "time" {
-            return finishSection()
-        }
-
-        guard hasOpenSection else { return nil }
-        if let sample = NetworkProcessSupport.sample(fromCSVColumns: columns) {
-            currentSection.append(sample)
-        }
-        return nil
-    }
-
-    mutating func reset() {
-        hasOpenSection = false
-        didSkipInitialCumulativeSection = false
-        currentSection = []
-    }
-
-    private mutating func finishSection() -> [NetworkProcessSample]? {
-        defer { currentSection.removeAll() }
-        guard hasOpenSection else {
-            hasOpenSection = true
-            return nil
-        }
-        guard didSkipInitialCumulativeSection else {
-            didSkipInitialCumulativeSection = true
-            return nil
-        }
-        return currentSection
-    }
-}

@@ -4,9 +4,6 @@
 import Darwin
 import Foundation
 
-/// A temporary, opt-in change to the Dock preference, owned by one hover session.
-/// CoreDock has no public equivalent. Resolve it at runtime so its removal does
-/// not prevent the app (or the normal Dock preview) from working.
 final class DockAutohideHold {
     private let defaults: UserDefaults
     private let readAutohide: () -> Bool?
@@ -21,7 +18,6 @@ final class DockAutohideHold {
         self.defaults = defaults
         self.readAutohide = readAutohide
         self.writeAutohide = writeAutohide
-        // Recover even if the experimental toggle was disabled after a crash.
         end()
     }
 
@@ -30,7 +26,6 @@ final class DockAutohideHold {
         if isHolding { return true }
         guard !defaults.bool(forKey: DefaultsKey.dockPreviewRestoreAutohide),
               readAutohide() == true else { return false }
-        // Persist the restoration before touching the system preference.
         defaults.set(true, forKey: DefaultsKey.dockPreviewRestoreAutohide)
         defaults.synchronize()
         guard writeAutohide(false) else {
@@ -44,7 +39,6 @@ final class DockAutohideHold {
     func end() {
         isHolding = false
         guard defaults.bool(forKey: DefaultsKey.dockPreviewRestoreAutohide) else { return }
-        // Keep the recovery marker if the API disappears or restoration fails.
         guard writeAutohide(true) else { return }
         defaults.removeObject(forKey: DefaultsKey.dockPreviewRestoreAutohide)
         defaults.synchronize()
@@ -54,7 +48,6 @@ final class DockAutohideHold {
 private enum CoreDock {
     typealias Getter = @convention(c) () -> UInt8
     typealias Setter = @convention(c) (UInt8) -> Void
-    // Retain the handle for the lifetime of the function pointers.
     static let handle = dlopen(
         "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices",
         RTLD_LAZY | RTLD_LOCAL)

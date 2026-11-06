@@ -3,10 +3,7 @@
 
 import SwiftUI
 
-/// Shared look & feel: brand colors, card styling and the brand mark.
 enum Theme {
-    /// Near-black background behind the brand mark. Neutral greys into black, no
-    /// colour cast, with just a hint of depth so the badge does not read as flat.
     static let spaceGradient = LinearGradient(
         colors: [Color(white: 0.10),
                  Color(white: 0.04),
@@ -14,36 +11,6 @@ enum Theme {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-}
-
-enum PanelMetricColor {
-    static func green(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.00, green: 0.44, blue: 0.18) : .green
-    }
-
-    static func cyan(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.00, green: 0.43, blue: 0.54) : .cyan
-    }
-
-    static func mint(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.00, green: 0.44, blue: 0.40) : .mint
-    }
-
-    static func yellow(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.56, green: 0.36, blue: 0.00) : .yellow
-    }
-
-    static func red(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.68, green: 0.08, blue: 0.10) : .red
-    }
-
-    static func orange(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.68, green: 0.30, blue: 0.00) : .orange
-    }
-
-    static func pink(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color(red: 0.68, green: 0.06, blue: 0.34) : .pink
-    }
 }
 
 private struct NotchPresentationKey: EnvironmentKey {
@@ -58,12 +25,6 @@ extension EnvironmentValues {
 }
 
 enum PanelSurface {
-    /// Whether the menu popover hosts the panel across its whole balloon, so the
-    /// panel's own surface can reach the arrow (#1030). Only macOS 26 lays the
-    /// content out that way. On macOS 15, `hasFullSizeContent` publishes the
-    /// full-size safe area but leaves the view at its content size in the frame's
-    /// lower-left corner: the popover grows by that safe area, the panel sits off
-    /// center, and a band of system material shows along the top and right edges.
     static var popoverHostsFullSizeContent: Bool {
         if #available(macOS 26.0, *) { return true }
         return false
@@ -81,10 +42,6 @@ enum PanelSurface {
         scheme == .light ? Color.black.opacity(0.055) : Color.white.opacity(0.085)
     }
 
-    /// Raised contrast is asked for by someone who cannot see a hairline at a
-    /// tenth of an opacity, so the outlines that separate one card from the
-    /// next are the ones that answer. A panel is rebuilt every time it opens,
-    /// which is when a change to this setting shows.
     static func border(for scheme: ColorScheme) -> Color {
         let raised = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         return scheme == .light
@@ -92,9 +49,6 @@ enum PanelSurface {
             : Color.white.opacity(raised ? 0.28 : 0.11)
     }
 
-    /// A control that sits ON a glass surface rather than in it: the system's
-    /// own round toggles read as physical because they are lighter than what
-    /// is behind them and carry their own shadow.
     static func raisedFill(for scheme: ColorScheme) -> Color {
         scheme == .light ? Color.white.opacity(0.88) : Color.white.opacity(0.14)
     }
@@ -110,8 +64,6 @@ enum PanelSurface {
         scheme == .light ? Color.black.opacity(0.14) : Color.black.opacity(0.38)
     }
 
-    /// The lit edge of a glass surface: bright where the light comes from,
-    /// gone by the bottom. Without it a translucent panel reads as paper.
     static func rimHighlight(for scheme: ColorScheme) -> LinearGradient {
         LinearGradient(colors: [Color.white.opacity(scheme == .light ? 0.95 : 0.30),
                                 Color.white.opacity(scheme == .light ? 0.12 : 0.04)],
@@ -128,15 +80,10 @@ func sectionTitle(_ text: String) -> some View {
 }
 
 extension View {
-    /// The rounded card background used by every panel section. A card
-    /// holding a list of rows is not padded: each row brings its own insets,
-    /// so hover highlights and separators can reach the card's edges.
     func panelCard(interactive: Bool = true, padded: Bool = true) -> some View {
         modifier(PanelCardModifier(interactive: interactive, padded: padded))
     }
 
-    /// A restrained glass base where the popover hosts full-size content.
-    /// Inset content uses the popover's native material; see PanelGlassSurface.
     func panelGlassSurface() -> some View {
         background(PanelGlassSurface())
     }
@@ -174,15 +121,6 @@ private struct PanelGlassSurface: View {
     @AppStorage(DefaultsKey.liquidGlassEnabled) private var liquidGlassEnabled = false
 
     var body: some View {
-        // AppKit hands the hosted panel a safe area for the popover's border and
-        // arrow, so a surface that stopped at the panel would leave the tip in the
-        // plain system material. The panel content keeps that inset and never sits
-        // under the arrow; only this background bleeds into it. The popover clips
-        // it to its own balloon, so the surface is a plain rectangle: rounding would
-        // expose the system material at the corners, while stroking would duplicate
-        // the outline AppKit already draws. Before macOS 26, inset content uses
-        // the native popover material alone: a separate rounded card cannot
-        // follow the balloon's corners and leaves a second outline (#2225).
         if notchPresentation {
             Rectangle().fill(notchGlassSurface ? Color.clear : .black)
         } else if PanelSurface.popoverHostsFullSizeContent {
@@ -223,9 +161,6 @@ func appDelegate() -> AppDelegate? {
     NSApp.delegate as? AppDelegate
 }
 
-/// The official mark (Resources/Brand/logo.png, trimmed at build time),
-/// tintable for light or dark surfaces.
-/// EVERYTHING's mark: the "sum" symbol, everything added up.
 struct BrandMark: View {
     var width: CGFloat
     var tint: Color = .white
@@ -241,18 +176,3 @@ struct BrandMark: View {
     }
 }
 
-
-/// Squircle badge with the mark on the space gradient — the app's face in the
-/// About tab and onboarding.
-struct BrandBadge: View {
-    var size: CGFloat
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-                .fill(Theme.spaceGradient)
-            BrandMark(width: size * 0.8)
-        }
-        .frame(width: size, height: size)
-    }
-}

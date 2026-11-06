@@ -3,20 +3,12 @@
 
 import Foundation
 
-/// A color read from text that is only a color value. The accepted forms are
-/// the CSS ones designers copy and the ones the color picker writes: `#RGB`,
-/// `#RGBA`, `#RRGGBB`, `#RRGGBBAA`, `rgb()`, `rgba()`, `hsl()`, `hsla()` and
-/// SwiftUI's `Color(red:green:blue:opacity:)`. The value must be the whole
-/// entry; a color inside a longer text is not one, and a bare `RRGGBB` would
-/// also match plain numbers and hashes.
 struct ColorValue: Equatable {
     let red: Double
     let green: Double
     let blue: Double
     let alpha: Double
 
-    /// Longer than any accepted form with generous spacing; the cap keeps a
-    /// render from trimming or scanning a large entry.
     static let maxLength = 96
 
     init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
@@ -74,8 +66,6 @@ struct ColorValue: Equatable {
         self.init(red: channels[0], green: channels[1], blue: channels[2], alpha: alpha)
     }
 
-    /// `red: 0.2, green: 0.4, blue: 0.6`, optionally followed by
-    /// `opacity: 0.5`, with or without spaces around the labels.
     private init?(swiftUIArguments: Substring) {
         let labels = ["red", "green", "blue", "opacity"]
         let pairs = swiftUIArguments.split(separator: ",", omittingEmptySubsequences: false)
@@ -113,8 +103,6 @@ struct ColorValue: Equatable {
         self.init(red: channel(0), green: channel(8), blue: channel(4), alpha: alpha)
     }
 
-    /// The arguments of `name(...)`, split on commas, spaces and the slash
-    /// that CSS puts before the alpha value.
     private static func arguments(of value: String, names: [String]) -> [String]? {
         guard value.hasSuffix(")"),
               let name = names.first(where: { value.hasPrefix($0 + "(") })
@@ -130,7 +118,6 @@ struct ColorValue: Equatable {
         return value
     }
 
-    /// A `0%`...`100%` value as a fraction.
     private static func percentage(_ text: String) -> Double? {
         guard text.hasSuffix("%"),
               let value = number(String(text.dropLast())),
@@ -139,7 +126,6 @@ struct ColorValue: Equatable {
         return value / 100
     }
 
-    /// Opaque when absent; otherwise a `0`...`1` number or a percentage.
     private static func alpha(_ text: String?) -> Double? {
         guard let text else { return 1 }
         if let percent = percentage(text) { return percent }
@@ -148,7 +134,6 @@ struct ColorValue: Equatable {
     }
 }
 
-/// How a color is written out.
 enum ColorCopyFormat: String, CaseIterable, Identifiable {
     case hex
     case rgb
@@ -157,7 +142,6 @@ enum ColorCopyFormat: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Short technical label; intentionally not localized.
     var label: String {
         switch self {
         case .hex: return "HEX"
@@ -173,11 +157,6 @@ enum ColorCopyFormat: String, CaseIterable, Identifiable {
 }
 
 extension ColorValue {
-    /// Formats sRGB components (0...1) in the chosen copy format. Components
-    /// out of range are clamped so extended-gamut samples never produce
-    /// invalid strings. `bareHex` drops the leading # (issue #168: some design
-    /// tools reject pasted values that carry it); it only affects `.hex`.
-    /// A non-nil `alpha` writes the alpha form.
     static func string(red: Double,
                        green: Double,
                        blue: Double,
@@ -188,7 +167,6 @@ extension ColorValue {
         let g = min(max(green, 0), 1)
         let b = min(max(blue, 0), 1)
         let a = alpha.map { min(max($0, 0), 1) }
-        // Three decimals are the fewest that bring every 8-bit alpha back.
         let alphaText = a.map { String(format: "%g", locale: Locale(identifier: "en_US_POSIX"),
                                        ($0 * 1000).rounded() / 1000) }
         switch format {
@@ -212,8 +190,6 @@ extension ColorValue {
                                   Int((l * 100).rounded()))
             return alphaText.map { "hsla(\(channels), \($0))" } ?? "hsl(\(channels))"
         case .swiftui:
-            // Source code, not prose: a comma here would paste something that
-            // does not compile, whatever region the reader is in.
             let posix = Locale(identifier: "en_US_POSIX")
             let rgb = String(format: "red: %.3f, green: %.3f, blue: %.3f", locale: posix, r, g, b)
             return a.map { "Color(\(rgb), opacity: \(String(format: "%.3f", locale: posix, $0)))" }

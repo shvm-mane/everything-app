@@ -21,7 +21,6 @@ struct AgentTotals: Equatable {
     var cost = 0.0
     var savings = 0.0
     var requests = 0
-    /// Responses from a model without a known price, left out of `cost`.
     var unpriced = 0
 
     mutating func add(_ record: AgentUsageRecord) {
@@ -39,12 +38,9 @@ struct AgentTotals: Equatable {
         lhs.unpriced += rhs.unpriced
     }
 
-    /// Cost when every response had a price, tokens otherwise, so shares
-    /// and bars never compare dollars with token counts.
     func weight(byCost: Bool) -> Double { byCost ? cost : Double(tokens.total) }
 }
 
-/// One row of a breakdown: a model or a project.
 struct AgentShare: Equatable, Identifiable {
     let id: String
     let name: String
@@ -58,11 +54,9 @@ struct AgentPeriodUsage: Equatable {
     var models: [AgentShare] = []
     var projects: [AgentShare] = []
 
-    /// Whether every response in the period could be priced.
     var fullyPriced: Bool { total.unpriced == 0 }
 }
 
-/// A day or an hour of use.
 struct AgentBucket: Equatable, Identifiable {
     let start: Date
     var byProvider: [AgentProvider: AgentTotals] = [:]
@@ -73,8 +67,6 @@ struct AgentBucket: Equatable, Identifiable {
     }
 }
 
-/// Claude's allowance renews five hours after the first request that
-/// follows a renewal. Local activity alone places that window closely.
 struct AgentBlock: Equatable {
     let start: Date
     let end: Date
@@ -87,18 +79,14 @@ struct AgentUsageSnapshot: Equatable {
     var loaded = false
     var now = Date.distantPast
     var periods: [AgentPeriod: AgentPeriodUsage] = [:]
-    /// Oldest first, ending with today.
     var days: [AgentBucket] = []
-    /// Today's hours, from midnight.
     var hours: [AgentBucket] = []
     var limits: [AgentProvider: AgentLimits] = [:]
     var plans: [AgentProvider: AgentPlan] = [:]
     var live: [AgentLiveSession] = []
     var claudeBlock: AgentBlock?
-    /// The last half hour, scaled to an hour.
     var burnRate: [AgentProvider: AgentTotals] = [:]
     var lastActivity: [AgentProvider: Date] = [:]
-    /// Providers with anything on disk: usage, limits or a turn.
     var seen: Set<AgentProvider> = []
 
     func usage(_ period: AgentPeriod) -> AgentPeriodUsage { periods[period] ?? AgentPeriodUsage() }
@@ -107,8 +95,6 @@ struct AgentUsageSnapshot: Equatable {
 
 enum AgentUsageSummary {
     static let blockLength: TimeInterval = 5 * 3600
-    /// Each window starts where the one before it ended, so a chain cut
-    /// short lands on other hours; a day of history covers any real stretch.
     static let blockHistory: TimeInterval = 24 * 3600
     static let burnWindow: TimeInterval = 30 * 60
 
@@ -153,8 +139,6 @@ enum AgentUsageSummary {
             if day == lastDay, let hour = index(of: record.date, in: hourStarts) {
                 hours[hour].byProvider[record.provider, default: AgentTotals()].add(record)
             }
-            // One name per model string, not per response: the history can
-            // hold tens of thousands of them.
             let name: String
             if let known = names[record.model] {
                 name = known
@@ -202,9 +186,6 @@ enum AgentUsageSummary {
         return snapshot
     }
 
-    /// Whether a snapshot reads differently at `now` with nothing new read:
-    /// the last half hour slides, a Claude window can end and a new day
-    /// moves every total. The rest changes only with what the logs say.
     static func movesWithClock(_ snapshot: AgentUsageSnapshot, now: Date,
                                calendar: Calendar = .autoupdatingCurrent) -> Bool {
         !snapshot.burnRate.isEmpty || snapshot.claudeBlock != nil || !calendar.isDate(snapshot.now, inSameDayAs: now)
@@ -217,7 +198,6 @@ enum AgentUsageSummary {
         }
     }
 
-    /// The last start at or before `date`, by bisection.
     static func index(of date: Date, in starts: [Date]) -> Int? {
         guard let first = starts.first, date >= first else { return nil }
         var low = 0, high = starts.count - 1
@@ -228,12 +208,8 @@ enum AgentUsageSummary {
         return low
     }
 
-    /// Windows start at the first request after the previous one ended and
-    /// last five hours from that moment, the renewal time the provider's own
-    /// usage page shows.
     static func currentBlock(_ records: [AgentUsageRecord], now: Date) -> AgentBlock? {
         var block: AgentBlock?
-        // Sorting positions moves no strings: a day of records is thousands.
         for position in records.indices.sorted(by: { records[$0].date < records[$1].date }) {
             let record = records[position]
             if let current = block, record.date < current.end {
@@ -249,10 +225,6 @@ enum AgentUsageSummary {
     }
 }
 
-/// Queue-confined history totals. Ordinary log updates add only new responses
-/// or the difference from a streamed response. Calendar changes, pruning and
-/// repricing rebuild from the authoritative store instead of trying to undo
-/// old buckets. The short sliding windows are evaluated at publication time.
 final class AgentUsageSummaryCache {
     private var history: AgentUsageSnapshot?
     private var calendar: Calendar?
@@ -267,7 +239,6 @@ final class AgentUsageSummaryCache {
     private var changes: [Int: Change] = [:]
     private var recentPositions: Set<Int> = []
     private var lastTime = Date.distantPast
-    /// Records accumulated on the last publication, for performance contracts.
     private(set) var accumulatedRecords = 0
 
     func invalidate() {
@@ -278,8 +249,6 @@ final class AgentUsageSummaryCache {
 
     func recordChanged(at position: Int, previous: AgentUsageRecord?) {
         guard history != nil, changes[position] == nil else { return }
-        // Keep the value before the first change, including a response added
-        // and streamed again before the next publication.
         changes[position] = Change(previous: previous)
     }
 
@@ -332,7 +301,6 @@ final class AgentUsageSummaryCache {
         result.seen.formUnion(result.limits.keys)
         result.seen.formUnion(result.live.map(\.provider))
         var claude: [AgentUsageRecord] = []
-        // Stable store order also preserves the original accumulation order.
         for position in recentPositions.sorted() {
             let record = records[position]
             guard isRecent(record, now: now) else { recentPositions.remove(position); continue }
@@ -344,7 +312,6 @@ final class AgentUsageSummaryCache {
         }
         for provider in Array(result.burnRate.keys) {
             let total = result.burnRate[provider]!
-            // Scale amounts, not the number of responses or unpriced entries.
             result.burnRate[provider]!.tokens += total.tokens
             result.burnRate[provider]!.cost *= 2
             result.burnRate[provider]!.savings *= 2
@@ -397,22 +364,17 @@ final class AgentUsageSummaryCache {
     }
 }
 
-/// How spending compares with the time a window has left.
 struct AgentPace: Equatable {
-    /// How much of the window's time has passed, from 0 to 1.
     let elapsed: Double
 }
 
 enum AgentLimitSupport {
-    /// A window that renewed since it was read has nothing spent on it yet.
     static func current(_ window: AgentLimitWindow, at now: Date) -> AgentLimitWindow {
         guard let resets = window.resetsAt, resets <= now else { return window }
         return AgentLimitWindow(id: window.id, kind: window.kind, minutes: window.minutes,
                                 scope: window.scope, usedPercent: 0, resetsAt: nil)
     }
 
-    /// Once an estimate has passed, the countdown is unknown until another
-    /// reading places it. That does not mean the allowance has renewed.
     static func displayedReset(_ window: AgentLimitWindow, now: Date) -> Date? {
         guard let reset = window.estimatedResetsAt ?? window.resetsAt, reset > now else { return nil }
         return reset
@@ -427,8 +389,6 @@ enum AgentLimitSupport {
         return AgentPace(elapsed: min(1, elapsed / length))
     }
 
-    /// The window that will stop work first: the most spent, and on a tie the
-    /// one renewing last.
     static func binding(_ limits: AgentLimits?, now: Date) -> AgentLimitWindow? {
         limits?.windows.map { current($0, at: now) }.max {
             $0.usedPercent != $1.usedPercent ? $0.usedPercent < $1.usedPercent
@@ -436,8 +396,6 @@ enum AgentLimitSupport {
         }
     }
 
-    /// Windows that reached `threshold` percent between two readings of the
-    /// same account. A renewed window starts again from zero.
     static func crossings(previous: AgentLimits?, current: AgentLimits, threshold: Double) -> [AgentLimitWindow] {
         guard threshold > 0 else { return [] }
         return current.windows.filter { window in
@@ -448,19 +406,11 @@ enum AgentLimitSupport {
         }
     }
 
-    /// Whether the account's exact renewal places the start of `window`
-    /// after `time`. Read after a gap, a session the reading before never saw
-    /// is a new one, however late that reading placed the old one's end.
     private static func began(_ window: AgentLimitWindow, after time: Date) -> Bool {
         guard let minutes = window.minutes, let resets = window.resetsAt else { return false }
         return resets.addingTimeInterval(-TimeInterval(minutes) * 60) > time
     }
 
-    /// Whether `window`, read at `observedAt`, comes after the one `before`
-    /// saw: its usage fell, as a renewal or a reset used early leaves it, or
-    /// its renewal moved on once the old one went by. A renewal that only
-    /// moves before then is the same window read another way, as the Claude
-    /// app's latest possible end is the account's exact one minutes later.
     static func renewed(_ before: AgentLimitWindow, to window: AgentLimitWindow, observedAt: Date) -> Bool {
         if window.usedPercent + 1 < before.usedPercent { return true }
         guard let was = before.resetsAt, let resets = window.resetsAt else { return false }

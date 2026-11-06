@@ -4,76 +4,25 @@
 import Combine
 import Foundation
 
-/// The way a language agrees a noun with the number in front of it.
 enum CountAgreement {
-    /// One form for exactly one, another for every other count.
     case oneAndMany
-    /// Russian and Ukrainian: the number's last digits decide. 21 takes the
-    /// first form and 22 the middle one, while 11 through 14 fall back to the last.
     case byLastDigits
-    /// Slovak: the whole number decides. Only one itself takes the first form
-    /// and only two through four the middle one, so 21 and 22 read
-    /// "21 súborov" and "22 súborov" the same way 25 does.
     case byWholeNumber
 }
 
-/// Languages the interface can use. The first launch defaults to the system
-/// language; the onboarding and Settings let the user override it at any time.
 enum AppLanguage: String, CaseIterable, Identifiable {
     case enUS = "en-US"
-    case ptBR = "pt-BR"
-    case tr = "tr"
-    case ru = "ru"
-    case es = "es"
-    case sk = "sk"
-    case de = "de"
-    case fr = "fr"
-    case it = "it"
-    case ja = "ja"
-    case ko = "ko"
-    case uk = "uk"
-    case zhHans = "zh-Hans"
-    case zhTW = "zh-TW"
-    case zhHK = "zh-HK"
 
     var id: String { rawValue }
 
-    /// How this language agrees a counted noun with the number in front of
-    /// it. Three of the fifteen put a distinct form between one and many, and
-    /// they disagree on which numbers take it, so the count itself is not
-    /// enough to pick a form without knowing the language's rule.
-    var countAgreement: CountAgreement {
-        switch self {
-        case .ru, .uk: return .byLastDigits
-        case .sk: return .byWholeNumber
-        default: return .oneAndMany
-        }
-    }
+    var countAgreement: CountAgreement { .oneAndMany }
 
-    /// The language's own name, shown in its own script, the way macOS lists them.
     var displayName: String {
         switch self {
         case .enUS: return "English (US)"
-        case .ptBR: return "Português (Brasil)"
-        case .tr: return "Türkçe"
-        case .ru: return "Русский"
-        case .es: return "Español"
-        case .sk: return "Slovenčina"
-        case .de: return "Deutsch"
-        case .fr: return "Français"
-        case .it: return "Italiano"
-        case .ja: return "日本語"
-        case .ko: return "한국어"
-        case .zhHans: return "简体中文"
-        case .zhHK: return "繁體中文（香港）"
-        case .zhTW: return "繁體中文（台灣）"
-        case .uk: return "Українська"
         }
     }
 
-    /// Dates and times in this language, arranged the way System Settings
-    /// asks: region, 12- or 24-hour clock and first day of the week. A locale
-    /// made from the language alone would bring that language's own clock.
     func formattingLocale(system: Locale = .autoupdatingCurrent) -> Locale {
         var components = Locale.Components(identifier: rawValue)
         components.region = system.region
@@ -82,29 +31,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         return Locale(components: components)
     }
 
-    static var systemDefault: AppLanguage {
-        let preferred = Locale.preferredLanguages.first ?? "en"
-        let p = preferred.lowercased()
-
-        if p.hasPrefix("zh-hk") || p.hasPrefix("zh-hant-hk") {
-            return .zhHK
-        }
-
-        if p.hasPrefix("zh-tw") || p.hasPrefix("zh-hant-tw") || p.hasPrefix("zh-hant") {
-            return .zhTW
-        }
-
-        let matches: [(String, AppLanguage)] = [
-            ("pt", .ptBR), ("tr", .tr), ("ru", .ru), ("es", .es), ("sk", .sk), ("de", .de),
-            ("fr", .fr), ("it", .it), ("ja", .ja), ("ko", .ko), ("uk", .uk), ("zh", .zhHans),
-        ]
-        for (prefix, language) in matches where preferred.hasPrefix(prefix) { return language }
-        return .enUS
-    }
+    static var systemDefault: AppLanguage { .enUS }
 }
 
-/// Source of every user-facing string. Views observe this object so the whole
-/// interface re-renders immediately when the language changes.
 final class L10n: ObservableObject {
     static let shared = L10n()
 
@@ -115,28 +44,19 @@ final class L10n: ObservableObject {
     var s: Strings { Strings.localized(language) }
 
     private init() {
-        if let raw = UserDefaults.standard.string(forKey: DefaultsKey.language),
-           let saved = AppLanguage(rawValue: raw) {
-            language = saved
-        } else {
-            language = .systemDefault
-        }
+        language = .enUS
     }
+
 }
 
 extension Strings {
-    /// The catalog for a language other than the current one, as the
-    /// feature string tables offer theirs.
-    /// EVERYTHING is English only.
     static func localized(_ language: AppLanguage) -> Strings { .enUS }
 }
 
-/// Flat, compiler-checked catalog of UI strings. Adding a field here forces
-/// both translations to be provided.
 struct Strings {
     // MARK: Menu bar & context menu
     let statusIdleTooltip: String
-    let statusActiveUntil: String      // + time
+    let statusActiveUntil: String
     let statusActiveIndefinite: String
     let menuEnableAwake: String
     let menuDisableAwake: String
@@ -144,17 +64,12 @@ struct Strings {
     let menuSettings: String
     let menuAbout: String
     let menuQuit: String
-    // Standard application menu bar (App / Edit / Window) shown while one of the
-    // app's own windows is focused. Without it, an accessory app has no main menu
-    // and the standard shortcuts (Cmd+H/M/W/Q, Cmd+C/V/X/A) do nothing.
     let menuHide: String
     let menuHideOthers: String
     let menuShowAll: String
     let menuEdit: String
     let menuUndo: String
     let menuRedo: String
-    /// Named actions an icon-only control borrows so it can say what it
-    /// does. No feature owns these, because half a dozen already share them.
     let actionClear: String
     let actionRemove: String
     let actionBack: String
@@ -189,7 +104,7 @@ struct Strings {
 
     // MARK: Panel — keep awake card
     let keepAwakeTitle: String
-    let keepAwakeEndsIn: String        // + remaining
+    let keepAwakeEndsIn: String
     let keepAwakeUntilDisabled: String
     let keepAwakeNormalRules: String
     let keepAwakeUntilLabel: String
@@ -444,10 +359,10 @@ struct Strings {
     let cutCancel: String
     let cutDoneTitle: String
     let cutMovedSingular: String
-    let cutMovedPluralFormat: String      // + count
+    let cutMovedPluralFormat: String
     let cutSomeFailed: String
     let cutMovingTitle: String
-    let cutMovingCountFormat: String      // + position, total
+    let cutMovingCountFormat: String
 
     // MARK: Feature — quit on last window close
     let autoQuitName: String
@@ -485,12 +400,12 @@ struct Strings {
     let uninstallerScanning: String
     let uninstallerRemoving: String
     let uninstallerFoundTitle: String
-    let uninstallerSelectedFormat: String   // + selected, total
+    let uninstallerSelectedFormat: String
     let uninstallerRemove: String
     let uninstallerCancel: String
     let uninstallerConfirmationExpired: String
     let uninstallerDoneTitle: String
-    let uninstallerFreedFormat: String      // + size string
+    let uninstallerFreedFormat: String
     let uninstallerSomeFailed: String
     let uninstallerFailedNeedsFDA: String
     let uninstallerFailedMoreFormat: String
@@ -509,12 +424,12 @@ struct Strings {
     let uninstallerCommandBarFinderTitle: String
     let uninstallerSelectionUnavailable: String
     let uninstallerRefusedNotApp: String
-    let uninstallerRefusedSystemFormat: String        // + app name
-    let uninstallerRefusedSharedFormat: String        // + app name
-    let uninstallerRefusedNestedFormat: String        // + app name
-    let uninstallerRefusedSelfFormat: String          // + Advanced tab name
-    let uninstallerRefusedLinkFormat: String          // + app name
-    let uninstallerRefusedUnidentifiedFormat: String  // + app name
+    let uninstallerRefusedSystemFormat: String
+    let uninstallerRefusedSharedFormat: String
+    let uninstallerRefusedNestedFormat: String
+    let uninstallerRefusedSelfFormat: String
+    let uninstallerRefusedLinkFormat: String
+    let uninstallerRefusedUnidentifiedFormat: String
     let uninstallerPickerHiddenNote: String
 
     // MARK: Feature — URL cleaner
@@ -729,28 +644,23 @@ struct Strings {
     let shelfEmpty: String
     let shelfClearAll: String
     let shelfRemoveSelected: String
-    let shelfSelectedFormat: String      // + count
+    let shelfSelectedFormat: String
     let shelfHint: String
     let shelfItemImage: String
-    // Three forms, not two: Russian and Ukrainian agree a noun with the number
-    // in front of it as one, as two through four, and as five or more. Every other
-    // language here needs only the first and the last, and repeats the last
-    // in the middle slot. A pile always holds two or more, so the items count
-    // has no singular of its own.
-    let shelfTooltipItemsFormat: String      // + count, five or more
-    let shelfTooltipItemsFew: String         // + count, two through four
-    let shelfTooltipImageSingular: String    // + count == 1
-    let shelfTooltipImageFew: String         // + count, two through four
-    let shelfTooltipImagePlural: String      // + count
-    let shelfTooltipFileSingular: String     // + count == 1
-    let shelfTooltipFileFew: String          // + count, two through four
-    let shelfTooltipFilePlural: String       // + count
-    let shelfTooltipNoteSingular: String     // + count == 1
-    let shelfTooltipNoteFew: String          // + count, two through four
-    let shelfTooltipNotePlural: String       // + count
-    let shelfTooltipLinkSingular: String     // + count == 1
-    let shelfTooltipLinkFew: String          // + count, two through four
-    let shelfTooltipLinkPlural: String       // + count
+    let shelfTooltipItemsFormat: String
+    let shelfTooltipItemsFew: String
+    let shelfTooltipImageSingular: String
+    let shelfTooltipImageFew: String
+    let shelfTooltipImagePlural: String
+    let shelfTooltipFileSingular: String
+    let shelfTooltipFileFew: String
+    let shelfTooltipFilePlural: String
+    let shelfTooltipNoteSingular: String
+    let shelfTooltipNoteFew: String
+    let shelfTooltipNotePlural: String
+    let shelfTooltipLinkSingular: String
+    let shelfTooltipLinkFew: String
+    let shelfTooltipLinkPlural: String
     let shelfActionOpen: String
     let shelfActionOpenWith: String
     let shelfActionShare: String
@@ -820,7 +730,7 @@ struct Strings {
     let checkNowButton: String
     let updateChecking: String
     let updateUpToDate: String
-    let updateAvailablePrefix: String  // + version
+    let updateAvailablePrefix: String
     let updateInstallButton: String
     let updateDownloading: String
     let updateInstalling: String
@@ -848,8 +758,6 @@ struct Strings {
     let secureInputUnattributed: String
     let secureInputUnidentified: String
     let secureInputRevealFormat: String
-    // The switcher page's captions: there secure input costs the switcher its
-    // keys rather than typing, and ⌘Tab reaches the macOS switcher until it ends.
     let secureInputSwitcherHeldFormat: String
     let secureInputSwitcherUnattributed: String
     let secureInputSwitcherUnidentified: String
@@ -982,7 +890,7 @@ struct Strings {
     let powerOnBattery: String
     let powerPluggedIn: String
     let powerUnavailable: String
-    let powerAdapterMaxFormat: String   // + rated watts, e.g. "30 W max"
+    let powerAdapterMaxFormat: String
     let monitorShowGPU: String
     let monitorShowCPUTemperature: String
     let monitorShowGPUTemperature: String
@@ -1094,7 +1002,6 @@ struct Strings {
     let supportIntroMessage: String
     let supportIntroStarButton: String
     let supportIntroStarMessage: String
-    /// A quiet line under the donation button inviting a GitHub star instead.
     let supportIntroStarHint: String
     let supportIntroCoffeeButton: String
     let supportIntroLaterButton: String
@@ -1118,7 +1025,7 @@ struct Strings {
     let showMenuBarIcon: String
     let menuBarIconStillHiddenTitle: String
     let menuBarIconStillHiddenBody: String
-    let menuBarIconManagerHintFormat: String  // + manager name (twice)
+    let menuBarIconManagerHintFormat: String
     let menuBarIconDisallowedBody: String
 
     // MARK: Configurable shortcuts
@@ -1188,16 +1095,16 @@ struct Strings {
     let cleanerLoginItemsCaption: String
     let cleanerLeftoversCaption: String
     let cleanerOtherCachesCaption: String
-    let cleanerCleanSizeFormat: String      // + size string
+    let cleanerCleanSizeFormat: String
     let cleanerScheduleTitle: String
     let cleanerScheduleOff: String
     let cleanerScheduleDaily: String
     let cleanerScheduleWeekly: String
     let cleanerScheduleCaption: String
-    let cleanerScheduleLastFormat: String   // + size string
-    let cleanerAutoNotificationFormat: String  // + size string
-    let cleanerScheduleNextFormat: String   // + relative date and time
-    let cleanerScheduleRanFormat: String    // + relative date and time
+    let cleanerScheduleLastFormat: String
+    let cleanerAutoNotificationFormat: String
+    let cleanerScheduleNextFormat: String
+    let cleanerScheduleRanFormat: String
     let cleanerScheduleNotifyToggle: String
     let cleanerNotifDenied: String
     let cleanerNotifOpenSettings: String
@@ -1246,7 +1153,7 @@ struct Strings {
     let urlCleanerRulesCoverageCaption: String
     let urlCleanerRulesAllSites: String
     let urlCleanerRulesCountSingular: String
-    let urlCleanerRulesCountPluralFormat: String   // + count
+    let urlCleanerRulesCountPluralFormat: String
     let urlCleanerRulesAddSite: String
     let urlCleanerRulesParameterPlaceholder: String
     let urlCleanerRulesMatchCaption: String
@@ -1254,7 +1161,7 @@ struct Strings {
     let urlCleanerRulesRemoveButton: String
     let urlCleanerRulesRemoveSiteButton: String
     let urlCleanerRulesRestoreSiteButton: String
-    let urlCleanerRemovedFormat: String            // + comma separated names
+    let urlCleanerRemovedFormat: String
     let switcherSearchPin: String
     let switcherSearchPinCaption: String
     let invertVerticalScroll: String

@@ -3,23 +3,16 @@
 
 import Foundation
 
-/// Only the installed dictionary's playback vocabulary is accepted. Event codes
-/// are data supplied by that dictionary, never inferred from an application's name.
 struct NotchMusicAutomationCapabilities: Equatable {
     struct Event: Equatable { let eventClass: UInt32; let eventID: UInt32 }
     struct Position: Equatable { let code: UInt32; let integer: Bool }
     var commands: [String: Event] = [:]
     var position: Position?
-    /// The player's own shuffle switch, a writable Boolean of the application.
     var shuffle: UInt32?
-    /// Some players' read-only answer to whether the songs playing can be
-    /// shuffled at all. Players that do not declare it always can.
     var shuffleAllowed: UInt32?
 
     var canToggle: Bool { commands["playpause"] != nil || (commands["play"] != nil && commands["pause"] != nil) }
 
-    /// Starts playback rather than toggling it, unless the dictionary only
-    /// declares the toggle.
     var playCommand: Event? { commands["play"] ?? commands["playpause"] }
 
     func event(for command: NotchPlaybackCommand, isPlaying: Bool) -> Event? {
@@ -73,8 +66,6 @@ private final class MusicDictionaryReader: NSObject, XMLParserDelegate {
     private var seenShuffle = false
     private var seenShuffleAllowed = false
     private let names: Set<String> = ["playpause", "play", "pause", "next track", "previous track"]
-    /// Players call it "shuffling" or "shuffle enabled". A read-only
-    /// "shuffling enabled" says whether shuffle is offered at all.
     private let shuffleNames: Set<String> = ["shuffling", "shuffle enabled"]
 
     private func code(_ value: String?) -> UInt32? {

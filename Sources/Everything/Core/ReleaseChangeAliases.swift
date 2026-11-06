@@ -3,30 +3,6 @@
 
 import Foundation
 
-/// Finds which features a CHANGELOG bullet is about, so the post-update
-/// "What's new" window can show each person only the changes for the
-/// features they use. Input is one bullet as ReleaseNotes cleans it (no
-/// links, `**` or backticks) plus its `###` section title.
-///
-/// Rules, in the order they apply:
-/// 1. Ignored phrases ("wheel notch", "Activity Monitor") are claimed first.
-///    They look like an alias but mean something else, and never count as
-///    island context.
-/// 2. Aliases match whole words. A plain alias ignores letter case; `.exact`
-///    must match its capitalization ("Watch" the feature, not "watch" the
-///    verb). Longer aliases go first and claim their words, so "Dock
-///    previews" is never also read as a shorter alias inside it.
-/// 3. `.island` aliases count only in an island context: the section title
-///    or the bullet says island, islands, notch, camera cutout or beside the
-///    camera. "calendar", "timer" or "downloads" alone are too common.
-/// 4. Family aliases ("System monitor", "mouse settings") name a whole
-///    Settings page. They report every feature of the family, but only when
-///    no feature of that page matched on its own.
-/// 5. The section title is matched the same way, so "### Dynamic Island"
-///    implies `.notch` and "### Added (switcher)" implies `.switcher`.
-/// A bullet that matches nothing is app-wide (Settings, menu bar panel,
-/// languages, updates). Dynamic Island extensions are reported as
-/// themselves; the window rolls them up under the Dynamic Island row.
 enum ReleaseChangeAliases {
     struct Alias: Hashable, ExpressibleByStringLiteral {
         let text: String
@@ -43,17 +19,14 @@ enum ReleaseChangeAliases {
             self.init(value)
         }
 
-        /// Matches only with this exact capitalization.
         static func exact(_ text: String) -> Alias { Alias(text, matchesCase: true) }
 
-        /// Matches only when the bullet or its section is about the island.
         static func island(_ text: String) -> Alias { Alias(text, needsIsland: true) }
     }
 
     struct Family {
         let aliases: [Alias]
         let members: [AppFeature]
-        /// Any of these matching on its own makes the family alias redundant.
         let suppressedBy: Set<AppFeature>
     }
 
@@ -211,12 +184,9 @@ enum ReleaseChangeAliases {
         "recording a keybind", "keeps recording", "incompatible recordings", "activity monitor", "media key",
         "media keys"]
     static let islandWords: [String] = ["island", "islands", "notch", "camera cutout", "beside the camera"]
-    /// Parts of the app everyone has, whatever features are installed.
     static let appWidePhrases: [String] = ["menu bar panel", "settings sidebar", "settings window", "features page",
         "custom menu bar icon"]
 
-    /// Features the bullet is about, in AppFeature declaration order.
-    /// Empty means an app-wide change.
     static func features(inBullet text: String, section: String) -> [AppFeature] {
         let sectionMatch = match(section, islandContext: nil)
         let textMatch = match(text, islandContext: sectionMatch.islandContext ? true : nil)
@@ -228,16 +198,12 @@ enum ReleaseChangeAliases {
                 found.formUnion(family.members)
             }
         }
-        // Under a Dynamic Island section, other tools are named as a place
-        // or a part of the island ("can carry the Command Bar out of the
-        // island"), not as what changed.
         if sectionMatch.features.contains(.notch) {
             found = found.filter { $0.group == .dynamicIsland }
         }
         return AppFeature.allCases.filter { found.contains($0) }
     }
 
-    /// Whether the bullet also changes something every person has.
     static func mentionsAppWide(_ text: String) -> Bool {
         let folded = Scalars(text).folded
         return appWidePatterns.contains { !ranges(of: $0.scalars, in: folded).isEmpty }
@@ -250,9 +216,6 @@ enum ReleaseChangeAliases {
         let family: Int?
     }
 
-    /// An alias as scalars, plus its first word: an alias can only match
-    /// where that word stands on its own, so most aliases are ruled out by
-    /// one set lookup instead of a scan.
     private struct Pattern {
         let scalars: [Unicode.Scalar]
         let firstWord: String
@@ -266,7 +229,6 @@ enum ReleaseChangeAliases {
         }
     }
 
-    /// Every alias once, longest first; ties keep declaration order.
     private static let entries: [Entry] = {
         var result: [Entry] = []
         var positions: [Alias: Int] = [:]
@@ -297,9 +259,6 @@ enum ReleaseChangeAliases {
     private static let islandPatterns = islandWords.map { Pattern(Alias($0)) }
     private static let appWidePatterns = appWidePhrases.map { Pattern(Alias($0)) }
 
-    /// The text as Unicode scalars, plus a copy with ASCII letters lowercased.
-    /// Folding only ASCII keeps both copies the same length, and every alias
-    /// is ASCII, so ranges from either copy line up.
     private struct Scalars {
         let original: [Unicode.Scalar]
         let folded: [Unicode.Scalar]
@@ -371,7 +330,6 @@ enum ReleaseChangeAliases {
         return (features, familyHits, islandContext)
     }
 
-    /// Whole-word occurrences, scanning left to right without overlaps.
     private static func ranges(of pattern: [Unicode.Scalar], in text: [Unicode.Scalar]) -> [Range<Int>] {
         guard !pattern.isEmpty, pattern.count <= text.count else { return [] }
         var result: [Range<Int>] = []

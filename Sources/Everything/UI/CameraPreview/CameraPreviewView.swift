@@ -4,13 +4,8 @@
 import AVFoundation
 import SwiftUI
 
-/// The floating mirror: the live camera image with a camera picker that
-/// appears on hover when more than one camera is around. Esc, a click
-/// anywhere else or switching to the meeting app closes it.
 struct CameraPreviewView: View {
     var size = CGSize(width: 320, height: 240)
-    /// The picker over the image on hover. The island turns it off: its top
-    /// row holds the picker and the stop button, clear of the image.
     var showsCameraMenu = true
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var service = CameraPreviewService.shared
@@ -33,8 +28,6 @@ struct CameraPreviewView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
-        // The surface is always black, so the controls (spinner, menu,
-        // buttons) must draw for a dark background in either system look.
         .environment(\.colorScheme, .dark)
         .onHover { hovering = $0 }
     }
@@ -75,8 +68,6 @@ struct CameraPreviewView: View {
     @ViewBuilder
     private var controls: some View {
         if showsMenu {
-            // A camera name too long for the image leaves the picker its
-            // icon, so it is never cut off at the image's edges.
             ViewThatFits(in: .horizontal) {
                 cameraMenu(showsName: true)
                 cameraMenu(showsName: false)
@@ -145,9 +136,6 @@ struct CameraPreviewView: View {
     }
 }
 
-/// Hosts the AVCaptureVideoPreviewLayer. The mirror flip lives on the layer's
-/// connection, which only exists once the session has its input, so it is
-/// (re)applied on every update.
 private struct CameraLayerView: NSViewRepresentable {
     let session: AVCaptureSession
 
@@ -166,8 +154,6 @@ private struct CameraLayerView: NSViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) { nil }
 
-        /// A mirror shows what a mirror would: the image flipped, on every
-        /// camera, the same thing Photo Booth does.
         func applyMirroring() {
             guard let connection = previewLayer.connection,
                   connection.isVideoMirroringSupported

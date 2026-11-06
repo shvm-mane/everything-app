@@ -3,9 +3,6 @@
 
 import SwiftUI
 
-/// A scrolling page fades where more of it lies beyond an edge, so a card is
-/// never sliced by a hard line. At rest at the start there is nothing to fade,
-/// and the last row at the end stays clear. Earlier systems keep the hard edge.
 struct NotchScrollEdgeFade: ViewModifier {
     var axis: Axis = .vertical
     var length: CGFloat = 16
@@ -47,7 +44,6 @@ struct NotchScrollEdgeFade: ViewModifier {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: beyondEnd)
     }
 
-    /// Erases the mask toward the edge it sits on.
     private func fade(toStart: Bool) -> some View {
         let vertical = axis == .vertical
         let from: UnitPoint = vertical ? (toStart ? .top : .bottom) : (toStart ? .leading : .trailing)

@@ -4,24 +4,13 @@
 import AppKit
 import QuartzCore
 
-/// The small pill that shows recording time and keeps pause and stop reachable.
-///
-/// It floats instead of living in the menu bar on purpose: a menu bar that is
-/// full drops the items that do not fit, and the one control that ends a
-/// recording can never be the one that disappears. It is one of this app's own
-/// windows, so the capture filter excludes it and it never shows up inside the
-/// video.
 final class RecorderIndicator {
-
     private var panel: NSPanel?
     private var pill: PillView?
     private var regionGuide: NSPanel?
     private let onPause: () -> Void
     private let onStop: () -> Void
 
-    /// The window the capture has to leave out. Everything else this app puts
-    /// on screen, the panel, the settings, the command bar, belongs in the
-    /// recording: showing the app itself is a thing people record.
     var excludedWindowNumbers: [Int] {
         [panel?.windowNumber, regionGuide?.windowNumber].compactMap { number in
             guard let number, number > 0 else { return nil }
@@ -34,8 +23,6 @@ final class RecorderIndicator {
         self.onStop = onStop
     }
 
-    /// Keeps the chosen area visible without trapping clicks. The panel is
-    /// app-owned capture chrome, so the recorder leaves it out of the video.
     func showRegionGuide(for region: RecorderSupport.Region) {
         guard regionGuide == nil, region.windowID == nil,
               let screen = NSScreen.screens.first(where: { $0.displayID == region.displayID })
@@ -68,8 +55,6 @@ final class RecorderIndicator {
         regionGuide = panel
     }
 
-    /// Shows the pill centered under the menu bar of the screen being
-    /// recorded, so it sits where the eye already expects status.
     func show(on screen: NSScreen?,
               tooltip: String,
               pauseTooltip: String,
@@ -270,7 +255,6 @@ final class RecorderIndicator {
 
         private func addPulse() {
             guard dot.animation(forKey: "pulse") == nil else { return }
-            // Core Animation keeps the live state visible without waking the app.
             let pulse = CABasicAnimation(keyPath: "opacity")
             pulse.fromValue = 1
             pulse.toValue = 0.28

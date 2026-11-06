@@ -21,15 +21,7 @@ final class DiskSampler {
     private var sessionTotals: [String: DiskIOCounters] = [:]
     private var metadataCache: [String: (metadata: DiskMetadata, updatedAt: TimeInterval, isFull: Bool)] = [:]
     private static let metadataRefreshInterval: TimeInterval = 30
-    /// Panel closed: identity metadata only changes on (re)mount, so a full
-    /// lookup stays reusable for a long time; the hourly re-run self-heals
-    /// remounts that swapped BSD names while the panel never opened.
     private static let backgroundMetadataRefreshInterval: TimeInterval = 3600
-    /// Widest sample gap that still yields a rate: must clear the slowest
-    /// background disk cadence (10 s nominal) plus the timer's tolerance and
-    /// scheduling slop, or roughly half the background samples get discarded
-    /// and their bytes vanish from the session totals. Sleep/pause gaps are
-    /// minutes long and still fall outside.
     private static let maxGap: TimeInterval = 15
 
     func sample(now: TimeInterval, refreshMetadata: Bool = true) -> DiskReading {
@@ -105,14 +97,6 @@ final class DiskSampler {
            cached.isFull || !refresh {
             return cached.metadata
         }
-        // Panel closed: keep reusing the last full lookup instead of building a
-        // lightweight identity. Synthesized APFS BSD names carry no
-        // IOBlockStorageDriver statistics (they live on the physical store, e.g.
-        // disk0), so a lightweight identity would zero the IO metric and fork
-        // session totals under a new disk ID. Capacity is read separately on
-        // every sample and never falls back to this identity cache, even when
-        // the current free or used count is zero. A background cold start pays
-        // a single diskutil run per volume.
         if !refresh,
            let cached = metadataCache[volume.mountPath],
            cached.isFull,
@@ -169,8 +153,6 @@ final class DiskSampler {
                   values.volumeIsLocal != false,
                   let total = positiveUInt(values.volumeTotalCapacity),
                   total > 0 else { return nil }
-            // Missing capacity is not evidence that a volume is full. As with
-            // a missing total, leave it out until a current reading is available.
             guard let capacity = DiskSupport.capacity(
                 total: total,
                 rawFree: positiveUInt(values.volumeAvailableCapacity),
@@ -214,10 +196,6 @@ final class DiskSampler {
         return (bsdName, fileSystemType)
     }
 
-    /// Free space counting what the system would purge to make room. Only a
-    /// writable volume can answer it: asking a mounted image costs a round
-    /// trip to the purge service and comes back as an error on every sample,
-    /// which is what filled the log while a disk image was attached.
     private static func importantFree(for url: URL, isReadOnly: Bool) -> UInt64? {
         guard !isReadOnly,
               let values = try? url.resourceValues(

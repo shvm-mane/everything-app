@@ -3,23 +3,17 @@
 
 import SwiftUI
 
-/// Feedback keeps the central camera area clear on physical and simulated notches.
 struct NotchNoticeView: View {
     let notice: NotchNotice
     let geometry: NotchGeometry
-    /// The window's own layer shows the companion stepping in from its rest
-    /// and out again, and the notice leaves its own out meanwhile.
     var hidesMascot = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var wings: NotchNoticeWings { notice.wings(in: geometry) }
     private var tint: Color {
         switch notice.event {
-        // A warning reads as one in any agent's color; other AI notices wear it.
         case .agents: return notice.symbol.hasPrefix("exclamationmark") ? .orange : notice.agent?.tint ?? .white
-        // The timer's notice keeps the orange its strip and page wear.
         case .timer: return .orange
-        // Everything: charging green, Low Power Mode yellow, low red.
         case .battery:
             if notice.symbol.contains("bolt") { return .green }
             if ProcessInfo.processInfo.isLowPowerModeEnabled { return .yellow }
@@ -28,10 +22,7 @@ struct NotchNoticeView: View {
         default: return .white
         }
     }
-    /// The words of a timer's notice share its orange too.
     private var textTint: Color { notice.event == .timer ? .orange : .white }
-    /// With the companion on, it stands in for the symbol, and reacts unless
-    /// its reactions are off.
     private var companionReaction: NotchMascotReaction? {
         NotchMascotSupport.isEnabled() ? notice.mascot : nil
     }
@@ -52,17 +43,10 @@ struct NotchNoticeView: View {
         }
         .foregroundStyle(.white)
         .frame(height: geometry.stripHeight)
-        // Each side is as wide as what it shows, so the island reaches
-        // further toward the wider one and the camera's gap stays over it.
         .offset(x: (wings.trailing - wings.leading) / 2)
-        // A new reading that needs another width, as a level passing 99%,
-        // moves its mark and meter with the island's steady ease, not ahead of it.
-        // Keyed on the notice's own widths, so a display change does not ease it.
         .animation(reduceMotion ? nil : .spring(duration: NotchMotion.steadyWidth.duration, bounce: 0),
                    value: notice.preferredWings)
         .transaction { $0.disablesAnimations = false }
-        // Another kind of notice is drawn anew at its place, as the island
-        // springs to it, rather than easing out of the last one's layout.
         .id(notice.event)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(notice.accessibilityText)
@@ -79,21 +63,14 @@ struct NotchNoticeView: View {
             }
         } else {
             HStack(spacing: 8) {
-                // Everything: the battery's icon sits on the right, after its percentage.
                 if notice.event != .battery {
                 Group {
-                    // A notice about the agent itself wears its mark, and a
-                    // warning keeps a symbol that says what happened.
                     if let reaction = companionReaction {
                         let size = NotchMascotSupport.noticeSize
                         NotchMascotView(look: NotchMascotSupport.look(), mood: NotchService.shared.mascotRestingMood,
                                         size: size, reaction: NotchMascotSupport.reacts() ? reaction : nil)
                             .frame(width: size, height: size)
-                            // Half a point low, on the line it rests on beside
-                            // the camera, so it steps in and out with no jump.
                             .offset(y: 0.5)
-                            // One notice in place of another plays its own reaction,
-                            // swapped at once: two of it crossfading in one place dimmed it.
                             .id("\(notice.event)|\(notice.title)|\(notice.detail)|\(reaction.rawValue)")
                             .transition(.identity)
                             .opacity(hidesMascot ? 0 : 1)
@@ -118,8 +95,6 @@ struct NotchNoticeView: View {
                     .truncationMode(notice.event == .track ? .tail : .middle)
                     .contentTransition(.numericText())
             }
-            // A level's mark keeps its place while a shorter reading leaves
-            // room it holds for the widest.
             .frame(maxWidth: .infinity, alignment: notice.readsFromEnds || notice.level != nil ? .leading : .trailing)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: notice.detail)
             .transaction { $0.disablesAnimations = false }
@@ -128,8 +103,6 @@ struct NotchNoticeView: View {
 
     @ViewBuilder private var trailing: some View {
         if let content = notice.notification {
-            // At the far end, as far from it as the sender is from the other
-            // one, with the air that fits it beside the camera.
             Text(content.compactDetail)
                 .font(Font(NotchNotificationBannerLayout.messageFont as CTFont))
                 .foregroundStyle(.white.opacity(0.85))
@@ -162,7 +135,6 @@ struct NotchNoticeView: View {
     }
 }
 
-/// The new song's cover, read as it arrives: it often lands after the title.
 private struct NotchTrackArtwork: View {
     @ObservedObject private var music = NotchMusicService.shared
     let size: CGFloat
@@ -170,11 +142,8 @@ private struct NotchTrackArtwork: View {
     var body: some View { NotchArtwork(image: music.artwork, size: size, source: music.playback?.track) }
 }
 
-/// Level feedback occupies the header while the current page stays usable.
 struct NotchExpandedLevelView: View {
     let notice: NotchNotice
-    /// The percentage after the meter. A side too narrow for it, as across
-    /// from the player's cover, keeps the glyph and a meter long enough to read.
     var showsDetail = true
 
     var body: some View {

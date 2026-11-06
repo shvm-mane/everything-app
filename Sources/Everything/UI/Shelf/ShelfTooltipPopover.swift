@@ -3,16 +3,6 @@
 
 import AppKit
 
-/// A hand-rolled stand-in for `NSView.toolTip`, used only for Shelf tiles.
-///
-/// The Shelf panel is a `.nonactivatingPanel` so dragging a file into it
-/// never steals focus from whatever app the file came from. AppKit's own
-/// tooltip manager, it turns out, only displays over a key window (or an
-/// active app) - it never has a reason to become either before the user
-/// clicks something, so native tooltips silently never appeared. This
-/// panel orders itself front without ever calling `makeKey()` or
-/// activating the app, so it shows on a plain hover with none of that
-/// side effect.
 final class ShelfTooltipPopover {
     static let shared = ShelfTooltipPopover()
 
@@ -28,13 +18,6 @@ final class ShelfTooltipPopover {
 
     private init() {}
 
-    /// `owner` anchors both the eventual position and a liveness check: the
-    /// delay means real time passes between scheduling and showing, during
-    /// which the Shelf can close without ever delivering `mouseExited` to
-    /// `owner` (observed happening when the mouse leaves the panel and the
-    /// panel hides in the same stroke) - so this re-checks `owner.window`
-    /// is still visible right before showing, rather than trusting that a
-    /// cancellation would have arrived by then.
     func scheduleShow(text: String, for owner: NSView) {
         cancelPending()
         let work = DispatchWorkItem { [weak self, weak owner] in
@@ -72,16 +55,10 @@ final class ShelfTooltipPopover {
         textView.frame = NSRect(x: Self.margin, y: Self.margin, width: textSize.width, height: textSize.height)
         panel.contentView?.frame = NSRect(origin: .zero, size: size)
 
-        // Anchored to the tile's own frame, not the live cursor position:
-        // the cursor may have moved anywhere in the time since the hover
-        // that scheduled this (including onto a different app entirely).
         let ownerScreenFrame = ownerWindow.convertToScreen(owner.convert(owner.bounds, to: nil))
         let screen = ownerWindow.screen?.visibleFrame ?? NSScreen.pointerVisibleFrame
         var origin = NSPoint(x: ownerScreenFrame.minX, y: ownerScreenFrame.minY - Self.gap - size.height)
         if origin.y < screen.minY {
-            // Not enough room below the tile - flip above it instead of
-            // letting the clamp below just pin it in place, which would
-            // otherwise overlap the bottom of the tile it's describing.
             origin.y = ownerScreenFrame.maxY + Self.gap
         }
         origin.x = min(max(screen.minX, origin.x), screen.maxX - size.width)
@@ -118,14 +95,6 @@ final class ShelfTooltipPopover {
         return panel
     }
 
-    /// Draws its text directly rather than going through NSTextField/NSCell:
-    /// the cell-based label this replaced kept rendering a truncated first
-    /// portion of its own verified-correct stringValue (confirmed via
-    /// stringValue, attributedStringValue and cell.title all matching, a
-    /// frame sized wider than the measured text needed, and an explicit
-    /// forced display pass - none of it changed what actually painted).
-    /// NSString.draw(in:withAttributes:) has none of that cell machinery to
-    /// go wrong.
     private final class TextView: NSView {
         var text: String = "" {
             didSet { needsDisplay = true }

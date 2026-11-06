@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// Reads update metadata only. Installation stays with the app that owns
-/// the feed, including its signature, license and rollout checks.
 enum AppUpdateFeedSupport {
     enum Format: Hashable { case appcast, manifest }
     enum LoadResult {
@@ -35,8 +33,6 @@ enum AppUpdateFeedSupport {
 
     static let byteLimit = 2 * 1_024 * 1_024
 
-    /// A missing feed can defer to the catalog only if it can check that app.
-    /// Other refusals and errors still leave the check incomplete.
     static func feedIsAbsent(statusCode: Int?) -> Bool {
         statusCode == 404 || statusCode == 410
     }
@@ -80,8 +76,6 @@ enum AppUpdateFeedSupport {
         }
     }
 
-    /// Only the flat scalar fields this metadata format defines are read.
-    /// Nested configuration, tags and aliases never become request options.
     static func scalars(_ text: String) -> [String: String]? {
         var fields: [String: String] = [:]
         for line in text.split(whereSeparator: \.isNewline) {

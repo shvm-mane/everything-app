@@ -4,7 +4,6 @@
 import Combine
 import Foundation
 
-/// Apps that temporarily turn off every Window Layout input while focused.
 final class WindowLayoutIgnoredApps: ObservableObject {
     static let shared = WindowLayoutIgnoredApps()
 
@@ -42,9 +41,6 @@ final class WindowLayoutIgnoredApps: ObservableObject {
         Self.matches(bundleID: bundleID, executablePath: executablePath(), apps: apps)
     }
 
-    /// A program listed by its path is matched by that path even when it
-    /// reports a bundle identifier, as a JVM does once AWT registers it
-    /// (issue #1009). The path is read only while the list names one.
     static func matches(bundleID: String?, executablePath: @autoclosure () -> String?, apps: [String]) -> Bool {
         MouseAppExceptionSupport.identities(
             bundleID: bundleID,

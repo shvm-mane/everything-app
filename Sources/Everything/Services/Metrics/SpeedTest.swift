@@ -4,13 +4,6 @@
 import Combine
 import Foundation
 
-/// A user-triggered internet speed test: latency, then download, then upload,
-/// using Cloudflare's public speed endpoints (the same backend speed.cloudflare.com
-/// uses). Time-boxed so it stays bounded on any connection. No third-party
-/// framework; no user data ever leaves the machine (the upload body is zeros).
-///
-/// All mutable state is touched only on the session's serial delegate queue;
-/// published values are pushed to the main thread.
 final class SpeedTest: NSObject, ObservableObject {
     static let shared = SpeedTest()
 
@@ -37,17 +30,14 @@ final class SpeedTest: NSObject, ObservableObject {
     private let sampleSeconds: TimeInterval
     private let clock: Clock
     private let scheduleTimeBox: TimeBoxScheduler
-    // Cloudflare's __down caps the size just under 100 MB (100 MB+ returns ~nothing),
-    // so request under that and loop chunks back-to-back until the time box — that
-    // keeps a fast link's pipe full for a full measurement window.
     private let downloadBytes = 90_000_000
     private let uploadBytes = 100_000_000
 
     private let queue = OperationQueue()
     private var session: URLSession!
     private var task: URLSessionTask?
-    private var kind: Kind = .none           // touched only on `queue`
-    private var transferred: Int64 = 0       // touched only on `queue`
+    private var kind: Kind = .none
+    private var transferred: Int64 = 0
     private var startedAt: TimeInterval = 0
     private var finished = false
     private var generation = 0
@@ -89,7 +79,7 @@ final class SpeedTest: NSObject, ObservableObject {
             self.task?.cancel(); self.task = nil
             self.kind = .none
             self.finished = true
-            self.setPhase(.idle)   // inside the op, so it orders after any pending transition
+            self.setPhase(.idle)
         }
     }
 
@@ -112,8 +102,6 @@ final class SpeedTest: NSObject, ObservableObject {
         task = session.dataTask(with: url) { [weak self] _, response, error in
             guard let self else { return }
             let rtt = (self.clock() - started) * 1000
-            // Continue on the delegate queue so the transfer phase's `kind` is set
-            // there too — otherwise the byte-counting delegate could miss it.
             self.queue.addOperation {
                 guard self.generation == generation else { return }
                 guard error == nil, Self.isSuccessful(response) else {
@@ -137,7 +125,7 @@ final class SpeedTest: NSObject, ObservableObject {
         startedAt = clock()
 
         let generation = self.generation
-        cancelTimeBox?()   // defensive: never leave a previous time box armed
+        cancelTimeBox?()
         cancelTimeBox = scheduleTimeBox(queue, sampleSeconds) { [weak self] in
             guard let self, self.generation == generation else { return }
             self.finishTransfer(timedOut: true)
@@ -145,8 +133,6 @@ final class SpeedTest: NSObject, ObservableObject {
         beginChunk()
     }
 
-    /// Starts one transfer. Download loops these (each capped under Cloudflare's
-    /// limit) until the time box; upload is a single body.
     private func beginChunk() {
         guard !finished else { return }
         let task: URLSessionTask
@@ -228,15 +214,13 @@ extension SpeedTest: URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        // Ignore a stale completion from a task we already moved past (e.g. the
-        // download chunk the time box just cancelled, arriving after upload began).
         guard task === self.task, kind != .none else { return }
         if let error = error as NSError?, error.code != NSURLErrorCancelled, transferred == 0 {
             fail(error)
             return
         }
         if kind == .download, !finished {
-            beginChunk()   // keep the pipe full until the time box
+            beginChunk()
         } else {
             finishTransfer(timedOut: false)
         }

@@ -105,8 +105,6 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
         case .bottomThird: return 63
         case .topTwoThirds: return 64
         case .bottomTwoThirds: return 65
-        // 56 went to center two thirds upstream, so the top quarter takes the
-        // next free id rather than moving an already-registered shortcut.
         case .topQuarter: return 66
         case .leftQuarter: return 67
         case .leftMiddleQuarter: return 68
@@ -166,9 +164,6 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Existing actions keep their established shortcuts. New actions start
-    /// unassigned so enabling Window Layout never claims extra system-wide
-    /// combinations without an explicit choice.
     var defaultShortcut: GlobalShortcut? {
         switch self {
         case .leftHalf: return .windowLayoutLeftDefault
@@ -194,19 +189,12 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
                 .topQuarter, .upperMiddleQuarter, .lowerMiddleQuarter, .bottomQuarter,
                 .leftQuarter, .leftMiddleQuarter, .rightMiddleQuarter, .rightQuarter,
                 .marginMaximize, .fullScreen, .previousDisplay, .centerHalf, .centerTwoThirds:
-            // New actions must never claim a system-wide combination unasked.
             return nil
         }
     }
 
-    /// Stored value meaning the user removed this action's shortcut (issue
-    /// #169): most people use a handful of layouts, and every registered
-    /// hotkey occupies a system-wide key combo other apps then cannot use.
     static let clearedShortcutStorageValue = "none"
 
-    /// Resolves a stored shortcut value: the saved shortcut, the default when
-    /// nothing was saved or the value is corrupt, or nil when the user
-    /// explicitly cleared it.
     static func resolvedShortcut(storedValue: String?,
                                  defaultShortcut: GlobalShortcut?) -> GlobalShortcut? {
         guard let storedValue else { return defaultShortcut }
@@ -214,23 +202,16 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
         return GlobalShortcut(storageValue: storedValue) ?? defaultShortcut
     }
 
-    /// The action's effective shortcut; nil when the user removed it.
     var savedShortcut: GlobalShortcut? {
         Self.resolvedShortcut(storedValue: UserDefaults.standard.string(forKey: shortcutKey),
                               defaultShortcut: defaultShortcut)
     }
 
-    /// Which actions the user hid from the layout grid, parsed from the
-    /// stored comma-separated list. Unknown names are dropped, so a value
-    /// written by a newer version never corrupts the set. Hiding only
-    /// declutters the grid; an assigned shortcut keeps working.
     static func hiddenActions(from storedValue: String) -> Set<WindowLayoutAction> {
         Set(storedValue.split(separator: ",")
             .compactMap { WindowLayoutAction(rawValue: $0.trimmingCharacters(in: .whitespaces)) })
     }
 
-    /// The storage value for a hidden set: sorted so equal sets always
-    /// serialize identically.
     static func hiddenActionsStorageValue(_ actions: Set<WindowLayoutAction>) -> String {
         actions.map(\.rawValue).sorted().joined(separator: ",")
     }
@@ -281,7 +262,6 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Shared by every place that presents an individual placement action.
     var symbolName: String {
         switch self {
         case .leftHalf: return "rectangle.lefthalf.inset.filled"
@@ -324,8 +304,6 @@ enum WindowLayoutAction: String, CaseIterable, Identifiable {
     }
 }
 
-/// The configurable spacing around snapped windows (issue #1068). Values are
-/// in pixels, offering standard spacing presets (0 to 128 px).
 enum WindowLayoutGaps {
     static let presets: [Int] = [0, 8, 16, 32, 64, 128]
 
@@ -353,9 +331,6 @@ enum WindowLayoutMargin {
     }
 }
 
-/// Whether a repeated Left or Right cycles the window through half, two thirds
-/// and one third of the same display instead of
-/// pushing it onto the display beside it.
 enum WindowLayoutSideRepeat {
     static var cyclesThirds: Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.windowLayoutSideRepeatCyclesThirds)
@@ -367,9 +342,6 @@ enum WindowLayoutGeometry {
         case left, right, up, down
     }
 
-    /// Points the settle path allows a window to miss its target by. Display
-    /// transfer uses the same value to treat a window as filling the source
-    /// or flush with an edge, so tuning settle cannot split those checks.
     static let frameTolerance: CGFloat = 8
 
     static func effectiveAction(for action: WindowLayoutAction,
@@ -386,9 +358,6 @@ enum WindowLayoutGeometry {
         return action
     }
 
-    /// The window size cycle for a repeated side action: half, then
-    /// two thirds, then one third, then back to the half. Only sizes reached
-    /// from the same side count, so a left after a right third starts over.
     static func sideCycleAction(for action: WindowLayoutAction,
                                 previousAction: WindowLayoutAction?) -> WindowLayoutAction? {
         let cycle: [WindowLayoutAction]
@@ -401,29 +370,18 @@ enum WindowLayoutGeometry {
         return cycle[(index + 1) % cycle.count]
     }
 
-    /// The key a placement records for the size cycle: only a left or right
-    /// half pressed while the cycle is on. Every other placement records none,
-    /// so a two thirds shortcut or a pointer snap is never read back for the
-    /// cycle and the next side press starts again at the half.
     static func sideCyclePress(for action: WindowLayoutAction,
                                cyclesThirds: Bool) -> WindowLayoutAction? {
         guard cyclesThirds, action == .leftHalf || action == .rightHalf else { return nil }
         return action
     }
 
-    /// Whether the previous placement was asked for with the same side key,
-    /// the only case in which repeating that key carries on the cycle.
     static func sideCycleResumes(pressing action: WindowLayoutAction,
                                  settled: WindowLayoutSettledFrame?) -> Bool {
         guard let pressed = settled?.pressedAction else { return false }
         return pressed == action
     }
 
-    /// Whether the size cycle may advance: only from a window still sitting
-    /// where the previous step left it, either the frame it was read back at
-    /// (an app's minimum size included, so a clamped half still cycles) or the
-    /// frame it asked for (an app that commits its resize late is read back at
-    /// the old frame). A window widened or dragged by hand matches neither.
     static func sideCycleContinues(current: WindowLayoutFrame,
                                    settled: WindowLayoutSettledFrame?,
                                    tolerance: CGFloat) -> Bool {
@@ -432,11 +390,6 @@ enum WindowLayoutGeometry {
             || current.isClose(to: settled.requested, tolerance: tolerance)
     }
 
-    /// Whether a frame read back after the placement was accepted is the app
-    /// committing that placement late rather than a change by hand: every
-    /// edge sits at least as close to the requested frame as the earlier read
-    /// did, within tolerance. A clamped resize that lands moves toward the
-    /// request; a window widened or dragged in the meantime moves away.
     static func settledFrameRefreshAccepts(actual: WindowLayoutFrame,
                                            settled: WindowLayoutSettledFrame,
                                            tolerance: CGFloat) -> Bool {
@@ -452,11 +405,6 @@ enum WindowLayoutGeometry {
             && approaches(actual.size.height, earlier.size.height, requested.size.height)
     }
 
-    /// Where a repeated half action goes: asking for the same half again keeps
-    /// pushing that way, so the window leaves through that edge and lands
-    /// against the opposite one on the neighbouring display. With the size
-    /// cycle on, a repeated left or right half is spent on the same display
-    /// and never crosses; top and bottom still cross.
     static func displayCrossing(
         for action: WindowLayoutAction,
         previousAction: WindowLayoutAction?,
@@ -473,11 +421,6 @@ enum WindowLayoutGeometry {
         }
     }
 
-    /// The display in one physical direction. Sideways, only a display starting
-    /// further along that axis counts. Vertically, it must lie fully beyond the
-    /// current display edge. The nearest one wins, then the closest center on
-    /// the other axis breaks ties. Next and previous display keep their own
-    /// order, which cycles through every screen.
     static func neighbourIndex(currentIndex: Int,
                                frames: [CGRect],
                                direction: DisplayDirection) -> Int? {
@@ -511,9 +454,6 @@ enum WindowLayoutGeometry {
                     lhsCenterDistance = abs(lhsFrame.midX - current.midX)
                     rhsCenterDistance = abs(rhsFrame.midX - current.midX)
                 case .down:
-                    // minY is the far edge when moving down. Rank by the
-                    // candidate's facing (top) edge, so a taller display
-                    // directly below beats a shorter, offset one.
                     lhsPosition = lhsFrame.maxY
                     rhsPosition = rhsFrame.maxY
                     lhsCenterDistance = abs(lhsFrame.midX - current.midX)
@@ -538,10 +478,6 @@ enum WindowLayoutGeometry {
                      windowGap: CGFloat = 0,
                      screenGap: CGFloat = 0,
                      marginPercent: Double = WindowLayoutMargin.defaultPercent) -> CGRect {
-        // Only placements that tile against the screen edge take the screen
-        // gap. The exempt actions keep their own geometry: margin maximize's
-        // percentage margin, center's size clamp, and the pass-through
-        // actions that return the current frame.
         let frame: CGRect
         switch action {
         case .marginMaximize, .center, .restore, .previousDisplay, .nextDisplay, .fullScreen:
@@ -554,9 +490,6 @@ enum WindowLayoutGeometry {
         return windowGapped(rect, for: action, in: frame, windowGap: windowGap)
     }
 
-    /// The visible frame pulled in by the screen gap on every side. The inset
-    /// keeps at least 80pt of layout space per axis, so an oversized gap on a
-    /// small display degrades instead of inverting the frame.
     static func screenGapFrame(_ visibleFrame: CGRect, screenGap: CGFloat) -> CGRect {
         guard screenGap > 0 else { return visibleFrame }
         let dx = min(screenGap, max(0, (visibleFrame.width - 80) / 2))
@@ -564,12 +497,6 @@ enum WindowLayoutGeometry {
         return visibleFrame.insetBy(dx: dx, dy: dy)
     }
 
-    /// Shaves half the window gap off every edge a placement shares with a
-    /// neighbouring one, so two adjacent windows end up exactly `windowGap`
-    /// apart — the gap is the total distance, not applied by both sides. An
-    /// edge is shared exactly when it does not lie on the (screen-gapped)
-    /// visible frame. Actions that do not tile the screen have no neighbours
-    /// and keep their frames.
     private static func windowGapped(_ rect: CGRect,
                                      for action: WindowLayoutAction,
                                      in frame: CGRect,
@@ -736,7 +663,6 @@ enum WindowLayoutGeometry {
         case .restore:
             return current.integral
         case .fullScreen:
-            // Handled by the system, not by a frame.
             return current.integral
         }
     }
@@ -942,11 +868,6 @@ enum WindowLayoutGeometry {
               destinationVisibleFrame.height > 0
         else { return current.integral }
 
-        // Scaling by each screen's size stretches a laptop window across an
-        // ultrawide and squashes it onto a portrait panel. Keep the current
-        // size, only shrinking to fit, and keep the same edge insets rather
-        // than spreading leftover space. A window that already fills the
-        // source still fills the destination, so Maximize stays Maximize.
         if current.width >= sourceVisibleFrame.width - frameTolerance,
            current.height >= sourceVisibleFrame.height - frameTolerance {
             return destinationVisibleFrame.integral
@@ -977,12 +898,6 @@ enum WindowLayoutGeometry {
         return CGRect(x: clampedX, y: clampedY, width: width, height: height).integral
     }
 
-    /// Keeps the inset from the leading edge of an axis, unless the window is
-    /// already flush with the trailing one. Horizontal placement prefers the
-    /// left so a window in the middle of a laptop does not fly to the middle
-    /// of an ultrawide; a right-half stays on the right. Vertical placement
-    /// prefers the top (AppKit maxY, under the menu bar) so a full-height
-    /// window is not dropped onto the dock of a taller display.
     private static func unscaledOrigin(sourceMin: CGFloat,
                                        sourceMax: CGFloat,
                                        currentMin: CGFloat,
@@ -994,10 +909,6 @@ enum WindowLayoutGeometry {
         let minInset = currentMin - sourceMin
         let maxInset = sourceMax - currentMax
         let sourceSlack = (sourceMax - sourceMin) - (currentMax - currentMin)
-        // Near-zero leftover space makes flush-edge detection a coin flip:
-        // a 1pt jitter picks left vs right and becomes a thousand-point
-        // jump on an ultrawide. Keep the preferred-edge inset instead;
-        // the caller already clamps.
         if sourceSlack <= frameTolerance {
             if preferMax {
                 return destinationMax - maxInset - size
@@ -1053,10 +964,6 @@ struct WindowLayoutFrame: Equatable {
     }
 }
 
-/// What a placement left behind: the frame it asked for, the one the
-/// window was read back at once the placement was accepted, and the side
-/// key that was pressed for it, so the size cycle follows the last key rather
-/// than the last placement.
 struct WindowLayoutSettledFrame: Equatable {
     var requested: WindowLayoutFrame
     var actual: WindowLayoutFrame
@@ -1069,8 +976,6 @@ struct WindowLayoutWindowKey: Hashable {
     let windowID: CGWindowID
 }
 
-/// Recent placements for each window. It stays in memory for this app session
-/// and is bounded so repeated layout shortcuts cannot grow it indefinitely.
 struct WindowLayoutHistory {
     static let perWindowLimit = 20
 

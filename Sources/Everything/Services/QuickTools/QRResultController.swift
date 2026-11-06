@@ -5,10 +5,6 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Shows what a scanned QR code actually holds before anything is copied: the
-/// decoded content is spelled out, with a copy action and, for a plain web
-/// link, an open action. Shared by the screen text tool and the screenshot
-/// preview and editor so a code reads the same everywhere.
 final class QRResultController {
     static let shared = QRResultController()
 
@@ -54,7 +50,6 @@ final class QRResultController {
 
         let visible = NSScreen.pointerVisibleFrame
         let pointer = NSEvent.mouseLocation
-        // Sit just below the pointer, clamped fully on screen.
         var origin = CGPoint(x: pointer.x - size.width / 2, y: pointer.y - size.height - 18)
         origin.x = min(max(origin.x, visible.minX + 12), visible.maxX - size.width - 12)
         origin.y = min(max(origin.y, visible.minY + 12), visible.maxY - size.height - 12)
@@ -111,9 +106,6 @@ final class QRResultController {
             }
             return event
         }
-        // A click anywhere outside the panel dismisses it. The global
-        // monitor covers other apps; clicks on our own windows (the
-        // screenshot editor under this panel) only reach the local one.
         localMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             if event.window !== self?.panel { self?.close() }
@@ -126,8 +118,6 @@ final class QRResultController {
     }
 }
 
-/// A non-activating panel that can still take key focus so its buttons and
-/// selectable text respond without bringing the whole app forward.
 private final class QRResultPanel: OverlayPanel {
     override var canBecomeKey: Bool { true }
 }

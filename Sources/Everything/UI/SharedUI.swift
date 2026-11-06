@@ -3,8 +3,6 @@
 
 import SwiftUI
 
-/// A single keyboard key drawn like a physical keycap. Used across Settings and
-/// onboarding to show shortcuts such as ⌘X / ⌘V.
 struct KeyCap: View {
     let label: String
 
@@ -24,7 +22,6 @@ struct KeyCap: View {
     }
 }
 
-/// A row of keycaps for a shortcut, e.g. ["⌘", "X"].
 struct ShortcutCaps: View {
     let keys: [String]
 
@@ -37,68 +34,6 @@ struct ShortcutCaps: View {
     }
 }
 
-struct FullDiskAccessNote: View {
-    var compact = false
-    /// Why this surface needs the permission. The scan is the usual reason;
-    /// a failed removal has its own, so it says so in its own words.
-    var reason: String?
-
-    @ObservedObject private var l10n = L10n.shared
-    @ObservedObject private var permissions = Permissions.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .top, spacing: compact ? 7 : 8) {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(.secondary)
-                Text(reason ?? l10n.s.uninstallerFDANote)
-                    .font(compact ? .system(size: 10) : .caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(l10n.s.uninstallerFDAHint)
-                .font(compact ? .system(size: 9) : .caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: compact ? 7 : 8) {
-                Button(l10n.s.uninstallerFDAGrant) { permissions.requestFullDiskAccess() }
-                // Shown alongside because access only takes effect on relaunch.
-                Button(l10n.s.uninstallerFDARelaunch) { appDelegate()?.relaunchApp() }
-            }
-            .controlSize(.small)
-            .font(compact ? .system(size: 10.5) : nil)
-        }
-        // Take the width the host offers, so the card lines up with the cards
-        // around it instead of shrinking to its longest line.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(compact ? 9 : 11)
-        .background(
-            RoundedRectangle(cornerRadius: compact ? 8 : 9, style: .continuous)
-                .fill(Color.primary.opacity(compact ? 0.045 : 0.05))
-        )
-    }
-}
-
-
-/// Translucent HUD material behind floating panels (the shelf, the switcher, the
-/// cut-feedback HUD). Mirrors the switcher's backdrop so every floating surface
-/// matches.
-///
-/// `contrast: .high` lays a flat plate over the material, for the panels that
-/// are nothing but rows of text. The frost borrows so much of whatever window
-/// sits behind it that such a list over a bright document stops being readable,
-/// and the darker the theme the worse it reads: light text against a page of
-/// white. The plate keeps the frost visible and gives the text something to sit
-/// on. Where the system is already told to reduce transparency it makes the
-/// material opaque by itself, so the plate stays out of the way.
-///
-/// `opacity` fades the material itself, for the one panel that lets the user
-/// choose how much of the screen shows through. Reduce transparency wins over
-/// it: the whole point of that setting is that panels stop being see-through,
-/// so a stored preference must not quietly undo it. Liquid Glass does not take
-/// it either. The glass gets its transparency from the system's own Liquid
-/// Glass setting and has no fade of its own, so the slider that feeds
-/// `opacity` is turned off while `drawsLiquidGlass` holds.
 struct HUDBackdrop: View {
     enum Contrast {
         case standard
@@ -117,12 +52,6 @@ struct HUDBackdrop: View {
         reduceTransparency ? 1 : min(max(opacity, 0), 1)
     }
 
-    /// Chosen from the worst case rather than by eye: a panel over a full white
-    /// window in the dark theme, or over a full black one in the light theme,
-    /// with the material assumed to hold nothing back. At these values the
-    /// plate alone carries white text to 4.8:1 and black text to 5.3:1, both
-    /// past the 4.5:1 the accessibility guidelines ask of body text, and the
-    /// real material only ever adds to that.
     static func plateOpacity(dark: Bool) -> Double { dark ? 0.55 : 0.5 }
 
     private var plateOpacity: Double {
@@ -130,8 +59,6 @@ struct HUDBackdrop: View {
         return Self.plateOpacity(dark: colorScheme == .dark)
     }
 
-    /// Whether the backdrop is drawn as Liquid Glass instead of the classic
-    /// material. Settings asks too, to know when `opacity` has nothing to fade.
     static func drawsLiquidGlass(enabled: Bool, reduceTransparency: Bool) -> Bool {
 #if compiler(>=6.2)
         if #available(macOS 26.0, *) { return enabled && !reduceTransparency }
@@ -174,16 +101,6 @@ struct HUDBackdrop: View {
     }
 }
 
-/// The material itself.
-///
-/// The corner radius rounds the effect view's own layer, which matters for the
-/// behind-window blur: SwiftUI's `.clipShape` rounds the drawn content but does
-/// not clip an `NSVisualEffectView`'s behind-window material, so the blur (and
-/// the borderless window's shadow, computed from it) keeps the full rectangular
-/// bounds. Against a contrasty desktop that rectangle reads as a faint extra
-/// outline just outside the rounded card, and whether it shows depends on what
-/// is behind the window, which is why it looks intermittent. Clipping the layer
-/// to the same radius as the card removes it. Pass the card's corner radius.
 private struct HUDBackdropMaterial: NSViewRepresentable {
     var cornerRadius: CGFloat = 0
     var opacity: Double = 1
@@ -210,9 +127,6 @@ private struct HUDBackdropMaterial: NSViewRepresentable {
     }
 }
 
-/// A disclosure header where the whole row toggles the group and the chevron
-/// sits on the trailing side, the way a drop-down reads. The label supplies
-/// the row's one Spacer, so trailing accessories stay flush to the chevron.
 struct DisclosureHeaderRow<Label: View>: View {
     @ObservedObject private var l10n = L10n.shared
 
@@ -246,7 +160,6 @@ struct DisclosureHeaderRow<Label: View>: View {
 }
 
 extension View {
-    /// Child rows sit inset under their group's header row.
     func disclosureIndent() -> some View {
         padding(.leading, 25)
     }

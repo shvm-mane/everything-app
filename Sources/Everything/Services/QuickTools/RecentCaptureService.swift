@@ -7,9 +7,6 @@ import Carbon.HIToolbox
 import ImageIO
 import SwiftUI
 
-/// A bounded, on-demand list of captures. Screenshots live in this cache so
-/// copy-only captures can return after their preview closes. Recordings keep
-/// only their file path and a small thumbnail, never a second video copy.
 final class RecentCaptureService: ObservableObject {
     static let shared = RecentCaptureService()
 
@@ -82,7 +79,6 @@ final class RecentCaptureService: ObservableObject {
             return
         }
         removePanelMonitors()
-        // Ordering out alone keeps the confirmation attached for the next opening.
         if let panel, let sheet = panel.attachedSheet { panel.endSheet(sheet) }
         panel?.orderOut(nil)
     }
@@ -101,8 +97,6 @@ final class RecentCaptureService: ObservableObject {
         panel.title = FeatureStrings.recentCaptures(L10n.shared.language).title
         panel.isReleasedWhenClosed = false
         panel.isMovableByWindowBackground = true
-        // The palette is summoned from other apps. A panel that hides on deactivate
-        // stays off screen until this app activates, so it would appear late.
         panel.hidesOnDeactivate = false
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -161,9 +155,6 @@ final class RecentCaptureService: ObservableObject {
         }
         panelLocalClickMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]) { [weak self, weak panel] event in
-                // The Clear history confirmation is a sheet, a window of its own
-                // attached to the palette. Hiding on a click there closed the
-                // palette before the button could act (issue #3380).
                 if event.window !== panel, event.window?.sheetParent !== panel {
                     self?.hideHistoryWindow()
                 }

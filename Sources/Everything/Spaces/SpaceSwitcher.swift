@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// InstantSpaceSwitcher inside Everything. This replaces ISS's AppDelegate:
-// it starts the C core (Sources/ISS, MIT licensed), binds the hotkeys,
-// and watches space changes.
+// Space switching built on InstantSpaceSwitcher (MIT, Sources/ISS).
 
 import AppKit
 import ISS
@@ -34,7 +32,6 @@ final class SpaceSwitcher: ObservableObject {
     private var coreStarted = false
     private var running = false
 
-    /// Opens Everything's settings; set by the app delegate.
     var openSettings: () -> Void = {}
 
     private init() {
@@ -43,7 +40,6 @@ final class SpaceSwitcher: ObservableObject {
 
     var isEnabled: Bool { UserDefaults.standard.bool(forKey: SpacesDefaults.enabled) }
 
-    /// Called at launch and whenever a Spaces setting changes.
     func syncWithPreferences() {
         let defaults = UserDefaults.standard
         if isEnabled {
@@ -79,7 +75,6 @@ final class SpaceSwitcher: ObservableObject {
         observers.removeAll()
     }
 
-    /// Before quitting: release the core's event taps.
     func shutdown() {
         stop()
         if coreStarted { iss_destroy(); coreStarted = false }
@@ -97,8 +92,6 @@ final class SpaceSwitcher: ObservableObject {
 
     private func bindHotkeys() {
         cancellables.removeAll()
-        // Every published hotkey and the enabled map re-register everything:
-        // simpler than one sink per identifier and identical in effect.
         hotkeyStore.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -159,7 +152,6 @@ final class SpaceSwitcher: ObservableObject {
         performSpaceSwitchToIndex(lastSpaceIndex)
     }
 
-    /// Reads the current space, for the last-space keybind.
     private func refreshSpaceInfo() {
         var info = ISSSpaceInfo()
         guard iss_get_menubar_space_info(&info) else { return }
@@ -169,7 +161,6 @@ final class SpaceSwitcher: ObservableObject {
         }
     }
 
-    /// Event-driven only: no polling.
     private func observeSpaceChanges() {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -178,7 +169,6 @@ final class SpaceSwitcher: ObservableObject {
                 guard let self else { return }
                 iss_reset_predictions()
                 self.refreshSpaceInfo()
-                // The core can read the old space for a moment after the change.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                     MainActor.assumeIsolated { self?.refreshSpaceInfo() }
                 }

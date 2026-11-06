@@ -3,16 +3,6 @@
 
 import AppKit
 
-/// The translucent thumbnail that follows the pointer while a preview card is
-/// dragged out of the panel. Only this stand-in moves during the drag; the real
-/// window stays put until the pointer lifts, so a drag that is abandoned costs
-/// the dragged app nothing.
-///
-/// Its top-left corner sits under the pointer, which is also where the real
-/// window's top-left lands on drop — what the user aims with is what they get.
-///
-/// Main thread only, like the rest of the panel it belongs to: every entry
-/// point is a SwiftUI gesture callback or the session teardown that follows one.
 final class DockPreviewDragGhost {
     static let shared = DockPreviewDragGhost()
 
@@ -55,8 +45,6 @@ final class DockPreviewDragGhost {
         ghost.orderFrontRegardless()
     }
 
-    /// `pointer` is an AppKit screen point; the ghost hangs below and right of
-    /// it so the corner the drop uses is the one under the cursor.
     func move(to pointer: CGPoint) {
         guard let window else { return }
         window.setFrame(CGRect(origin: CGPoint(x: pointer.x, y: pointer.y - size.height),

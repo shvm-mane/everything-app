@@ -3,13 +3,8 @@
 
 import SwiftUI
 
-/// The closed island while an agent works: its mark on one side of the
-/// camera, one reading the person chose on the other. The wings are as wide
-/// as the reading, and both sit at the ends, where the island shows.
 struct NotchAgentStrip: View {
     @ObservedObject var service: NotchService
-    /// Where the island draws it: its own strip as of the last update, or
-    /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var usage = AgentUsageService.shared
     @ObservedObject private var l10n = L10n.shared
@@ -22,14 +17,10 @@ struct NotchAgentStrip: View {
     }
 
     var body: some View {
-        // The last agent stopping empties the list before the strip has left.
         NotchStripHold(usage.snapshot.live, shows: !usage.snapshot.live.isEmpty) { strip(live: $0) }
     }
 
     @ViewBuilder private func strip(live: [AgentLiveSession]) -> some View {
-        // Resolve layout once per presentation update. The timeline captures
-        // these values, so ticking the clock never remeasures the island or
-        // walks the preferences for every font, inset and frame.
         let geometry = displayGeometry ?? service.compactActivityGeometry
         let working = working(live)
         let tint = working.first?.tint ?? .white
@@ -63,9 +54,6 @@ struct NotchAgentStrip: View {
                                 .foregroundStyle(tint)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.6)
-                                // A reading that gains a digit, like an hour
-                                // passing, needs wider wings; the service
-                                // measures the same reading.
                                 .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                                     DispatchQueue.main.async { service.refreshPresentation() }
                                 }
@@ -99,8 +87,6 @@ struct NotchAgentStrip: View {
     }
 }
 
-/// Keep the original one-second cadence for time-dependent readings, but
-/// install no clock at all for values updated by the observed usage snapshot.
 struct NotchAgentReadoutTimeline<Content: View>: View {
     let readout: NotchAgentReadout
     @ViewBuilder var content: (Date) -> Content
@@ -116,9 +102,6 @@ struct NotchAgentReadoutTimeline<Content: View>: View {
     }
 }
 
-/// The resting island's wings: the chosen allowance, by default the one
-/// closest to running out, as a ring and a number, or today's API value when
-/// no allowance is known.
 struct NotchAgentRestingWing: View {
     let leading: Bool
     @ObservedObject private var usage = AgentUsageService.shared

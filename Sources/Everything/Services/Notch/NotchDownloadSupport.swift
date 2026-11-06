@@ -27,14 +27,11 @@ struct NotchPartialDownload: Equatable {
     var source: NotchDownloadSource? = nil
 }
 
-/// The original partial itself, including Safari's wrapper directory. The
-/// payload can move or be extracted without changing which transfer ended.
 struct NotchDownloadSource: Hashable {
     let url: URL
     let identity: String
 }
 
-/// Capture native progress values once before validating paths on the file queue.
 struct NotchDownloadProgressSnapshot {
     let fileURL: URL?
     let fileOperationKind: Progress.FileOperationKind?
@@ -61,9 +58,6 @@ struct NotchDownloadProgressSnapshot {
     }
 }
 
-/// A publisher can change its URL while a transfer is running. Keep the first
-/// observed state of each destination so an unrelated existing file cannot
-/// become a successful download just because the reported count reaches 100%.
 struct NotchDownloadPublication {
     private var url: URL
     private var initialFile: NotchDownloadSupport.FileSnapshot?
@@ -81,9 +75,6 @@ struct NotchDownloadPublication {
         guard let current = NotchDownloadSupport.publishedURL(progress, folder: folder) else { return nil }
         let file = NotchDownloadSupport.fileSnapshot(at: current)
         if current != url {
-            // A moved file is new evidence at its final destination, even if
-            // the URL and finished count arrive together. Existing aliases or
-            // unrelated files must still establish their own baseline.
             let renamed = file != nil && file?.identity == lastFileIdentity
                 && !FileManager.default.fileExists(atPath: url.path)
             initialFile = renamed ? nil : file
@@ -94,7 +85,6 @@ struct NotchDownloadPublication {
         }
         let completed = progress.isFinished && file != nil && file != initialFile
             && NotchDownloadSupport.expectedURL(for: current) == nil
-        // Safari publishes its .download folder. Name the file it becomes.
         return NotchDownloadItem(id: current.path, url: current,
             name: (NotchDownloadSupport.expectedURL(for: current) ?? current).lastPathComponent,
             receivedBytes: completed ? file?.bytes : progress.isFile ? max(0, progress.completedUnitCount) : nil,
@@ -139,8 +129,6 @@ enum NotchDownloadSupport {
             var payloadValues = values
             var contentURL: URL?
             if values.isDirectory == true {
-                // A partial package can hold the real file. Inspect only its
-                // expected payload, never traverse other folders or resume data.
                 let payload = url.appendingPathComponent(expected.lastPathComponent)
                 if let found = try? payload.resourceValues(forKeys: keys),
                    found.isRegularFile == true, found.isSymbolicLink != true {
@@ -154,8 +142,6 @@ enum NotchDownloadSupport {
                 modified: payloadValues.contentModificationDate ?? .distantPast,
                 contentURL: contentURL, source: partialSource(at: url))
         }
-        // The main queue merges, sorts and compares this list on every
-        // progress tick, so a crowded folder hands it only its newest entries.
         if files.count > maximumListedFiles {
             files.sort { $0.date != $1.date ? $0.date > $1.date : $0.url.path < $1.url.path }
             files.removeSubrange(maximumListedFiles...)
@@ -163,8 +149,6 @@ enum NotchDownloadSupport {
         return readFailed ? nil : FolderSnapshot(partials: result, files: files)
     }
 
-    /// Published progress owns its destination until it finishes. Folder files
-    /// remain visible after the short completion notice expires.
     static func mergedItems(active: [NotchDownloadItem], files: [NotchDownloadItem],
                             finished: [NotchDownloadItem]) -> [NotchDownloadItem] {
         var seen = Set<URL>()
@@ -179,29 +163,21 @@ enum NotchDownloadSupport {
     }
 
     static let maximumObservedFiles = 32
-    /// Folder entries the page lists, newest first.
     static let maximumListedFiles = 200
     static let percentSize: CGFloat = 10
     static let compactNameWingThreshold: CGFloat = 94
     private static let compactNameMinimumWing: CGFloat = 64
     private static let compactNameMaximumWing: CGFloat = 160
-    /// Progress rounds up to a full hundred near the end, and four of the
-    /// languages part the number from its sign, so the narrowest wing cannot
-    /// hold the widest reading at full size. It shrinks rather than wrap or
-    /// lose a digit.
     static let percentMinimumScale: CGFloat = 0.75
 
     static func percentFormat(_ language: AppLanguage) -> FloatingPointFormatStyle<Double>.Percent {
         .percent.precision(.fractionLength(0)).locale(Locale(identifier: language.rawValue))
     }
 
-    /// Digits carry no descenders, so their ink is about the cap height.
     static func percentInset(in geometry: NotchGeometry) -> CGFloat {
         geometry.compactActivityEdgeInset(boxHeight: percentSize * 0.72, radius: 0)
     }
 
-    /// Restore the file name only when menus leave a readable wing. Otherwise
-    /// the arrow and percent keep their short strip beside the camera.
     static func compactWing(for name: String?, in geometry: NotchGeometry) -> CGFloat {
         guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
               let room = geometry.compactSideRoom, room.isFinite,
@@ -213,16 +189,12 @@ enum NotchDownloadSupport {
                    max(compactNameMinimumWing, (inset + compactNameContentWidth(name, icon: icon) + 4).rounded(.up)))
     }
 
-    /// The island asks for its geometry on every layout and progress tick, so
-    /// the one name on show is measured once rather than each time.
     private static var measuredCompactName: (name: String, icon: CGFloat, width: CGFloat)?
 
     private static func compactNameContentWidth(_ name: String, icon: CGFloat) -> CGFloat {
         if let measured = measuredCompactName, measured.name == name, measured.icon == icon {
             return measured.width
         }
-        // The symbol draws wider than its point size; measuring the size alone
-        // left every name a few points short and cut it in the middle.
         let symbol = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: icon, weight: .regular))?
             .size.width ?? icon + 3
@@ -297,10 +269,6 @@ enum NotchDownloadSupport {
                             modifiedNanoseconds: info.st_mtimespec.tv_nsec)
     }
 
-    /// Browsers tell the Dock about each finished download with its final
-    /// path. Safari moves the file out of its .download folder just before,
-    /// often too quickly for a folder scan to see the folder at all, and an
-    /// archive it opens arrives as the folder it held.
     static let finishedNotification = Notification.Name("com.apple.DownloadFileFinished")
 
     static func announcedItem(atPath path: String, folder: URL) -> NotchDownloadItem? {

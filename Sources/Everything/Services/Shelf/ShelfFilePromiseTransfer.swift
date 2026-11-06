@@ -3,13 +3,9 @@
 
 import AppKit
 
-/// Copies each file inside AppKit's coordinated reader, before exposing it to
-/// the shelf. Cancellation stops our copies, not the sending application's
-/// write; its eventual completion still cleans the private incoming directory.
 final class ShelfFilePromiseTransfer {
     struct Result {
         let urls: [URL]
-        /// The receiver each URL came from, in the same order.
         let receiverIndices: [Int]
         let failed: Bool
     }
@@ -45,8 +41,6 @@ final class ShelfFilePromiseTransfer {
         queue.maxConcurrentOperationCount = 1
     }
 
-    /// Must run within the drag destination callback. In particular, fileTypes
-    /// is not a file count: legacy sources may list a type only once for a batch.
     @discardableResult
     func receive(_ receivers: [NSFilePromiseReceiver]) -> Bool {
         var expected = 0
@@ -60,8 +54,6 @@ final class ShelfFilePromiseTransfer {
                 }
                 record(copy, receiver: index, failed: error != nil || copy == nil)
             }
-            // AppKit supplies the actual names after calling in the promise.
-            // A failed request can have no names, but still reports its error.
             let receivedNames = receiver.fileNames
             names.append(receivedNames)
             expected += max(1, receivedNames.count)
@@ -132,7 +124,6 @@ final class ShelfFilePromiseTransfer {
         copies.removeAll()
         let result = Result(urls: urls, receiverIndices: ordered.map(\.receiver), failed: failed)
         lock.unlock()
-        // Callbacks already in this queue finish before its cleanup operation.
         queue.addOperation { [incomingDirectory] in
             try? FileManager.default.removeItem(at: incomingDirectory)
         }
@@ -163,8 +154,6 @@ final class ShelfFilePromiseTransfer {
               try source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
             throw CocoaError(.fileReadInvalidFileName)
         }
-        // An owner-only parent preserves original names and separates equal
-        // names from different promises, including callbacks in the same drop.
         let directory = storeDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         guard PrivateFileStore.createDirectory(at: directory) else {
             throw CocoaError(.fileWriteNoPermission)
@@ -179,8 +168,6 @@ final class ShelfFilePromiseTransfer {
         }
     }
 
-    /// Only removes the private, UUID-named parent we created for this file.
-    /// Never follows a caller-supplied path out of the shelf store.
     static func discard(_ urls: [URL], in storeDirectory: URL) {
         let root = storeDirectory.standardizedFileURL.path
         for url in urls {

@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// The coding agents whose session logs the island reads. Their names are
-/// product names and stay untranslated.
 enum AgentProvider: String, CaseIterable, Identifiable, Codable {
     case claude, codex, opencode, copilot
 
@@ -28,12 +26,9 @@ enum AgentProvider: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Whether the provider records a plan allowance in its local logs.
     var reportsLimits: Bool { self != .copilot }
 }
 
-/// Token counts in the shape both logs can be reduced to. `input` excludes
-/// cache traffic, and `output` already contains the reasoning tokens.
 struct AgentTokens: Equatable {
     var input = 0
     var cacheWrite = 0
@@ -42,7 +37,6 @@ struct AgentTokens: Equatable {
     var reasoning = 0
 
     var total: Int { input + cacheWrite + cacheRead + output }
-    /// Everything the model read, cached or not.
     var prompt: Int { input + cacheWrite + cacheRead }
     var cacheHitRate: Double? { prompt > 0 ? Double(cacheRead) / Double(prompt) : nil }
 
@@ -54,8 +48,6 @@ struct AgentTokens: Equatable {
         lhs.reasoning += rhs.reasoning
     }
 
-    /// Streamed replies are logged once per content block, and the earlier
-    /// blocks carry the output counted so far. The largest reading is final.
     func merged(with other: AgentTokens) -> AgentTokens {
         AgentTokens(input: max(input, other.input), cacheWrite: max(cacheWrite, other.cacheWrite),
                     cacheRead: max(cacheRead, other.cacheRead), output: max(output, other.output),
@@ -63,22 +55,16 @@ struct AgentTokens: Equatable {
     }
 }
 
-/// One billed model response.
 struct AgentUsageRecord: Equatable {
     let provider: AgentProvider
     let date: Date
     let model: String
     let project: String
     let session: String
-    /// Model requests represented by this record; checkpoints may hold several.
     let requests: Int
     var tokens: AgentTokens
-    /// What the response would cost at API list prices, in US dollars. Nil
-    /// when the model has no known price.
     var cost: Double?
-    /// What cache reads saved against paying the full input price.
     var savings: Double
-    /// Whether cost was reported directly by the provider rather than derived from list pricing.
     var reportedCost: Bool = false
 
     init(provider: AgentProvider, date: Date, model: String, project: String, session: String,
@@ -96,7 +82,6 @@ struct AgentUsageRecord: Equatable {
     }
 }
 
-/// A usage allowance and how much of it is spent, as the provider reports it.
 struct AgentLimitWindow: Equatable, Identifiable {
     enum Kind: String {
         case session, weekly, other
@@ -104,13 +89,10 @@ struct AgentLimitWindow: Equatable, Identifiable {
 
     let id: String
     let kind: Kind
-    /// How long the window lasts, when the provider says so.
     let minutes: Int?
-    /// A model the allowance applies to; nil when it covers everything.
     let scope: String?
     let usedPercent: Double
     let resetsAt: Date?
-    /// A presentation estimate, never a deadline for clearing usage or alerts.
     var estimatedResetsAt: Date? = nil
 
     var usedFraction: Double { min(1, max(0, usedPercent / 100)) }
@@ -119,11 +101,8 @@ struct AgentLimitWindow: Equatable, Identifiable {
 
 struct AgentLimits: Equatable {
     enum Source: Equatable {
-        /// Saved on this Mac by the Claude app, which checks them itself.
         case claudeApp
-        /// Copied by the agent into its session log with each response.
         case sessionLog
-        /// Asked of the agent on request, which checks the account itself.
         case account
     }
 
@@ -133,14 +112,11 @@ struct AgentLimits: Equatable {
     let source: Source
 }
 
-/// The subscription an account is on, when the agent's local files say.
 struct AgentPlan: Equatable {
     let name: String
-    /// Monthly list price in US dollars, used only to compare API value.
     let monthlyPrice: Double?
 }
 
-/// A turn an agent is working on right now, from its session log.
 struct AgentLiveSession: Equatable, Identifiable {
     let id: String
     let provider: AgentProvider
@@ -152,7 +128,6 @@ struct AgentLiveSession: Equatable, Identifiable {
     var cost: Double
 }
 
-/// Something worth a moment in the closed island.
 enum AgentUsageEvent: Equatable {
     case finished(provider: AgentProvider, duration: TimeInterval, cost: Double, tokens: Int, project: String)
     case limitWarning(provider: AgentProvider, window: AgentLimitWindow)

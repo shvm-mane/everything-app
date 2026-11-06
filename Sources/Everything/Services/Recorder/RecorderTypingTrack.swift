@@ -4,7 +4,6 @@
 import AppKit
 import QuartzCore
 
-/// Moments when typing happened during one recording. No key or text is kept.
 struct RecorderTypingTrack: Codable, Equatable {
     var times: [Double] = []
 
@@ -19,7 +18,6 @@ struct RecorderTypingTrack: Codable, Equatable {
     }
 }
 
-/// The monitor exists only while recording and remembers timing, never keys.
 final class RecorderTypingSampler {
     private let pauseClock: RecorderPauseClock
     private var globalMonitor: Any?

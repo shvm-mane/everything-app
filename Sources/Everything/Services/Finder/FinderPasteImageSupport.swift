@@ -8,8 +8,6 @@ enum FinderPasteImageSupport {
     private static let fileURLType = "public.file-url"
     private static let pngType = "public.png"
 
-    /// A copied image file can also advertise image data. File URLs win so a
-    /// normal Finder paste is never turned into a newly rendered PNG.
     static func preferredImageType(in typeIdentifiers: [String]) -> String? {
         guard !typeIdentifiers.contains(fileURLType) else { return nil }
         if typeIdentifiers.contains(pngType) { return pngType }

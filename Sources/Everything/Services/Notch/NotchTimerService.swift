@@ -4,14 +4,11 @@
 import AppKit
 import Combine
 
-/// Session state is intentionally memory-only: a settings restore or relaunch
-/// must never resurrect a timer from a different day or another Mac.
 final class NotchTimerService: ObservableObject {
     static let shared = NotchTimerService()
     @Published private(set) var session = NotchTimerSession()
     private let origin = ContinuousClock.now
     private var completionTask: Task<Void, Never>?
-    /// Wakes for the last seconds of a countdown, which the companion watches.
     private var countdownTask: Task<Void, Never>?
     private var suspended = true
     private let alert = NotchTimerAlert()
@@ -77,14 +74,12 @@ final class NotchTimerService: ObservableObject {
     private func finishIfDue() {
         guard session.finishIfDue(at: now) else { return }
         alert.stop()
-        // The notice takes the strip it watched from.
         NotchService.shared.endMascotCountdown(retreating: false)
         let text = FeatureStrings.notchActivities(L10n.shared.language)
         let reaction = NotchMascotSupport.timerReaction(finishing: session.phase)
         NotchService.shared.show(NotchNotice(event: .timer,
             title: session.cycleFinished ? text.pomodoroFinished : text.finished,
             detail: text.phase(session.phase), symbol: "timer", mascot: reaction))
-        // It takes the news in the notice, or where it is when the notice cannot show.
         NotchService.shared.reactMascot(reaction)
         alert.start(enabled: NotchTimerSupport.isSoundEnabled())
     }
@@ -103,8 +98,6 @@ final class NotchTimerService: ObservableObject {
         }
     }
 
-    /// The companion comes out for a countdown's last seconds. Paused, the
-    /// countdown sends it back behind the camera.
     private func scheduleCountdown() {
         countdownTask?.cancel(); countdownTask = nil
         guard !suspended, let deadline = session.deadline else {

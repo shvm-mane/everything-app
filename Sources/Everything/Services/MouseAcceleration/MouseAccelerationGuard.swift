@@ -4,9 +4,6 @@
 import Darwin
 import Foundation
 
-/// Restores the HID values if the app disappears before normal termination.
-/// The child waits for EOF on a pipe owned by the app, which the kernel closes
-/// after both ordinary exit and SIGKILL.
 enum MouseAccelerationGuard {
     static let cleanupArgument = "--mouse-acceleration-cleanup"
     private static let cleanupTimeout: TimeInterval = 5

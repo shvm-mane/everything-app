@@ -5,42 +5,23 @@ import CoreServices
 import Darwin
 import Foundation
 
-/// Everything read so far, one record per response. Not thread-safe: the
-/// usage service confines it to its own queue.
 final class AgentUsageStore {
     private(set) var records: [AgentUsageRecord] = []
     private var billables: [AgentBillable] = []
-    /// The logs each response was read from: most in one, a resumed or
-    /// archived session's again in another.
     private var sources: [[String]] = []
     private var index: [String: Int] = [:]
     private let summary = AgentUsageSummaryCache()
     private(set) var limits: [AgentProvider: AgentLimits] = [:]
     private(set) var codexPlan: String?
     private var codexPlanObserved = Date.distantPast
-    /// Open turns by log file.
     private(set) var turns: [String: AgentLiveSession] = [:]
-    /// Turns gone quiet, by log file: not shown as working, but work that
-    /// resumes after an approval or a long command goes on with them.
     private(set) var waiting: [String: AgentLiveSession] = [:]
-    /// Claude turns whose process was seen running, by log file.
     private var registered: Set<String> = []
-    /// Turns whose last step ended expecting more, by log file, with when.
     private var settled: [String: Date] = [:]
-    /// When a model last replied, by the log of the turn it counts toward.
     private var replies: [String: Date] = [:]
-    /// Off while the logs are first read, so history never replays as news.
     var reportsTransitions = false
-    /// A turn that ended longer ago than this is history found late, like a
-    /// session an agent moved to its archive, not news.
     static let lateEnd: TimeInterval = 5 * 60
-    /// How long the Mac stays offline, awake, before Claude's turns end:
-    /// after a short drop, as when it changes networks, Claude goes on.
     static let offlineGrace: TimeInterval = 20
-    /// How long a quiet turn waits for its work to resume before it is over.
-    /// A new Codex task always opens a turn of its own, but a Claude session
-    /// resumed after its process was killed reads like work going on, so a
-    /// Claude turn waits only an hour.
     static func resumeWindow(for provider: AgentProvider) -> TimeInterval {
         provider == .claude ? 3600 : 6 * 3600
     }
@@ -53,8 +34,6 @@ final class AgentUsageStore {
                          providers: providers, now: now, calendar: calendar)
     }
 
-    /// Applies one file's entries and returns the turns they finished.
-    /// `parent` is the log whose turn a subagent's responses count toward.
     @discardableResult
     func apply(_ entries: [AgentLogEntry], file: String, provider: AgentProvider,
                tracksTurns: Bool, parent: String? = nil, modified: Date, now: Date = Date()) -> [AgentUsageEvent] {
@@ -62,8 +41,6 @@ final class AgentUsageStore {
         for entry in entries {
             switch entry {
             case .usage(let key, let record, let billable):
-                // Copilot exposes response activity and session-wide token
-                // totals, neither of which measures the current root task.
                 let turn = provider == .copilot ? nil : tracksTurns ? file : parent
                 add(record, billable: billable, key: key, source: file, turn: turn, subagent: !tracksTurns)
             case .usageModel(let key, let model):
@@ -72,23 +49,16 @@ final class AgentUsageStore {
                 records[position] = AgentUsageRecord(provider: old.provider, date: old.date, model: model,
                     project: old.project, session: old.session, requests: old.requests,
                     tokens: old.tokens, cost: old.cost, savings: old.savings, reportedCost: old.reportedCost)
-                // Incremental token updates keep the same model; attribution
-                // changes instead rebuild model buckets from the records.
                 summary.invalidate()
             case .limits(let reading):
                 updateLimits(reading)
             case .plan(let plan, let date):
-                // An archived session read again from its start holds an
-                // older plan than the one in use.
                 guard codexPlanObserved <= date else { continue }
                 codexPlan = plan
                 codexPlanObserved = date
             case .turnBegan(let date):
                 guard tracksTurns else { continue }
                 settled[file] = nil
-                // A log rewritten in place is read again from its start; the
-                // turn it already holds keeps what its responses added, which
-                // the second reading skips as repeats.
                 if let turn = turns[file] ?? waiting[file], abs(turn.started.timeIntervalSince(date)) < 1 { continue }
                 waiting[file] = nil
                 turns[file] = AgentLiveSession(id: file, provider: provider, started: date,
@@ -124,7 +94,6 @@ final class AgentUsageStore {
             case .turnEnded(let date, let completed, let duration):
                 guard tracksTurns else { continue }
                 settled[file] = nil
-                // A turn that went quiet on the way ends as the whole turn.
                 let quiet = waiting.removeValue(forKey: file)
                 guard let turn = turns.removeValue(forKey: file) ?? quiet, completed, reportsTransitions else { continue }
                 let end = date ?? modified
@@ -140,8 +109,6 @@ final class AgentUsageStore {
         return events
     }
 
-    /// A log removed while its turn ran, like a deleted chat, ends that turn
-    /// without a notice: nothing finished. True when one was showing.
     @discardableResult
     func forget(file: String) -> Bool {
         waiting[file] = nil
@@ -157,9 +124,6 @@ final class AgentUsageStore {
         return removed
     }
 
-    /// `source` is the log the response was read from; `file` names the log
-    /// whose turn it counts toward. A subagent's responses leave that turn's
-    /// model and project alone.
     private func add(_ record: AgentUsageRecord, billable: AgentBillable, key: String, source: String,
                      turn file: String?, subagent: Bool) {
         var delta = record.tokens
@@ -242,8 +206,6 @@ final class AgentUsageStore {
             sources.append([source])
         }
         guard let file else { return }
-        // Noted before the turn check, which skips a reply dated before its
-        // turn started: the model answered all the same.
         replies[file] = max(replies[file] ?? record.date, record.date)
         guard var turn = turns[file] ?? waiting[file],
               record.date >= turn.started.addingTimeInterval(-1) else { return }
@@ -258,15 +220,11 @@ final class AgentUsageStore {
         turns[file] = turn
     }
 
-    /// Prices every response again, after a newer list arrives. List-derived
-    /// rows recalculate against the new prices, while reported provider charges stay intact.
     func reprice() {
         summary.invalidate()
         for position in records.indices {
             guard !records[position].reportedCost else { continue }
             let priced = AgentPricing.cost(billables[position], model: records[position].model)
-            // A zero OpenCode recorded for a model the list still does not
-            // know stays that reply's cost.
             let recordedZero = records[position].provider == .opencode && records[position].cost == 0
             records[position].cost = priced.cost ?? (recordedZero ? 0 : nil)
             records[position].savings = priced.savings
@@ -277,8 +235,6 @@ final class AgentUsageStore {
         limits[reading.provider] = reading
     }
 
-    /// Keeps the newer of two readings of an account, whichever way each
-    /// one arrived.
     func updateLimits(_ reading: AgentLimits) {
         if (limits[reading.provider]?.observedAt ?? .distantPast) <= reading.observedAt {
             limits[reading.provider] = reading
@@ -289,10 +245,6 @@ final class AgentUsageStore {
         limits[provider] = nil
     }
 
-    /// A turn that has written nothing for this long is not being worked on:
-    /// its process ended without a word, or it waits on something outside.
-    /// It waits aside for a while, since work can resume after an approval
-    /// or a long command.
     func closeIdleTurns(now: Date, after idle: TimeInterval) {
         for (file, turn) in turns where now.timeIntervalSince(turn.lastActivity) >= idle {
             turns[file] = nil
@@ -302,10 +254,6 @@ final class AgentUsageStore {
         replies = replies.filter { turns[$0.key] != nil || waiting[$0.key] != nil }
     }
 
-    /// A turn whose last step ended expecting more, with nothing after it
-    /// for a while, stopped there, as when OpenCode's loop stops on a
-    /// rejected tool call: it ends without a notice, since nothing finished.
-    /// True when one was showing.
     @discardableResult
     func closeSettledTurns(now: Date) -> Bool {
         var removed = false
@@ -317,13 +265,6 @@ final class AgentUsageStore {
         return removed
     }
 
-    /// A Claude session quit or killed in the middle of a turn, as when its
-    /// terminal closes, writes nothing that ends the turn. Its process
-    /// record says so sooner than the quiet wait: the record names a process
-    /// that no longer runs, or a record seen running is gone. A session that
-    /// keeps no record waits as before. At launch, a turn the logs left open
-    /// without a record is over too, once the records could be read. True
-    /// when a turn was showing.
     @discardableResult
     func closeEndedTurns(_ processes: AgentSessionRegistry, atLaunch: Bool = false) -> Bool {
         registered.formIntersection(turns.keys)
@@ -341,16 +282,6 @@ final class AgentUsageStore {
         return closed
     }
 
-    /// Claude Code retries for minutes without a word while the Mac is
-    /// offline, then gives up; until it does, its turn would count on. Once
-    /// the Mac, offline since `offline`, has been awake that way for
-    /// `offlineGrace`, Claude's turns end without a notice, quiet ones too,
-    /// so a retry that gets through opens a turn of its own. A turn whose
-    /// model replied since then runs on a model on the Mac, and a turn in
-    /// `running` waits on a command that runs here. A Codex turn opens only
-    /// when its task starts, so it could not come back while the task goes
-    /// on, and nothing shows that Copilot retries without a word: both are
-    /// left alone. True when a turn was showing.
     @discardableResult
     func closeOfflineTurns(since offline: Date, lasting elapsed: TimeInterval,
                            keeping running: @autoclosure () -> Set<String> = []) -> Bool {
@@ -369,9 +300,6 @@ final class AgentUsageStore {
 
     var showsClaudeTurn: Bool { turns.values.contains { $0.provider == .claude } }
 
-    /// What is kept between launches: every counter the logs gave, and none
-    /// of their text. OpenCode's database is read again at each launch, so
-    /// nothing it gave is kept.
     struct Saved: Equatable {
         struct Record: Equatable {
             let key: String
@@ -414,16 +342,11 @@ final class AgentUsageStore {
         waiting = Dictionary(saved.waiting.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
     }
 
-    /// Keeps memory bounded to the history the island can show.
     func dropRecords(before date: Date) {
         guard records.contains(where: { $0.date < date }) else { return }
         keepRecords { records[$0].date >= date }
     }
 
-    /// Takes back what logs gone or rewritten since they were read gave, as
-    /// reading every log from its start would: a response only they held
-    /// goes, one another log also holds stays. Their turns end without a
-    /// notice.
     func forget(files: Set<String>) {
         for file in files { forget(file: file) }
         var emptied = false
@@ -434,14 +357,12 @@ final class AgentUsageStore {
         if emptied { keepRecords { !sources[$0].isEmpty } }
     }
 
-    /// The logs holding a response that one of `files` also holds.
     func files(sharingWith files: Set<String>) -> Set<String> {
         var sharing = Set<String>()
         for list in sources where list.contains(where: files.contains) { sharing.formUnion(list) }
         return sharing
     }
 
-    /// Every log that gave a response or holds a turn.
     var files: Set<String> {
         Set(sources.joined()).union(turns.keys).union(waiting.keys)
     }
@@ -465,13 +386,10 @@ final class AgentUsageStore {
     }
 }
 
-/// Where each agent keeps its session logs.
 struct AgentLogRoot: Equatable {
     let provider: AgentProvider
     let url: URL
 
-    /// Canonical, because file events report real paths: a folder kept as a
-    /// link elsewhere, as dotfile setups do, would otherwise never match.
     static func all(home: URL = FileManager.default.homeDirectoryForCurrentUser,
                     claudeProfile: ClaudeAccountProfile = ClaudeAccountProfile()) -> [AgentLogRoot] {
         let claude = claudeProfile.logURLs(home: home).map { AgentLogRoot(provider: .claude, url: canonical($0)) }
@@ -481,8 +399,6 @@ struct AgentLogRoot: Equatable {
         }
     }
 
-    /// The path the file system reports for `url`; the path as given while
-    /// nothing exists there yet.
     static func canonical(_ url: URL) -> URL {
         guard let resolved = realpath(url.path, nil) else { return url }
         defer { free(resolved) }
@@ -494,7 +410,6 @@ struct AgentLogRoot: Equatable {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
     }
 
-    /// Discovery and live file events admit the same provider-specific logs.
     func accepts(_ path: String) -> Bool {
         let prefix = url.path + "/"
         guard path.hasPrefix(prefix) else { return false }
@@ -506,21 +421,12 @@ struct AgentLogRoot: Equatable {
     }
 }
 
-/// The Claude sessions with a process, from the `sessions/<pid>.json` record
-/// Claude Code keeps beside its logs while it runs. A process that exits
-/// removes its record; one that is killed leaves it behind.
 struct AgentSessionRegistry: Equatable {
-    /// Session ids, which name their log files, with a running process.
     var running: Set<String> = []
-    /// Session ids whose recorded process no longer runs.
     var ended: Set<String> = []
-    /// False when a record could not be read, as while it is being written,
-    /// so a missing session proves nothing.
     var complete = true
-    /// A sessions folder could be listed, so this Claude Code keeps records.
     var listed = false
 
-    /// `folders` are the `sessions` folders beside each Claude log root.
     static func read(_ folders: [URL], isRunning: (Int32) -> Bool = AgentSessionRegistry.isRunning) -> AgentSessionRegistry {
         var registry = AgentSessionRegistry()
         for folder in folders {
@@ -533,13 +439,10 @@ struct AgentSessionRegistry: Equatable {
                     registry.complete = false
                     continue
                 }
-                // A session run in a container or virtual machine that shares
-                // this folder names a process this Mac cannot see.
                 if let domain = json["pidDomain"] as? String, domain != "darwin" { continue }
                 if isRunning(Int32(clamping: pid)) { registry.running.insert(session) } else { registry.ended.insert(session) }
             }
         }
-        // A session resumed by a new process after an old one was killed.
         registry.ended.subtract(registry.running)
         return registry
     }
@@ -549,17 +452,13 @@ struct AgentSessionRegistry: Equatable {
     }
 }
 
-/// How far into one log file reading has got.
 final class AgentLogCursor {
     let path: String
     let provider: AgentProvider
-    /// Subagents report to a turn another file tracks.
     var tracksTurns: Bool {
         provider == .claude ? parent == nil : (provider == .codex ? !state.codexSubagent : true)
     }
-    /// The session log a Claude subagent works for.
     let parent: String?
-    /// Replies still being written and the rows read last, for a database.
     var openCode = AgentOpenCodeProgress()
     var offset: UInt64 = 0
     var identity: UInt64 = 0
@@ -567,12 +466,7 @@ final class AgentLogCursor {
     var discarding = false
     var state = AgentLogState()
     var modified = Date.distantPast
-    /// Set when the log turned out replaced, cut short or written again after
-    /// part of it was read. What its old contents gave is still counted, so
-    /// its progress is not saved: the next launch reads it as rewritten.
     private(set) var restarted = false
-    /// The log of the thread a Codex subagent works for, and how many logs
-    /// there were when it was looked for. Not saved: a relaunch looks again.
     private var codexParentLog: String?
     private var codexParentSearch = -1
 
@@ -583,10 +477,6 @@ final class AgentLogCursor {
         self.parent = parent
     }
 
-    /// The log whose turn a Codex subagent's responses count toward. It can
-    /// be read after the subagent's or move, and a reverted thread goes on in
-    /// a new log, so it is looked for again when a log turns up or the one
-    /// found goes away; the one written last is the thread's current log.
     func codexParent(among cursors: [String: AgentLogCursor]) -> String? {
         guard provider == .codex, !state.codexRoot.isEmpty, !tracksTurns else { return nil }
         if codexParentSearch != cursors.count || codexParentLog.map({ cursors[$0] == nil }) == true {
@@ -598,8 +488,6 @@ final class AgentLogCursor {
         return codexParentLog
     }
 
-    /// Where reading stopped, at a line boundary: a line still being written
-    /// is read again whole from the file.
     struct Saved: Equatable {
         let path: String
         let provider: AgentProvider
@@ -608,20 +496,13 @@ final class AgentLogCursor {
         let discarding: Bool
         let modified: Date
         let state: AgentLogState
-        /// Tells the log that was read from one rewritten in place, which
-        /// keeps its inode.
         let fingerprint: UInt64
     }
 
-    /// The fingerprint taken right after reading, so saved progress
-    /// describes the bytes as they were read, not as they are when saving.
     private var fingerprinted: (offset: UInt64, identity: UInt64, value: UInt64)?
 
-    /// Where a resumed read picks up: the start of a line still being
-    /// written, or past a line too long to keep.
     private var boundary: UInt64 { discarding ? offset : offset - UInt64(pending.count) }
 
-    /// Reads the log again from its start.
     func startOver(identity: UInt64) {
         if offset > 0 { restarted = true }
         self.identity = identity
@@ -639,9 +520,6 @@ final class AgentLogCursor {
         fingerprinted = AgentLogReader.fingerprint(path, upTo: end).map { (end, identity, $0) }
     }
 
-    /// False once the log no longer holds what was read: written again in
-    /// place, perhaps past where reading stopped, which its size and inode
-    /// alone do not show.
     var holdsWhatWasRead: Bool {
         guard let taken = fingerprinted, taken.identity == identity else { return true }
         return AgentLogReader.fingerprint(path, upTo: taken.offset) == taken.value
@@ -660,9 +538,6 @@ final class AgentLogCursor {
                      modified: modified, state: state, fingerprint: fingerprint)
     }
 
-    /// Nil when the path no longer holds the log that was read up to the
-    /// saved offset: replaced by another file, or cut short and written
-    /// again in place.
     convenience init?(saved: Saved) {
         var info = stat()
         guard stat(saved.path, &info) == 0, UInt64(info.st_ino) == saved.identity,
@@ -676,8 +551,6 @@ final class AgentLogCursor {
         fingerprinted = (saved.offset, saved.identity, saved.fingerprint)
     }
 
-    /// Claude Code keeps a session's subagents in `<session>/subagents/`,
-    /// beside the session's own `<session>.jsonl`.
     static func parent(of path: String) -> String? {
         guard let range = path.range(of: "/subagents/", options: .backwards) else { return nil }
         return String(path[..<range.lowerBound]) + ".jsonl"
@@ -686,8 +559,6 @@ final class AgentLogCursor {
 
 enum AgentLogReader {
     static let chunkSize = 4 << 20
-    /// A line longer than this is a pasted file or a tool's output, never a
-    /// usage record; it is skipped rather than held in memory.
     static let maximumLine = 32 << 20
 
     static func isLog(_ path: String) -> Bool {
@@ -696,20 +567,13 @@ enum AgentLogReader {
         return path.hasSuffix(".jsonl")
     }
 
-    /// A hash of the log's first and last few kilobytes before `offset`, and
-    /// of the offset itself. A log rewritten with a different start, or
-    /// different lines just before where reading stopped, no longer matches.
-    /// Nil when the file cannot be read that far.
     static func fingerprint(_ path: String, upTo offset: UInt64) -> UInt64? {
-        // Without O_NONBLOCK a FIFO named like a log would block the open,
-        // and a stop waiting for the usage queue with it.
         let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK)
         guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }
         var info = stat()
         guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
         let span: UInt64 = 4096
-        // FNV-1a: stable across launches, unlike `Hasher`.
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         func mix(_ bytes: UnsafeRawBufferPointer) {
             for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01B3 }
@@ -725,10 +589,6 @@ enum AgentLogReader {
         return hash
     }
 
-    /// Log files changed since `horizon`, newest last so live turns settle
-    /// on the most recent state. Claude subagents come after every session,
-    /// so the turn each one works for already stands when its responses are
-    /// read.
     static func discover(_ roots: [AgentLogRoot], since horizon: Date) -> [(path: String, provider: AgentProvider)] {
         var found: [(path: String, provider: AgentProvider, modified: Date, subagent: Bool)] = []
         let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
@@ -740,8 +600,6 @@ enum AgentLogReader {
             found.append((url.path, root.provider, modified, subagent))
         }
         for root in roots where root.exists {
-            // OpenCode keeps its database beside the snapshots, clones and
-            // logs of its data folder, which are never walked.
             if root.provider == .opencode {
                 let path = root.url.appending(path: AgentOpenCodeReader.database).path
                 if let modified = AgentOpenCodeReader.modified(path), modified >= horizon {
@@ -749,10 +607,6 @@ enum AgentLogReader {
                 }
                 continue
             }
-            // A Copilot session can contain a complete workspace checkout,
-            // databases and checkpoints. Its log has one fixed shallow path;
-            // recursively walking the workspace can delay the first snapshot
-            // indefinitely on a large repository.
             if root.provider == .copilot {
                 let sessions = (try? FileManager.default.contentsOfDirectory(
                     at: root.url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
@@ -769,10 +623,6 @@ enum AgentLogReader {
             .map { ($0.path, $0.provider) }
     }
 
-    /// Reads what was appended since the last call and hands over each
-    /// complete line. A replaced or truncated file starts over.
-    /// A database has no files to leave out, so its first read starts at
-    /// `horizon` instead.
     static func readAppended(_ cursor: AgentLogCursor, since horizon: Date = .distantPast,
                              shouldContinue: () -> Bool = { true },
                              including: ((Data, Range<Int>) -> Bool)? = nil, line: (Data) -> Void) {
@@ -797,8 +647,6 @@ enum AgentLogReader {
         do { try handle.seek(toOffset: cursor.offset) } catch { return }
         while cursor.offset < size, shouldContinue() {
             let wanted = Int(min(UInt64(chunkSize), size - cursor.offset))
-            // A first read can cover gigabytes; each chunk and what was parsed
-            // from it are released before the next one.
             let read: Bool = autoreleasepool {
                 guard let chunk = try? handle.read(upToCount: wanted), !chunk.isEmpty else { return false }
                 cursor.offset += UInt64(chunk.count)
@@ -809,16 +657,11 @@ enum AgentLogReader {
         }
     }
 
-    /// Skip unrelated payloads before copying a line. Only top-level event
-    /// types count, including in whitespace-formatted logs or nested results.
     static func copilotHistoryLine(_ buffer: Data, range: Range<Int>) -> Bool {
         guard let type = AgentLogObject(buffer, range: range)?.string("type") else { return false }
         return AgentLogParser.copilotEvent(type)
     }
 
-    /// Streams every structural event so responses keep their original date
-    /// and model, and the final turn state is restored. The line filter keeps
-    /// unrelated workspace output from being copied or decoded.
     static func readCopilotHistory(_ cursor: AgentLogCursor, shouldContinue: () -> Bool = { true },
                                    line: (Data) -> Void) {
         readAppended(cursor, shouldContinue: shouldContinue, including: copilotHistoryLine, line: line)
@@ -833,8 +676,6 @@ enum AgentLogReader {
         var lines: [Range<Int>] = []
         buffer.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
-            // What was carried over holds no line break; a long line is
-            // not searched again with every chunk it spans.
             var position = cursor.pending.count
             while position < count, let found = memchr(base + position, 0x0A, count - position) {
                 let end = base.distance(to: UnsafeRawPointer(found))
@@ -852,8 +693,6 @@ enum AgentLogReader {
                 line(buffer.subdata(in: range))
             }
         }
-        // Once a line is oversized, scan only for its terminator. Retaining
-        // subsequent fragments would rebuild a buffer we can never deliver.
         if cursor.discarding || count - start > maximumLine {
             cursor.pending = Data()
             cursor.discarding = true
@@ -863,9 +702,6 @@ enum AgentLogReader {
     }
 }
 
-/// File-level change notifications for the log folders, delivered on the
-/// usage queue. The system coalesces bursts, so a busy agent costs one
-/// callback a second at most.
 final class AgentLogWatcher {
     private var stream: FSEventStreamRef?
     private let queue: DispatchQueue
@@ -882,8 +718,6 @@ final class AgentLogWatcher {
     func start(_ paths: [String]) -> Bool {
         stop()
         guard !paths.isEmpty else { return false }
-        // The stream holds the watcher until it is released, so a callback
-        // already queued can never outlive it.
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
             retain: { info in

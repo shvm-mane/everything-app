@@ -3,9 +3,6 @@
 
 import Foundation
 
-/// Reads Codex session logs. Token records and running-total events become
-/// usage, task events open and close turns, and limit readings become the
-/// account's allowance windows.
 struct CodexReader: AgentHarnessReader {
     var provider: AgentProvider { .codex }
 
@@ -21,20 +18,14 @@ struct CodexReader: AgentHarnessReader {
         let date = AgentLogParser.timestamp(json["timestamp"]) ?? now
         switch json["type"] as? String {
         case "session_meta":
-            // History copied from another thread repeats that thread's
-            // metadata; only the first line describes this log's own thread.
             let id = payload["id"] as? String ?? ""
             if !id.isEmpty { state.codexTotalsSession = AgentLogParser.native(id) }
             guard !state.codexHeaderRead else { return [] }
             state.codexHeaderRead = true
             if !id.isEmpty { state.session = AgentLogParser.native(id) }
             if let cwd = payload["cwd"] as? String, !cwd.isEmpty { state.project = AgentLogParser.projectName(cwd) }
-            // Subagents, reviews and memory tasks Codex starts itself name
-            // `subagent` or `internal`; a person's thread names its client.
             let source = payload["source"] as? [String: Any]
             state.codexSubagent = source?["subagent"] != nil || source?["internal"] != nil
-            // A subagent's session is the thread a person started, however
-            // deep it runs; its parent thread stands in when that is missing.
             let root = payload["session_id"] as? String ?? payload["parent_thread_id"] as? String ?? ""
             if state.codexSubagent, !root.isEmpty, root != state.session { state.codexRoot = AgentLogParser.native(root) }
             return []
@@ -72,8 +63,6 @@ struct CodexReader: AgentHarnessReader {
                     entries.append(.plan(plan, observedAt: date))
                 }
             }
-            // Running totals repeat when only the limits changed; a response
-            // is whatever the total grew by since the previous reading.
             if !state.sawUsageRecords, let info = payload["info"] as? [String: Any],
                let totalUsage = info["total_token_usage"] as? [String: Any] {
                 let total = AgentLogParser.codexTokens(totalUsage)

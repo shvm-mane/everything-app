@@ -18,8 +18,6 @@ struct NotchVolumeKeyGate {
         if state == 0x0b { return held.remove(keyCode) != nil ? .consume : .passThrough }
         guard state == 0x0a else { return .passThrough }
         let ownsPress = held.contains(keyCode)
-        // Visibility selects the owner only at key-down. Never take a native
-        // repeat, or send half of an intercepted press back to the system.
         guard !isRepeat || ownsPress else { return .passThrough }
         guard enabled, (isRepeat || acceptsNewPress), !commandOrControl, !option || shift,
               key == .mute ? hasMute : hasVolume else { return ownsPress ? .consume : .passThrough }
@@ -28,8 +26,6 @@ struct NotchVolumeKeyGate {
         return .step(key == .volumeUp ? 1 : -1)
     }
 
-    /// Matches macOS: Shift inverts "Play feedback when volume is changed",
-    /// except with Option, where Option-Shift only selects fine steps.
     static func playsFeedback(setting: Bool, option: Bool, shift: Bool) -> Bool {
         shift && !option ? !setting : setting
     }

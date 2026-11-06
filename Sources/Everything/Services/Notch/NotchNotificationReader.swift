@@ -26,11 +26,6 @@ extension NotchNotificationReaderCore where Access == NotchNativeNotificationAcc
     }
 }
 
-/// Resolves a notification's source among running and installed apps, so a
-/// message from a closed app keeps its icon and can still open the app after
-/// its native banner is gone (issue #2027). The installed list is walked on
-/// the notification queue at most every few minutes; the main thread only
-/// reads the last walk.
 enum NotchNotificationSources {
     typealias Identity = (name: String, bundleIdentifier: String)
     private static let lock = NSLock()
@@ -60,8 +55,6 @@ enum NotchNotificationSources {
     }
 }
 
-/// Thin native adapter. The core owns traversal, identity checks, budgets and
-/// action order; this type only translates its operations to accessibility calls.
 struct NotchNativeNotificationAccess: NotchNotificationAccess {
     typealias Element = AXUIElement
     private enum Failure: Error { case unavailable }
@@ -79,8 +72,6 @@ struct NotchNativeNotificationAccess: NotchNotificationAccess {
     }
 
     func hasFocusedWindow() throws -> Bool {
-        // AXNoValue means no focused window; an unsupported attribute cannot
-        // establish that the center is closed, so it fails the read instead.
         guard let value = try value(application, kAXFocusedWindowAttribute, allowsUnsupported: false) else { return false }
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else { throw Failure.unavailable }
         return true
@@ -108,9 +99,6 @@ struct NotchNativeNotificationAccess: NotchNotificationAccess {
         return actions
     }
 
-    /// Global screen coordinates with the origin at the top left, the same
-    /// space as the display bounds the core compares against. Nil once the
-    /// window is gone or when it has no position to move.
     func frame(_ element: AXUIElement) throws -> CGRect? {
         AXUIElementSetMessagingTimeout(element, 0.1)
         var result: CFTypeRef?

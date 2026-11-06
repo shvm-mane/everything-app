@@ -4,8 +4,6 @@
 import AppKit
 import Combine
 
-/// Shared state for the chooser. Every overlay panel observes the same value,
-/// so changing a mode on one display updates the controls on all displays.
 final class ScreenCaptureSelectionOptions: ObservableObject {
     let availableTools: [ScreenCaptureTool]
     let showsCaptureMenu: Bool
@@ -35,19 +33,11 @@ final class ScreenCaptureSelectionOptions: ObservableObject {
     }
 }
 
-/// One entry point for screenshot, recording, screen text and color. It owns
-/// each tool's own capture shortcut and one shared selection surface; the
-/// established feature services still own what happens after selection.
 final class ScreenCaptureService: ObservableObject {
     static let shared = ScreenCaptureService()
 
-    /// The tools whose own shortcut could not be registered, so each tool's
-    /// settings can say so.
     @Published private(set) var toolShortcutRegistrationFailures: Set<ScreenCaptureTool> = []
 
-    /// One hotkey per tool, built from the tool list so a new mode cannot be
-    /// added without one. Ids continue past the hand-assigned quick tool
-    /// range, which ends at 24.
     private let toolHotkeys: [ScreenCaptureTool: QuickToolHotkey] = {
         var next: UInt32 = 25
         var hotkeys: [ScreenCaptureTool: QuickToolHotkey] = [:]
@@ -89,9 +79,6 @@ final class ScreenCaptureService: ObservableObject {
         syncToolShortcuts(availableTools: availableTools, defaults: UserDefaults.standard)
     }
 
-    /// A tool's own shortcut opens the same chooser already on that mode. A
-    /// tool whose feature is not installed leaves its combination free for
-    /// whatever else wants it.
     private func syncToolShortcuts(availableTools: [ScreenCaptureTool],
                                    defaults: UserDefaults) {
         var failures: Set<ScreenCaptureTool> = []
@@ -111,9 +98,6 @@ final class ScreenCaptureService: ObservableObject {
         cancelSelection()
     }
 
-    /// Opens the same chooser from every feature surface. A feature-specific
-    /// button merely picks the initial mode; the person can switch before
-    /// selecting anything.
     func capture(initial preferred: ScreenCaptureTool? = nil, fromShortcut: Bool = false) {
         let recorder = ScreenRecorderService.shared
         if preferred == .recording, AppFeature.screenRecorder.isAvailable,
@@ -135,13 +119,9 @@ final class ScreenCaptureService: ObservableObject {
         let selected = preferred.flatMap { available.contains($0) ? $0 : nil }
             ?? (available.contains(.screenshot) ? .screenshot : available[0])
         if duringRecording, selected != preferred { return }
-        // The digit keys switch tools even with the menu hidden, so a
-        // selection that runs over a recording offers only its own tool.
         let tools = duringRecording ? [selected] : available
 
         guard Permissions.shared.screenRecording else {
-            // Color sampling itself needs no capture permission, so its
-            // direct action keeps the native path when capture access is off.
             if selected == .color {
                 ColorSamplerService.shared.pickNative()
             } else {
@@ -192,7 +172,6 @@ final class ScreenCaptureService: ObservableObject {
         let options = ScreenCaptureSelectionOptions(availableTools: tools,
                                                     selectedTool: selected,
                                                     showsCaptureMenu: showsCaptureMenu,
-                                                    // Everything: picking a colour leaves the island alone.
                                                     controlsInNotch: selected != .color
                                                         && NotchSupport.routesCaptureControls() && NotchService.shared.acceptsSystemFeedback)
         self.options = options
@@ -217,18 +196,10 @@ final class ScreenCaptureService: ObservableObject {
             protectedWindowIDs: { [weak options] in
                 var windows: Set<CGWindowID> = []
                 if AppFeature.screenshot.isAvailable {
-                    // The tool can still change while the selection is up, so it
-                    // is read here rather than captured. A session on its way out
-                    // leaves no tool, and keeps both kinds out.
                     let tool = options?.selectedTool
                     windows = ScreenshotService.shared.protectedWindowIDsForCapture(
                         honoursVisibilityPreference: tool != nil && tool != .recording)
                 }
-                // The island follows its own preference even without the
-                // screenshot feature, and the capture controls it turns into
-                // never belong in the pixels.
-                // Everything: the colour picker's frozen screen keeps the
-                // island in it, so the island never seems to vanish.
                 if NotchSupport.isEnabled(), options?.selectedTool != .color {
                     windows.formUnion(NotchService.shared.protectedWindowIDs)
                 }
@@ -256,7 +227,6 @@ final class ScreenCaptureService: ObservableObject {
             self.options = nil
             self.route(outcome, selected: options.selectedTool,
                        recorderAudio: options.recorderAudio)
-            // The frozen screens and the loupe are gone now.
             MemoryRelief.soon()
         }
     }

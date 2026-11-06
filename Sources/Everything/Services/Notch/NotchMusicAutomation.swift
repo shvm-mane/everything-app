@@ -4,15 +4,11 @@
 import AppKit
 import CoreServices
 
-/// Apple Events stay in this process so consent belongs to this app. Addressing
-/// the running PID cannot fall through to the system's currently playing video.
 enum NotchMusicAutomation {
     struct Target: Equatable {
         let pid: Int32
         let bundleIdentifier: String
         let bundleURL: URL
-        /// Nil when Launch Services did not start the player, as for a process
-        /// launchd spawned; the bundle checks still bind the process identity.
         let launched: Date?
 
         init?(_ playback: NotchPlayback) {
@@ -67,8 +63,6 @@ enum NotchMusicAutomation {
                                       returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
     }
 
-    /// Reads the player's shuffle switch with nil, or sets it. Like seeking,
-    /// only the property the player's dictionary declares is addressed.
     static func shuffleEvent(_ enabled: Bool?, capabilities: NotchMusicAutomationCapabilities,
                              pid: Int32) -> NSAppleEventDescriptor? {
         guard pid > 0, let shuffle = capabilities.shuffle,
@@ -83,21 +77,16 @@ enum NotchMusicAutomation {
         return propertyEvent(kAEGetData, code: allowed, address: NSAppleEventDescriptor(processIdentifier: pid))
     }
 
-    /// Only a Boolean answer is a state; anything else leaves it unknown.
     static func shuffleState(in reply: NSAppleEventDescriptor) -> Bool? {
         guard let value = reply.paramDescriptor(forKeyword: keyDirectObject),
               [typeTrue, typeFalse, typeBoolean].contains(value.descriptorType) else { return nil }
         return value.booleanValue
     }
 
-    /// Nil when the player cannot be asked or does not answer with a state.
     static func shuffle(of availability: Availability) -> Bool? {
         read(shuffleEvent(nil, capabilities: availability.capabilities, pid: availability.target.pid), from: availability)
     }
 
-    /// False only when the player says the songs playing cannot be shuffled,
-    /// as some do for a radio. A player that does not say, or cannot be
-    /// asked before consent, keeps the button that asks for it.
     static func shuffleAllowed(by availability: Availability) -> Bool {
         guard availability.capabilities.shuffleAllowed != nil else { return true }
         return read(shuffleAllowedEvent(capabilities: availability.capabilities, pid: availability.target.pid),
@@ -118,7 +107,6 @@ enum NotchMusicAutomation {
         return (reply.paramDescriptor(forKeyword: keyErrorNumber)?.int32Value ?? 0) == 0
     }
 
-    /// Gets or sets one property of the application itself.
     private static func propertyEvent(_ eventID: AEEventID, code: UInt32,
                                       address: NSAppleEventDescriptor) -> NSAppleEventDescriptor? {
         let specifier = NSAppleEventDescriptor.record()
@@ -140,7 +128,6 @@ enum NotchMusicAutomation {
               let event = event(command, playback: playback, capabilities: availability.capabilities, pid: availability.target.pid),
               !cancellation.isCancelled, availability.target.isCurrent,
               ProcessInfo.processInfo.systemUptime - validatedAt < 0.5 else { return false }
-        // A timeout may occur after delivery. Never retry a playback action.
         guard let reply = try? event.sendEvent(options: [.waitForReply, .neverInteract, .dontRecord], timeout: 1) else { return false }
         return (reply.paramDescriptor(forKeyword: keyErrorNumber)?.int32Value ?? 0) == 0
     }

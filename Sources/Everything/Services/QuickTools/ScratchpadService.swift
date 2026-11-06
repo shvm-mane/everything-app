@@ -6,29 +6,16 @@ import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A floating pad for short-lived text: meeting notes, numbers, fragments on
-/// their way somewhere else. Summoned from the panel, the quick panel or a
-/// global shortcut, it saves every edit by itself in a small tabbed document, so
-/// nothing runs at rest and edits remain available between openings. It steps
-/// aside on a click outside, and an option keeps it floating over other apps
-/// instead.
 final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = ScratchpadService()
 
     @Published private(set) var shortcutRegistrationFailed = false
     @Published private(set) var isPinned = false
     @Published private(set) var isPreviewing = false
-    /// Not a preference: the row is a thing you reach for while writing, not a
-    /// choice about the pad, so every opening starts without it and one click
-    /// brings it back. Held here rather than in either view so both pads agree
-    /// while the pad is up.
     @Published private(set) var marksExpanded = false
     @Published private(set) var pads: [ScratchpadPad] = []
     @Published private(set) var selectedPadID: UUID?
-    /// Both pads show this in place until a write succeeds again.
     @Published private(set) var saveFailed = false
-    /// Bumped when Command-W asks the view to close the selected tab
-    /// (so confirmation stays in SwiftUI).
     @Published private(set) var keyboardCloseSelectedPadSerial = 0
     @Published var text = "" {
         didSet {
@@ -69,7 +56,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
                                                   storageKey: DefaultsKey.scratchpadShortcut)
         if !available {
             hide()
-            // Uninstalled in the hub: nothing stays resident.
             panel = nil
         }
     }
@@ -83,68 +69,26 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         panel?.isVisible == true
     }
 
-    /// The shortcut is a strict toggle only while the pad has the keyboard:
-    /// visible but unfocused, it grabs focus instead of closing, so one press
-    /// always lands the caret in the text.
     func toggle() {
         guard !modalInteractionActive else { return }
         _ = NotchService.shared.showScratchpad(toggle: true)
         if isVisible { hide() }
         return ()
-        if isVisible, panel?.isKeyWindow == true {
-            hide()
-        } else {
-            show()
-        }
     }
 
-    /// The island's own open action passes false: it moves the document out
-    /// to the floating pad instead of routing it back into the island.
     func show(allowsIsland: Bool = true) {
         guard AppFeature.scratchpad.isAvailable, !modalInteractionActive else { return }
-        // Everything: the scratchpad lives only in the island (Wisp's editor).
         _ = NotchService.shared.showScratchpad()
         if isVisible { hide() }
         return ()
-        if isVisible {
-            focusText(requiresKeyWindow: false)
-            return
-        }
-        isPreviewing = false
-        marksExpanded = false
-        isPinned = !closesOnClickOutside
-        guard loadApplyingRetention() else {
-            QuickToolHUD.show(
-                icon: "exclamationmark.triangle",
-                message: FeatureStrings.scratchpad(L10n.shared.language).loadFailed)
-            return
-        }
-        let panel = ensurePanel()
-        installMonitors(for: panel)
-        // The pad keeps the spot and size the user gave it while the app
-        // runs; it only re-centers when that spot is no longer on any screen.
-        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(panel.frame) }) {
-            center(panel)
-        }
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        focusText(requiresKeyWindow: false)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.13
-            panel.animator().alphaValue = 1
-        }
     }
 
-    /// The island edits the same document in place: load it (or the current
-    /// copy) without showing the floating pad, and commit when it leaves.
     func loadForEmbedding() -> Bool {
         guard AppFeature.scratchpad.isAvailable else { return false }
         marksExpanded = false
         return loadApplyingRetention()
     }
 
-    /// The inline warning leaves with the pad or the island, so a final
-    /// write that fails on the way out falls back to the HUD.
     func commitEdits() {
         flushSave()
         if saveFailed {
@@ -201,7 +145,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         _ = save(document)
     }
 
-    /// A failed write keeps the edits in memory and retries on the next change.
     private func save(_ next: ScratchpadDocument) -> Bool {
         saveFailed = !store.save(next)
         return !saveFailed
@@ -252,14 +195,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         modalInteractionActive = active
     }
 
-    /// Settings export asks for a current document only when the user invokes
-    /// it; normal app launch still performs no scratchpad content read.
     func prepareForSettingsBackup() {
         if hasLoaded { flushSave() } else { loadApplyingRetention() }
     }
 
-    /// Import intentionally replaces settings. Drop the in-memory document so
-    /// the termination flush cannot overwrite the restored backup on the way out.
     func prepareForSettingsRestore() {
         pendingSave?.cancel()
         pendingSave = nil
@@ -278,15 +217,9 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         pasteboard.setString(text, forType: .string)
     }
 
-    /// Clearing goes through the text view when it is up, so one Cmd+Z brings
-    /// everything back while the pad stays open. The island passes its own
-    /// editor for the same undo there.
     func clear(through editor: NSTextView? = nil) {
         guard !text.isEmpty else { return }
         if let textView = editor ?? textView.flatMap({ $0.window === panel ? $0 : nil }) {
-            // A live input-method composition holds a marked range into the
-            // storage; replacing the whole text underneath it leaves that
-            // range pointing at nothing. Commit it first.
             if textView.hasMarkedText() { textView.unmarkText() }
             let full = NSRange(location: 0, length: (textView.string as NSString).length)
             if textView.shouldChangeText(in: full, replacementString: "") {
@@ -303,17 +236,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         flushSave()
     }
 
-    /// A checkbox clicked in the formatted reading flips its box through the
-    /// text view when it is up, so the click is one edit that Cmd+Z takes
-    /// back and the history typed before it stays. The island passes its own
-    /// editor for the same undo there.
     func toggleTask(box: Int, through editor: NSTextView? = nil) {
         if let textView = editor ?? textView.flatMap({ $0.window === panel ? $0 : nil }) {
-            // A live input-method composition holds a marked range into the
-            // storage; editing around it leaves that range pointing at nothing.
             if textView.hasMarkedText() { textView.unmarkText() }
             guard let edit = ScratchpadSupport.taskToggleEdit(box: box, in: textView.string) else { return }
-            // Its own undo step, never folded into the typing before it.
             textView.breakUndoCoalescing()
             guard textView.shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
             textView.replaceCharacters(in: edit.range, with: edit.replacement)
@@ -325,17 +251,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         flushSave()
     }
 
-    /// The toolbar types the Markdown the user would have typed, through the
-    /// text view so one Cmd+Z takes the whole mark back. The island passes its
-    /// own editor for the same undo there.
     func apply(_ mark: ScratchpadMark, through editor: NSTextView? = nil) {
         guard !isPreviewing else { return }
         guard let textView = editor ?? textView.flatMap({ $0.window === panel ? $0 : nil }) else { return }
-        // A live input-method composition holds a marked range into the
-        // storage; editing around it leaves that range pointing at nothing.
         if textView.hasMarkedText() { textView.unmarkText() }
-        // Clicking a button takes first responder away from the editor, and a
-        // selection set on a view that is not first responder does not show.
         textView.window?.makeFirstResponder(textView)
         let edit = ScratchpadSupport.edit(applying: mark,
                                           to: textView.string,
@@ -375,9 +294,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         isPinned = !closesOnClickOutside
     }
 
-    /// Activate for dialog input and return focus to the originating host.
-    /// The island's dialog floats just above it: a sheet would move and
-    /// reskin the borderless surface.
     func exportText(suggestedName: String, from window: NSWindow? = nil) {
         guard !text.isEmpty, !modalInteractionActive, let padID = selectedPadID,
               let sourceWindow = window ?? panel, sourceWindow.isVisible else { return }
@@ -392,35 +308,25 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
             self?.modalInteractionActive = false
             if response == .OK, let url = savePanel.url {
                 do {
-                    // The island's dialog leaves the pad editable, so the file
-                    // gets the pad as it is when the save is confirmed. A pad
-                    // closed meanwhile is reported like any failed write.
                     guard let content = self?.document?.pads.first(where: { $0.id == padID })?.text else {
                         throw CocoaError(.fileNoSuchFile)
                     }
                     try content.write(to: url, atomically: true, encoding: .utf8)
                 } catch {
-                    // A read-only volume or a full disk used to end here in
-                    // silence, with the save panel closed and nothing written.
                     QuickToolHUD.show(
                         icon: "exclamationmark.triangle",
                         message: FeatureStrings.scratchpad(L10n.shared.language).exportFailed)
                 }
             }
-            // Dismissal restores the previous key window after completion.
             DispatchQueue.main.async {
                 if sourceWindow.isVisible { sourceWindow.makeKey() }
             }
         }
         if sourceWindow === NotchService.shared.presentationWindow {
-            // modalInteractionActive keeps the island's working surface
-            // while its independent dialog is up.
             savePanel.level = NSWindow.Level(rawValue: sourceWindow.level.rawValue + 1)
-            // Like the sheet it replaces, it stays up while another app is active.
             savePanel.hidesOnDeactivate = false
             savePanel.begin(completionHandler: complete)
             NSApp.activate(ignoringOtherApps: true)
-            // Activation alone can leave the nonactivating island holding focus.
             savePanel.makeKeyAndOrderFront(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
@@ -430,14 +336,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: - Focus
 
-    /// The editor registers itself while the pad's view is alive; the service
-    /// only ever aims focus and the undoable clear at it.
     func registerTextView(_ view: NSTextView) {
         textView = view
     }
 
-    /// Document actions keep focus in their host. Only an explicit show may
-    /// bring the floating pad forward while the island or another app is key.
     private func focusText(requiresKeyWindow: Bool = true) {
         guard let panel, panel.isVisible, !requiresKeyWindow || panel.isKeyWindow else { return }
         panel.makeKey()
@@ -453,8 +355,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: - Panel
 
-    /// Borderless panels refuse key status by default; the pad needs it so
-    /// typing and Esc work without activating the app.
     private final class KeyableScratchpadPanel: OverlayPanel {
         override var canBecomeKey: Bool { true }
     }
@@ -467,8 +367,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
                                            defer: false)
         panel.title = "EVERYTHING"
         panel.isReleasedWhenClosed = false
-        // Dragging inside the pad must select text, never move the window;
-        // the header strip is the handle.
         panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
         panel.level = .floating
@@ -480,12 +378,8 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         panel.minSize = NSSize(width: 280, height: 220)
         panel.delegate = self
         let host = NSHostingController(rootView: ScratchpadView())
-        // No preferred-size tracking: the pad is user-resizable and the view
-        // fills whatever frame the panel has.
         host.sizingOptions = []
         panel.contentViewController = host
-        // Assigning the content controller shrinks the window to the view's
-        // minimum; restore the pad's starting size.
         panel.setContentSize(NSSize(width: 380, height: 300))
         center(panel)
         self.panel = panel
@@ -511,16 +405,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: - Monitors
 
-    /// Esc always closes the pad, and so does a click anywhere outside it
-    /// unless the user asked for a pad that stays put while working in other
-    /// apps. The choice is read at click time, so flipping it in Settings
-    /// takes effect on an open pad.
     private var closesOnClickOutside: Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.scratchpadCloseOnClickOutside)
     }
 
-    /// The export dialog is a click outside the pad by geometry, so saving to
-    /// a file must never be what closes it.
     private var dismissesOnOutsideClick: Bool {
         ScratchpadSupport.dismissesOnOutsideClick(isPinned: isPinned,
                                                   exportModalActive: modalInteractionActive)
@@ -543,30 +431,20 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    /// The text view runs the find itself; it only has to be told which of the
-    /// finder's actions was asked for, and that arrives as a sender's tag.
     func performFind(_ action: NSTextFinder.Action, in editor: NSTextView? = nil) {
         guard let textView = editor ?? textView.flatMap({ $0.window === panel ? $0 : nil }) else { return }
-        // Both hosts keep the editor at zero opacity while previewing. Finding
-        // there would open a bar or select a match nobody can see, over a
-        // source nobody is reading, so the pad comes back to the text first.
         let leftPreview = isPreviewing
         if isPreviewing {
             isPreviewing = false
         }
         let sender = NSMenuItem()
         sender.tag = action.rawValue
-        // Stepping through matches leaves the keyboard where it is, so
-        // Command-G from the search field keeps typing in the field. Preview
-        // took the keyboard from the text, so a step out of it gives it back.
         if action == .showFindInterface || leftPreview {
             textView.window?.makeFirstResponder(textView)
         }
         textView.performTextFinderAction(sender)
     }
 
-    /// Both hosts draw the editor at zero opacity in preview, and its find bar
-    /// with it, so the bar closes rather than keep a search nobody can see.
     func hideFindBar(in editor: NSTextView) {
         guard editor.enclosingScrollView?.isFindBarVisible == true else { return }
         let sender = NSMenuItem()
@@ -579,12 +457,9 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
             guard let self, let panel, event.window === panel else { return event }
             if event.keyCode == UInt16(kVK_Escape) {
-                // Mid-composition Esc belongs to the input method, not the pad.
                 if let textView = self.textView, textView.hasMarkedText() {
                     return event
                 }
-                // The find bar puts itself away on Esc and hands the keyboard
-                // back to the text; the pad hides on the next one.
                 if PlainTextEditor.findBarHasKeyboard(in: panel) { return event }
                 self.hide()
                 return nil
@@ -603,7 +478,6 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
                 self.performFocusedTabShortcut(action)
                 return nil
             }
-            // At the tab limit Command-T still belongs to the pad, not the text.
             if commandOnly, !shift, event.charactersIgnoringModifiers?.lowercased() == "t" {
                 return nil
             }
@@ -620,15 +494,12 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible, self.dismissesOnOutsideClick else { return }
             if event.windowNumber != panel.windowNumber, !Self.mouseIsInside(panel),
-               // Every key on the Accessibility Keyboard is a click outside this
-               // panel. Dismissing on those makes the panel impossible to type into.
                !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) {
                 self.hide()
             }
         }
     }
 
-    /// A click on the pad's own edge (its resize border) still belongs to it.
     private static func mouseIsInside(_ panel: NSPanel) -> Bool {
         panel.frame.insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation)
     }

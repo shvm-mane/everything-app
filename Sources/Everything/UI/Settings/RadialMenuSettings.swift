@@ -5,8 +5,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Settings > Radial menu: profiles, colors, shortcuts, the master switch,
-/// opening behavior, placement and list of actions per profile.
 struct RadialMenuSettings: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var permissions = Permissions.shared
@@ -21,12 +19,9 @@ struct RadialMenuSettings: View {
     @State private var profiles: [RadialMenuProfile] = RadialMenuSupport.decodeProfiles(
         UserDefaults.standard.data(forKey: DefaultsKey.radialMenuProfiles))
     @State private var selectedProfileID: UUID?
-    /// The submenu being edited; empty means the root wheel.
     @State private var openSubmenuID: UUID?
     @State private var editing: RadialMenuItem?
     @State private var dragging: RadialMenuItem?
-    @State private var showList = false
-    @State private var confirmingDeletion: RadialMenuProfile?
     @Environment(\.colorScheme) private var colorScheme
 
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }
@@ -49,8 +44,6 @@ struct RadialMenuSettings: View {
         selectedProfile.items
     }
 
-    /// Falls back to the root when the drilled submenu no longer exists (a
-    /// restored backup can pull it away), so the list never strands empty.
     private var level: [RadialMenuItem] {
         guard let openSubmenu else { return currentProfileItems }
         return openSubmenu.children
@@ -62,8 +55,6 @@ struct RadialMenuSettings: View {
     }
 
     var body: some View {
-        // Everything: one row to turn it on (it opens with a five-finger tap,
-        // at the pointer), then the wheel itself. Captions share their rows.
         Form {
             Section {
                 Toggle(isOn: $enabled) {
@@ -91,7 +82,6 @@ struct RadialMenuSettings: View {
             Section {
                 RadialMenuVisualCanvas(
                     items: level,
-                    // The wheel's own off-white highlight, as on screen.
                     profileColor: Color(red: 0.93, green: 0.92, blue: 0.9),
                     text: text,
                     openSubmenu: openSubmenu,
@@ -157,184 +147,13 @@ struct RadialMenuSettings: View {
 
     // MARK: - Profile Rows
 
-    private var profileManagementRow: some View {
-        HStack(spacing: 8) {
-            Picker(text.profilePickerLabel, selection: Binding(
-                get: { selectedProfile.id },
-                set: { newID in
-                    selectedProfileID = newID
-                    openSubmenuID = nil
-                    dragging = nil
-                }
-            )) {
-                ForEach(profiles) { profile in
-                    Text(profile.displayName(text))
-                        .tag(profile.id)
-                }
-            }
-            .disabled(!enabled)
-
-            Menu {
-                ForEach(RadialMenuProfilePreset.allCases) { preset in
-                    Button(preset.title(text)) {
-                        addProfile(preset: preset)
-                    }
-                }
-            } label: {
-                Image(systemName: "plus")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help(text.addProfileButton)
-            .disabled(!enabled)
-
-            Button {
-                duplicateProfile()
-            } label: {
-                Image(systemName: "plus.square.on.square")
-            }
-            .buttonStyle(.borderless)
-            .help(text.duplicateProfileButton)
-            .disabled(!enabled)
-
-            Button {
-                confirmingDeletion = selectedProfile
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help(text.deleteProfileButton)
-            .disabled(!enabled || profiles.count <= 1)
-            .confirmationDialog(
-                String(format: text.deleteProfileConfirmFormat, confirmingDeletion?.displayName(text) ?? ""),
-                isPresented: Binding(get: { confirmingDeletion != nil },
-                                     set: { if !$0 { confirmingDeletion = nil } }),
-                titleVisibility: .visible,
-                presenting: confirmingDeletion
-            ) { profile in
-                Button(text.deleteProfileButton, role: .destructive) {
-                    deleteProfile(id: profile.id)
-                }
-                Button(l10n.s.uninstallerCancel, role: .cancel) {}
-            } message: { _ in
-                Text(text.deleteProfileConfirmMessage)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var profileConfigurationRows: some View {
-        let profile = selectedProfile
-        let pIndex = selectedProfileIndex
-
-        TextField(text.profileNameLabel, text: Binding(
-            get: { profile.name },
-            set: { newName in
-                guard profiles.indices.contains(pIndex) else { return }
-                profiles[pIndex].name = newName
-                persist()
-            }
-        ), prompt: Text(text.presetGeneral))
-        .disabled(!enabled)
-
-        HStack {
-            Text(text.profileColorLabel)
-            Spacer()
-            RadialMenuColorPicker(
-                selection: Binding(
-                    get: { profile.color },
-                    set: { newColor in
-                        guard profiles.indices.contains(pIndex) else { return }
-                        profiles[pIndex].color = newColor
-                        persist()
-                    }
-                ),
-                strings: text
-            )
-        }
-        .disabled(!enabled)
-
-        Toggle(text.trackpadTapLabel, isOn: Binding(
-            get: { profile.trackpadTap },
-            set: { on in
-                guard profiles.indices.contains(pIndex) else { return }
-                // One wheel owns the tap: claiming it here releases the others.
-                for index in profiles.indices { profiles[index].trackpadTap = on && index == pIndex }
-                persist()
-                if on, !permissions.accessibility { permissions.requestAccessibility() }
-            }
-        ))
-        .disabled(!enabled)
-
-        if profile.trackpadTap, MiddleClickSupport.radialMenuTapFingers(
-            radialMenuWantsTap: true,
-            middleClickTapFingers: AppFeature.middleClick.isAvailable && middleClickEnabled
-                ? middleClickTapFingers : 0) == 0 {
-            Text(text.trackpadTapConflict)
-                .font(.caption)
-                .foregroundStyle(.orange)
-        }
-    }
-
     // MARK: - Mutations (every change lands in defaults right away)
 
-    private func addProfile(preset: RadialMenuProfilePreset) {
-        let name = preset == .general ? "\(text.presetGeneral) \(profiles.count + 1)" : preset.title(text)
-        let newProfile = preset.createProfile(name: name)
-        profiles.append(newProfile)
-        selectedProfileID = newProfile.id
-        openSubmenuID = nil
-        dragging = nil
-        persist()
-    }
-
-    private func duplicateProfile() {
-        let copy = selectedProfile.duplicate(named: "\(selectedProfile.displayName(text)) 2")
-        profiles.append(copy)
-        selectedProfileID = copy.id
-        openSubmenuID = nil
-        dragging = nil
-        persist()
-    }
-
-    /// Deletes the profile the user confirmed, which the selection may no
-    /// longer point at by the time the dialog closes.
     private func deleteProfile(id: UUID) {
         guard profiles.count > 1, let index = profiles.firstIndex(where: { $0.id == id }) else { return }
         profiles.remove(at: index)
         let nextIndex = min(index, profiles.count - 1)
         selectedProfileID = profiles[nextIndex].id
-        openSubmenuID = nil
-        dragging = nil
-        persist()
-    }
-
-    /// The starter set the selected wheel came from. Wheels created since the
-    /// profiles arrived carry it; an older one is matched by its name, which
-    /// only answers while that name is still the preset's own in the language
-    /// it was created in. Nothing else is a safe guess: falling back to one
-    /// particular starter set replaced a renamed wheel's actions with another
-    /// wheel's.
-    private var resolvedPreset: RadialMenuProfilePreset? {
-        let current = selectedProfile
-        if let stored = current.preset, let preset = RadialMenuProfilePreset(rawValue: stored) {
-            return preset
-        }
-        return RadialMenuProfilePreset.allCases.first { preset in
-            preset.title(text).caseInsensitiveCompare(current.name) == .orderedSame
-                || preset.id.caseInsensitiveCompare(current.name) == .orderedSame
-        }
-    }
-
-    /// Restoring the actions is offered on the wheel itself, and only when the
-    /// set to restore is known. A submenu is the person's own list, so there is
-    /// nothing to put back into it.
-    private var canResetProfile: Bool { openSubmenuID == nil && resolvedPreset != nil }
-
-    private func resetToPresetDefaults() {
-        guard profiles.indices.contains(selectedProfileIndex),
-              let preset = resolvedPreset else { return }
-        profiles[selectedProfileIndex].items = preset.makeItems()
         openSubmenuID = nil
         dragging = nil
         persist()
@@ -388,9 +207,6 @@ struct RadialMenuSettings: View {
         RadialMenuService.shared.syncWithPreferences()
     }
 
-    /// Who already answers to a combination, named the way the other shortcut
-    /// rows name it. The other wheels come from this page's own list, and
-    /// everything else from the same checks those rows run.
     private func shortcutConflictTitle(_ shortcut: GlobalShortcut, excluding profileID: UUID) -> String? {
         if let other = RadialMenuSupport.profile(using: shortcut, in: profiles, excluding: profileID) {
             return other.displayName(text)
@@ -409,260 +225,16 @@ struct RadialMenuSettings: View {
         permissions.requestAccessibility()
     }
 
-    private func mouseTriggerName(for button: Int64) -> String {
-        switch button {
-        case MouseButtonShortcutSupport.backButtonNumber: return text.mouseTriggerBack
-        case MouseButtonShortcutSupport.forwardButtonNumber: return text.mouseTriggerForward
-        default:
-            return MouseButtonShortcutSupport.buttonName(
-                for: button, strings: FeatureStrings.mouseButtons(l10n.language))
-        }
-    }
-
-    private func buttonTestRow(for triggerRaw: String) -> some View {
-        let seen = service.lastMouseButtonSeen
-        let expected = RadialMenuMouseTrigger.sanitized(triggerRaw).buttonNumber
-        let state: (icon: String, tint: Color, message: String) = {
-            if !service.isWatchingMouseButton {
-                return ("exclamationmark.circle.fill", .orange, text.buttonTestBlind)
-            }
-            guard let seen else {
-                return ("circle.dashed", .secondary, text.buttonTestWaiting)
-            }
-            if let expected, Int64(seen) == expected {
-                return ("checkmark.circle.fill", .green, text.buttonTestSeen)
-            }
-            return ("exclamationmark.circle.fill", .orange, text.buttonTestOther)
-        }()
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: state.icon)
-                    .foregroundStyle(state.tint)
-                Text(text.buttonTestLabel)
-                Spacer()
-                Text(state.message)
-                    .foregroundStyle(.secondary)
-            }
-            Text(text.buttonTestHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .onAppear { RadialMenuService.shared.setReportingMouseButtons(true) }
-        .onDisappear { RadialMenuService.shared.setReportingMouseButtons(false) }
-    }
 }
 
 // MARK: - Color Picker
 
-private struct RadialMenuColorPicker: View {
-    @Binding var selection: RadialMenuColor
-    let strings: RadialMenuFeatureStrings
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(RadialMenuColor.allCases) { color in
-                Button {
-                    selection = color
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(color.color(for: colorScheme))
-                            .frame(width: 16, height: 16)
-                        if selection == color {
-                            Circle()
-                                .strokeBorder(Color.white.opacity(colorScheme == .light ? 0.9 : 0.8), lineWidth: 2)
-                                .frame(width: 12, height: 12)
-                            Circle()
-                                .strokeBorder(color.color(for: colorScheme), lineWidth: 1.5)
-                                .frame(width: 20, height: 20)
-                        }
-                    }
-                    .frame(width: 22, height: 22)
-                    .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(color.title(strings))
-                .accessibilityLabel(color.title(strings))
-            }
-        }
-    }
-}
-
 // MARK: - Profile Shortcut Row
-
-private struct ProfileShortcutRow: View {
-    @Binding var shortcutValue: String
-    let isEnabled: Bool
-    let text: RadialMenuFeatureStrings
-    let l10n: L10n
-    /// Names whoever already answers to a combination, or nil when it is free.
-    let conflictTitle: (GlobalShortcut) -> String?
-    let onChange: () -> Void
-
-    @State private var message: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(text.profileShortcutLabel)
-                Spacer()
-                ShortcutRecorderButton(
-                    shortcut: GlobalShortcut(storageValue: shortcutValue) ?? .radialMenuDefault,
-                    isEnabled: isEnabled,
-                    waitingTitle: l10n.s.shortcutPressKeys,
-                    emptyTitle: shortcutValue.isEmpty ? l10n.s.shortcutNone : nil,
-                    clearAction: {
-                        shortcutValue = ""
-                        message = nil
-                        onChange()
-                    },
-                    notCapturedAction: {
-                        message = l10n.s.shortcutNotCaptured
-                    },
-                    recordingChanged: { recording in
-                        if recording { message = nil }
-                    },
-                    invalidAction: {
-                        message = l10n.s.shortcutInvalid
-                    },
-                    captureAction: { newShortcut in
-                        if let owner = conflictTitle(newShortcut) {
-                            message = String(format: l10n.s.shortcutConflictFormat, owner)
-                            return
-                        }
-                        shortcutValue = newShortcut.storageValue
-                        message = nil
-                        onChange()
-                    }
-                )
-                .frame(width: 130)
-            }
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-        }
-    }
-}
 
 // MARK: - Row
 
-private struct RadialItemRow: View {
-    let item: RadialMenuItem
-    let text: RadialMenuFeatureStrings
-    @Binding var dragging: RadialMenuItem?
-    let edit: () -> Void
-    let remove: () -> Void
-    let openChildren: (() -> Void)?
-    let moveHandler: (RadialMenuItem, RadialMenuItem) -> Void
-
-    private var kindLabel: String {
-        switch item.kind {
-        case .app: return text.kindApp
-        case .file: return text.kindFile
-        case .url: return text.kindURL
-        case .shortcut: return text.kindShortcut
-        case .tool: return text.kindTool
-        case .quickToggle: return FeatureStrings.quickToggles(L10n.shared.language).pageTitle
-        case .windowLayout: return FeatureStrings.windowLayout(L10n.shared.language).title
-        case .media: return text.kindMedia
-        case .submenu: return text.kindSubmenu
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
-            Button(action: edit) {
-                HStack(spacing: 10) {
-                    badge
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(item.displayName(text))
-                        Text(kindLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if let openChildren {
-                Button(action: openChildren) {
-                    HStack(spacing: 5) {
-                        Text(text.editActionsButton)
-                        Image(systemName: "chevron.forward")
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help(text.editActionsButton)
-            }
-        }
-        .opacity(dragging == item ? 0.45 : 1)
-        .contentShape(Rectangle())
-        .onDrag {
-            dragging = item
-            return NSItemProvider(object: item.id.uuidString as NSString)
-        }
-        .onDrop(of: [UTType.text], delegate: RadialItemDropDelegate(target: item,
-                                                                    dragging: $dragging,
-                                                                    moveHandler: moveHandler))
-        .contextMenu {
-            Button(text.deleteButton, role: .destructive) {
-                dragging = nil
-                remove()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var badge: some View {
-        if item.usesFileIcon {
-            Image(nsImage: RadialMenuIconStore.fileIcon(for: item.payload))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 26, height: 26)
-                .frame(width: 30, height: 30)
-        } else {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.spaceGradient)
-                .frame(width: 30, height: 30)
-                .overlay(
-                    Image(systemName: item.effectiveSymbolName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                )
-        }
-    }
-}
-
 private struct RadialDragCleanupDelegate: DropDelegate {
     @Binding var dragging: RadialMenuItem?
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        dragging = nil
-        return true
-    }
-}
-
-private struct RadialItemDropDelegate: DropDelegate {
-    let target: RadialMenuItem
-    @Binding var dragging: RadialMenuItem?
-    let moveHandler: (RadialMenuItem, RadialMenuItem) -> Void
-
-    func dropEntered(info: DropInfo) {
-        guard let dragging, dragging != target else { return }
-        withAnimation(.easeInOut(duration: 0.12)) {
-            moveHandler(dragging, target)
-        }
-    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         DropProposal(operation: .move)
@@ -696,8 +268,6 @@ private struct RadialItemEditor: View {
         case error
     }
 
-    /// What the line under the form is saying about the shortcut field: the
-    /// calm hint while it listens, or the reason a press did not stick.
     enum ShortcutMessage {
         case hint(String)
         case problem(String)
@@ -726,8 +296,6 @@ private struct RadialItemEditor: View {
         item.kind == .url && RadialMenuSupport.normalizedURL(item.payload) == nil
     }
 
-    // The same rule sanitized() applies, so the editor can never save an item
-    // the wheel would silently drop.
     private var saveDisabled: Bool {
         !RadialMenuSupport.isValidPayload(item)
     }
@@ -740,8 +308,6 @@ private struct RadialItemEditor: View {
             Text(isNew ? text.addButton : item.displayName(text))
                 .font(.headline)
 
-            // Everything: one short row per decision; the symbol grid lives
-            // in a popover instead of filling the sheet.
             Picker("", selection: kindBinding) {
                 Text("File").tag(RadialMenuItem.Kind.file)
                 Text("Link").tag(RadialMenuItem.Kind.url)
@@ -755,7 +321,6 @@ private struct RadialItemEditor: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            // A fixed label column so every control starts on one line.
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
                 if let target = targetRow {
                     GridRow {
@@ -811,7 +376,6 @@ private struct RadialItemEditor: View {
         .frame(width: 420)
     }
 
-    /// The label for the action's target row, or nil when it has none.
     private var targetRow: String? {
         switch item.kind {
         case .file: return "File"
@@ -821,10 +385,8 @@ private struct RadialItemEditor: View {
         }
     }
 
-    /// The icon the wheel will show, and the ways to change it.
     @ViewBuilder private var iconControl: some View {
         HStack(spacing: 8) {
-            // The icon itself opens the symbol choices.
             Button { choosingSymbol = true } label: {
                 iconPreview
                     .frame(width: 32, height: 32)
@@ -873,8 +435,6 @@ private struct RadialItemEditor: View {
         }
     }
 
-    /// A link fetches its site's icon by itself shortly after it is typed,
-    /// unless a symbol was picked.
     private func scheduleFavicon() {
         faviconWork?.cancel()
         guard item.kind == .url, item.symbolName.isEmpty, !urlIsInvalid, !item.payload.isEmpty else { return }
@@ -883,8 +443,6 @@ private struct RadialItemEditor: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
-    /// Changing the action type clears targets that no longer make sense but
-    /// keeps the custom name and icon.
     private var kindBinding: Binding<RadialMenuItem.Kind> {
         Binding(get: { item.kind }, set: { kind in
             guard kind != item.kind else { return }
@@ -1001,10 +559,6 @@ private struct RadialItemEditor: View {
             panel.directoryURL = URL(fileURLWithPath: "/Applications")
         }
         NSApp.activate(ignoringOtherApps: true)
-        // Run from this sheet as an app-wide modal, the panel was placed
-        // where macOS last kept it, which can be off every screen: then each
-        // click beeps, Quit is refused and the editor seems frozen. Attached
-        // to the editor's own window it always opens over it.
         guard let window = NSApp.keyWindow, window.isVisible else {
             guard panel.runModal() == .OK, let url = panel.url else { return }
             applyChosen(url)
@@ -1043,8 +597,6 @@ private struct RadialItemEditor: View {
 
 // MARK: - Icon picker
 
-/// "Automatic" plus a small curated grid; automatic means the real app or
-/// file icon when the target has one, or the action's own symbol.
 private struct RadialSymbolPicker: View {
     let text: RadialMenuFeatureStrings
     @Binding var item: RadialMenuItem

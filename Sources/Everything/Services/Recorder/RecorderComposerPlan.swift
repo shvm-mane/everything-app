@@ -4,20 +4,7 @@
 import AppKit
 import CoreImage
 
-/// Builds everything a composer needs before the first frame is drawn: the
-/// background plate, the rounded mask, and the whole pointer and zoom timeline
-/// solved end to end.
-///
-/// Solving the motion here instead of per frame is the point of recording to a
-/// master first. Smoothing that can see the future has no lag, and a zoom can
-/// begin BEFORE the click that causes it, which is what makes it read as
-/// deliberate rather than as a reaction.
 extension RecorderComposer {
-
-    /// `outputScale` folds the export preset into the canvas itself. The
-    /// alternative, a composition renderScale, is rejected outright by the
-    /// asset reader, and scaling afterwards would blur a background that was
-    /// drawn sharp.
     static func makePlan(document: RecorderEditDocument,
                          track: RecorderPointerTrack,
                          sourceSize: CGSize,
@@ -56,10 +43,6 @@ extension RecorderComposer {
             || !images.isEmpty || !blurs.isEmpty
         else { return nil }
 
-        // Everything the pointer track knows is in the RECORDING's own time,
-        // and every frame drawn is in the FINISHED video's time. The path is
-        // solved once over the recording, and each output frame then reaches
-        // back through the trim and the cuts to the moment it came from.
         let trim = document.trim(duration: duration)
         let cuts = RecorderTimeline.normalized(cuts: document.cuts, duration: duration)
         let outputDuration = RecorderTimeline.outputDuration(trim: trim, cuts: cuts)
@@ -79,7 +62,6 @@ extension RecorderComposer {
                                                raw: sourceRaw,
                                                clicks: track.clicks,
                                                frameRate: frameRate)
-            // Shaking the mouse to find the pointer is a gesture, not noise.
             for index in smoothed.indices
             where RecorderMotion.isShaking(sourceRaw, around: index, frameRate: frameRate) {
                 smoothed[index] = sourceRaw[index]
@@ -94,7 +76,6 @@ extension RecorderComposer {
                                                     zoom: RecorderSupport.sanitizedZoomAmount(
                                                         document.zoomAmount))
 
-        // The moment of the recording each finished frame shows.
         var sourceTimes = [Double](repeating: 0, count: frames)
         for index in 0..<frames {
             sourceTimes[index] = RecorderTimeline.sourceTime(forOutput: Double(index) * step,
@@ -125,16 +106,11 @@ extension RecorderComposer {
             var amountTargets = [Double](repeating: 1, count: frames)
             var travelX = [Double](repeating: 0.5, count: frames)
             var travelY = [Double](repeating: 0.5, count: frames)
-            // `sourceTimes` is ascending, so each lookup walks its list once
-            // across the loop instead of once per frame.
             var focusCursor = 0
             for index in 0..<frames {
                 let time = sourceTimes[index]
                 let state = RecorderTimeline.zoomState(at: time, segments: segments)
                 amountTargets[index] = 1 + (state.amount - 1) * state.progress
-                // A zoom that was aimed by hand lands exactly where it was
-                // put; one left on automatic follows where the pointer was
-                // working, through the calmer edge-band formula.
                 if let aimed = state.focus {
                     travelX[index] = RecorderMotion.travelParameter(exactFocus: Double(aimed.x),
                                                                     zoom: state.amount)
@@ -148,8 +124,6 @@ extension RecorderComposer {
                     travelY[index] = RecorderMotion.travelParameter(focus: Double(focus.y))
                 }
             }
-            // A spring carries its speed through a re-aim, so the picture
-            // never restarts a movement it was already making.
             let springedAmount = RecorderMotion.springed(amountTargets, frameRate: frameRate)
             let springedX = RecorderMotion.springed(travelX, frameRate: frameRate)
             let springedY = RecorderMotion.springed(travelY, frameRate: frameRate)
@@ -202,7 +176,6 @@ extension RecorderComposer {
             imageOpacity = images.map { overlay in
                 (0..<frames).map { overlay.opacity(at: sourceTimes[$0]) }
             }
-            // Read and resized here, once, at the canvas this plan draws on.
             imageSprites = images.map { RecorderImageRenderer.image(for: $0, canvas: canvas) }
         }
 
@@ -237,10 +210,6 @@ extension RecorderComposer {
                     pointerShapeIndex: shapeIndex,
                     pointerVisible: visible,
                     pointerOpacity: pointerOpacity,
-                    // One pointer bitmap pixel is one point on screen, measured
-                    // against real captures, so the whole conversion is the
-                    // recorded display's own scale times what the window server
-                    // and the person asked for.
                     pointerScale: CGFloat(track.displayScale)
                         * CGFloat(max(1, track.systemScale))
                         * CGFloat(RecorderSupport.sanitizedPointerSize(document.pointerSize)),
@@ -262,9 +231,6 @@ extension RecorderComposer {
 
     // MARK: - Plate
 
-    /// Background and the shadow under the recording, rendered once. Nothing
-    /// in it changes frame to frame, so a per-frame composite over a finished
-    /// texture is all the background ever costs.
     private static func backgroundPlate(style: ScreenshotSupport.BackdropStyle,
                                         canvas: CGSize,
                                         card: CGRect,
@@ -291,8 +257,6 @@ extension RecorderComposer {
         }
 
         if corner > 0 || style.kind != .none {
-            // The recording sits on the background rather than in it, and a
-            // soft shadow is the whole difference between the two.
             context.saveGState()
             context.setShadow(offset: CGSize(width: 0, height: -min(canvas.height * 0.012, 26)),
                               blur: min(canvas.height * 0.045, 90),
@@ -337,7 +301,6 @@ extension RecorderComposer {
             guard let path = style.imagePath,
                   let image = loadImage(path)
             else { return }
-            // Fill the canvas without distorting the picture.
             let factor = max(canvas.width / CGFloat(image.width),
                              canvas.height / CGFloat(image.height))
             let size = CGSize(width: CGFloat(image.width) * factor,
@@ -384,7 +347,6 @@ extension RecorderComposer {
         ] as CFDictionary)
     }
 
-    /// White where the recording belongs, black everywhere else.
     private static func cardMask(canvas: CGSize, card: CGRect, corner: CGFloat) -> CIImage? {
         guard let space = CGColorSpace(name: CGColorSpace.linearGray),
               let context = CGContext(data: nil,

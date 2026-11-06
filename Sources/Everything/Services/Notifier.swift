@@ -17,9 +17,6 @@ enum Notifier {
 
     static func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-            // A denied prompt is the user's call; a request that ERRORS means
-            // notifications silently cannot work at all — leave a trace so
-            // that state is diagnosable instead of invisible.
             if let error {
                 log.error("notification authorization failed: \(error.localizedDescription, privacy: .public)")
             } else if !granted {

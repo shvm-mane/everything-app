@@ -4,16 +4,10 @@
 import AppKit
 import Foundation
 
-/// What a watched area has to do before the island speaks up.
 enum NotchWatchCondition: String, CaseIterable, Identifiable {
-    /// Its text changes, or its picture when it holds no text.
     case changes
-    /// It changed at least once and then held still, as a log or a progress
-    /// bar does when the work behind it ends.
     case settles
-    /// It shows the text the person typed, such as "Done".
     case contains
-    /// Its number reaches the one the person typed, counting up or down.
     case reaches
 
     var id: String { rawValue }
@@ -32,7 +26,6 @@ enum NotchWatchCondition: String, CaseIterable, Identifiable {
     }
 }
 
-/// Why a watch ended.
 enum NotchWatchOutcome: Equatable {
     case changed
     case settled
@@ -40,8 +33,6 @@ enum NotchWatchOutcome: Equatable {
     case reached(String)
     case closed
 
-    /// How the companion takes the news in its notice: wide-eyed at a
-    /// change, glad when the wait is over, puzzled when the window went.
     var mascotReaction: NotchMascotReaction {
         switch self {
         case .changed: return .perk
@@ -51,19 +42,13 @@ enum NotchWatchOutcome: Equatable {
     }
 }
 
-/// Follows one area reading after reading and decides when its condition
-/// is met. An area whose pixels did not move is not read again: it comes
-/// back with its last signature, so a change that holds still is confirmed
-/// and a quiet area can settle. `observe(nil)` only lets time pass.
 struct NotchWatchTracker {
     static let settleInterval: TimeInterval = 30
-    /// How long a reading must keep differing before it counts as a change.
     static let changeConfirmation: TimeInterval = 3
 
     let condition: NotchWatchCondition
     let text: String
     let target: Double?
-    /// How the watched app writes numbers: as the Mac's region does.
     let decimalSeparator: String
     let groupsWithSpace: Bool
 
@@ -83,15 +68,12 @@ struct NotchWatchTracker {
         self.groupsWithSpace = groupsWithSpace
     }
 
-    /// A tracker that reads numbers as `locale` writes them.
     init(condition: NotchWatchCondition, text: String, target: Double?, locale: Locale) {
         self.init(condition: condition, text: text, target: target,
                   decimalSeparator: locale.decimalSeparator ?? ".",
                   groupsWithSpace: NotchWatchSupport.groupsWithSpace(locale))
     }
 
-    /// Whether the rule can be met at all: a text to find or a number to
-    /// reach must have been typed.
     var isReady: Bool {
         switch condition {
         case .changes, .settles: return true
@@ -100,9 +82,6 @@ struct NotchWatchTracker {
         }
     }
 
-    /// `signature` compares two readings: the area's normalized text, or a
-    /// coarse picture of it when it holds no text. `reading` is the text as
-    /// read, for finding words and numbers.
     mutating func observe(signature: String?, reading: String, at date: Date) -> NotchWatchOutcome? {
         guard isReady else { return nil }
         switch condition {
@@ -110,9 +89,6 @@ struct NotchWatchTracker {
             guard let signature else { return nil }
             guard let baseline else { self.baseline = signature; return nil }
             guard !NotchWatchSupport.sameSignature(signature, baseline) else { changedSince = nil; return nil }
-            // A change counts once it outlasts a few seconds of readings, so
-            // a frame caught halfway through redrawing or a blinking caret
-            // does not end the watch, while a reading that keeps moving does.
             guard let changedSince else { self.changedSince = date; return nil }
             return date.timeIntervalSince(changedSince) >= Self.changeConfirmation ? .changed : nil
         case .settles:
@@ -144,18 +120,12 @@ struct NotchWatchTracker {
 }
 
 enum NotchWatchSupport {
-    /// How often the area is read: often while its page is open, so the
-    /// preview feels live, and less while it only feeds the closed island.
     static let visibleInterval: TimeInterval = 1
     static let backgroundInterval: TimeInterval = 2
-    /// A still picture is read again this often: a few changed words in a
-    /// large area can move its coarse picture too little to notice.
     static let rereadInterval: TimeInterval = 10
-    /// Text recognition gets slower with size and gains nothing past this.
     static let maximumRecognitionSide = 900
     static let headlineLength = 22
     static let stripWingRange: ClosedRange<CGFloat> = 56...150
-    /// An area without text shows itself, this wide, where its reading would be.
     static let thumbnailWidth: CGFloat = 40
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
@@ -164,7 +134,6 @@ enum NotchWatchSupport {
             && NotchSupport.modules(in: defaults).contains(.watch)
     }
 
-    /// For comparing and finding words: no case, accents or extra spaces.
     static func normalized(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
             .components(separatedBy: .whitespacesAndNewlines)
@@ -172,9 +141,6 @@ enum NotchWatchSupport {
             .joined(separator: " ")
     }
 
-    /// The part of the text worth showing beside the camera: a percentage
-    /// first, then a short first line as it is, then a clock or a number
-    /// with its unit, and otherwise the first line cut short.
     static func headline(from text: String,
                          groupsWithSpace: Bool = NotchWatchSupport.groupsWithSpace(.autoupdatingCurrent)) -> String {
         let lines = text.components(separatedBy: .newlines)
@@ -191,15 +157,12 @@ enum NotchWatchSupport {
         return String(first.prefix(headlineLength - 1)) + "…"
     }
 
-    /// The area's lines, top to bottom, as a person can pick one of them.
     static func lines(in text: String) -> [String] {
         text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }
 
-    /// The line the person chose to show, cut to the strip's length, or the
-    /// automatic reading while that line is missing.
     static func headline(from text: String, line: Int?) -> String {
         let lines = lines(in: text)
         guard let line, lines.indices.contains(line) else { return headline(from: text) }
@@ -207,12 +170,6 @@ enum NotchWatchSupport {
         return chosen.count <= headlineLength ? chosen : String(chosen.prefix(headlineLength - 1)) + "…"
     }
 
-    /// The number a "reaches" rule compares: a percentage first, otherwise
-    /// the first number in the text. Both decimal marks are understood;
-    /// `decimalSeparator` settles a lone mark before three digits, which
-    /// groups thousands in one region and starts decimals in another.
-    /// `groupsWithSpace` also reads 10 000 as one number, as regions that
-    /// group thousands with a space write it.
     static func number(in text: String, decimalSeparator: String = ".", groupsWithSpace: Bool = false) -> Double? {
         if let percent = firstMatch(percentPattern(groupsWithSpace: groupsWithSpace), in: text) {
             return parse(String(percent.dropLast()), decimalSeparator: decimalSeparator)
@@ -235,7 +192,6 @@ enum NotchWatchSupport {
         let lastComma = digits.lastIndex(of: ",")
         switch (lastDot, lastComma) {
         case let (dot?, comma?):
-            // The later mark separates the decimals; the other groups thousands.
             if dot > comma {
                 digits = digits.replacingOccurrences(of: ",", with: "")
             } else {
@@ -256,10 +212,6 @@ enum NotchWatchSupport {
         return negative ? -value : value
     }
 
-    /// Whether the only mark in a number groups thousands: it appears more
-    /// than once, as in 1.234.567, or once before exactly three digits, as in
-    /// 1,234, unless the region writes decimals with it or the number starts
-    /// at zero, as 0,125 does.
     private static func groupsThousands(_ digits: String, mark: Character, decimalSeparator: String) -> Bool {
         let groups = digits.split(separator: mark, omittingEmptySubsequences: false)
         if groups.count > 2 { return true }
@@ -267,21 +219,15 @@ enum NotchWatchSupport {
         return decimalSeparator != String(mark)
     }
 
-    /// A typed target as the page shows it again: without grouping, which
-    /// some regions write with a space a number cannot be read across.
     static func formatted(_ value: Double, locale: Locale) -> String {
         value.formatted(.number.precision(.fractionLength(0...2)).grouping(.never).locale(locale))
     }
 
-    /// A typed target, read as the page writes numbers.
     static func typedNumber(_ text: String, locale: Locale) -> Double? {
         let digits = text.components(separatedBy: .whitespaces).joined()
         return number(in: digits, decimalSeparator: locale.decimalSeparator ?? ".")
     }
 
-    /// The area as a 16 × 16 grid of coarse grey levels: small enough that
-    /// antialiasing and compression noise read the same, sharp enough that
-    /// a moving bar, a new line or a changed colour do not.
     static func fingerprint(_ image: CGImage) -> [UInt8]? {
         let side = 16
         var pixels = [UInt8](repeating: 0, count: side * side)
@@ -296,8 +242,6 @@ enum NotchWatchSupport {
         return drawn ? pixels.map { $0 / 16 } : nil
     }
 
-    /// Whether two fingerprints show the same picture, allowing a few cells
-    /// to cross one grey level, as a blinking caret or a shadow does.
     static func sameFingerprint(_ lhs: [UInt8]?, _ rhs: [UInt8]?) -> Bool {
         guard let lhs, let rhs, lhs.count == rhs.count else { return false }
         let moved = zip(lhs, rhs).filter { abs(Int($0) - Int($1)) > 1 }.count
@@ -311,8 +255,6 @@ enum NotchWatchSupport {
         return fingerprint.map { imagePrefix + $0.map(String.init).joined(separator: ".") }
     }
 
-    /// Whether two readings say the same: the same text, or pictures that
-    /// differ no more than a blinking caret does.
     static func sameSignature(_ lhs: String?, _ rhs: String?) -> Bool {
         guard let lhs, let rhs else { return false }
         if lhs == rhs { return true }
@@ -325,8 +267,6 @@ enum NotchWatchSupport {
 
     private static let imagePrefix = "image:"
 
-    /// The area as an image of its own: a crop keeps the whole window's
-    /// pixels alive, and a large window's are many megabytes.
     static func standalone(_ image: CGImage) -> CGImage {
         guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
                                       bytesPerRow: 0,
@@ -336,9 +276,6 @@ enum NotchWatchSupport {
         return context.makeImage() ?? image
     }
 
-    /// The part of a window's image `crop` covers, `crop` being in points
-    /// from the window's top-left corner and `windowSize` the window's size
-    /// in points. Nil when the area left the window.
     static func pixelCrop(_ crop: CGRect, windowSize: CGSize, imageSize: CGSize) -> CGRect? {
         guard windowSize.width > 0, windowSize.height > 0 else { return nil }
         let scaleX = imageSize.width / windowSize.width
@@ -349,8 +286,6 @@ enum NotchWatchSupport {
         return rect.isNull || rect.width < 4 || rect.height < 4 ? nil : rect
     }
 
-    /// The window under the middle of a dragged area, front to back, and the
-    /// area in points from that window's top-left corner, kept inside it.
     static func windowCrop(for area: CGRect, windows: [(id: CGWindowID, bounds: CGRect)])
         -> (id: CGWindowID, crop: CGRect)? {
         let middle = CGPoint(x: area.midX, y: area.midY)
@@ -360,10 +295,6 @@ enum NotchWatchSupport {
         return (window.id, inside.offsetBy(dx: -window.bounds.minX, dy: -window.bounds.minY))
     }
 
-    // Keep the whole percentage and its sign: matching only the last group
-    // turns −1 250% into a positive 250%. Thousands spaced apart join only
-    // where the region writes them that way, as for any number, so "Step 2
-    // 100%" stays 100%. The % sign must share the number's line.
     private static func percentPattern(groupsWithSpace: Bool) -> String {
         "(?:" + (groupsWithSpace ? spacedNumberPattern + "|" : "") + numberPattern + #")[ \x{00A0}\x{202F}]?%"#
     }

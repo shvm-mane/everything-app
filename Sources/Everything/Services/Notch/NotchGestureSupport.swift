@@ -3,8 +3,6 @@
 
 import AppKit
 
-/// One decision per physical scroll sequence. No timer is needed for wheel
-/// devices without phases: the next event itself expires an old sequence.
 struct NotchGestureSupport {
     enum Action: Equatable { case open, close, nextTrack, previousTrack }
     private enum Axis { case horizontal, vertical }
@@ -28,7 +26,6 @@ struct NotchGestureSupport {
         var scroll = false
         var view = view
         while let current = view {
-            // The transparent opening button is the gesture surface itself.
             if (current is NSControl && !(current is NotchActivationButton)) || current is NSTextView {
                 control = true
             }
@@ -57,11 +54,6 @@ struct NotchGestureSupport {
                          began: Bool, ended: Bool, momentum: Bool, precise: Bool, hasPhase: Bool,
                          allowVertical: Bool, allowHorizontal: Bool, expanded: Bool) -> Action? {
         guard timestamp.isFinite, x.isFinite, y.isFinite else { self = Self(); return nil }
-        // A quick flick lifts the fingers before the swipe has travelled far
-        // enough. Its momentum can finish the opening or closing it began,
-        // never a track change. Trackpads can send one phaseless event between
-        // the lift and the momentum; it belongs to the same flick. Momentum
-        // that pauses, or turns sideways like the end of a track swipe, stops.
         let transition = coasting && !momentum && !hasPhase && precise
             && lastTimestamp.map({ timestamp >= $0 && timestamp - $0 <= 0.35 }) == true
         if momentum || transition {
@@ -84,9 +76,6 @@ struct NotchGestureSupport {
                 self = Self()
                 origin = Origin(vertical: allowVertical, horizontal: allowHorizontal, expanded: expanded)
             }
-            // AppKit keeps a phased scroll attached to its original view.
-            // A blocked beginning stays blocked, and an interrupted sequence
-            // cannot restart from a later changed event under another view.
             guard origin != nil else { return nil }
             if lastTimestamp.map({ timestamp < $0 }) == true { self = Self(); return nil }
         } else if origin != nil || began
@@ -99,8 +88,6 @@ struct NotchGestureSupport {
         let allowHorizontal = origin?.horizontal ?? allowHorizontal
         let expanded = origin?.expanded ?? expanded
         if axis == nil {
-            // Establish intent from a little accumulated travel, not the first
-            // fraction of a point as the fingers touch the trackpad.
             pendingX += x
             pendingY += y
             if precise, allowHorizontal, abs(pendingX) >= 4, abs(pendingX) >= abs(pendingY) * 1.5 {

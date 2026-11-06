@@ -4,9 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// An interactive visual radial menu canvas in Settings. Displays the real
-/// wheel layout with exact angles and colors, supports drag-to-reorder,
-/// click-to-edit, hover previews, and submenu drilldown.
 struct RadialMenuVisualCanvas: View {
     let items: [RadialMenuItem]
     let profileColor: Color
@@ -18,8 +15,6 @@ struct RadialMenuVisualCanvas: View {
     let onOpenSubmenu: ((RadialMenuItem) -> Void)?
     let onBack: (() -> Void)?
     let onAdd: () -> Void
-    /// Nil where there is no starter set to go back to, and the button that
-    /// promises one is not shown at all.
     let onReset: (() -> Void)?
 
     @State private var hoveredIndex: Int?
@@ -27,7 +22,6 @@ struct RadialMenuVisualCanvas: View {
     @State private var dragPosition: CGPoint = .zero
     @State private var targetIndex: Int?
     @State private var showingResetConfirm = false
-    /// The dragged action is outside the canvas: letting go removes it.
     @State private var dragRemoves = false
     @State private var canvasSize: CGSize = .zero
     @State private var wedgeAngle = 0.0
@@ -37,7 +31,6 @@ struct RadialMenuVisualCanvas: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    // Everything: the wheel's own proportions (RadialMenuLayout), a little larger.
     private let canvasHeight: CGFloat = 300
     private let wheelDiameter: CGFloat = 260
     private let ringRadius: CGFloat = 93
@@ -45,9 +38,6 @@ struct RadialMenuVisualCanvas: View {
     private let deadZoneRadius: CGFloat = 42
 
     var body: some View {
-        // Everything: the wheel sits straight on the settings group; no
-        // second card inside it. The back button overlays the corner so the
-        // wheel stays centred.
         canvasArea
             .frame(height: canvasHeight)
             .frame(maxWidth: .infinity)
@@ -136,8 +126,6 @@ struct RadialMenuVisualCanvas: View {
             .onAppear { canvasSize = geometry.size }
             .onChange(of: geometry.size) { _, size in canvasSize = size }
             .contentShape(Rectangle())
-            // Everything: like the real wheel, the whole slice under the
-            // pointer is the target, not just its icon.
             .onContinuousHover(coordinateSpace: .named("RadialCanvas")) { phase in
                 guard draggingIndex == nil else { return }
                 switch phase {
@@ -154,7 +142,6 @@ struct RadialMenuVisualCanvas: View {
         }
     }
 
-    /// The slice under a point inside the ring, between the hub and the rim.
     private func slice(at point: CGPoint, center: CGPoint) -> Int? {
         let dx = point.x - center.x, dyUp = center.y - point.y
         let distance = (dx * dx + dyUp * dyUp).squareRoot()
@@ -191,8 +178,6 @@ struct RadialMenuVisualCanvas: View {
 
     // MARK: - Active Wedge Highlight
 
-    /// The real wheel's wedge: one shape that sweeps the short way round
-    /// to the slice under the pointer, with the same gradient and spring.
     private var activeWedgeHighlight: some View {
         RadialWedgeShape(centerAngle: wedgeAngle,
                          sliceAngle: wedgeSlice,
@@ -258,7 +243,6 @@ struct RadialMenuVisualCanvas: View {
                         if distance > 6 {
                             draggingIndex = index
                             dragPosition = value.location
-                            // Past the canvas's edge, letting go removes it.
                             let size = CGSize(width: center.x * 2, height: center.y * 2)
                             dragRemoves = value.location.x < 0 || value.location.y < 0
                                 || value.location.x > size.width || value.location.y > size.height
@@ -357,7 +341,6 @@ struct RadialMenuVisualCanvas: View {
             }
         } else if let index = hoveredIndex, items.indices.contains(index) {
             let item = items[index]
-            // The name alone, centred, shrinking before it would be cut.
             Text(item.displayName(text))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white)
@@ -411,26 +394,12 @@ struct RadialMenuVisualCanvas: View {
                 }
             }
             .shadow(color: profileColor.opacity(0.6), radius: 10, y: 4)
-            // Held at the frame's edge: past it the settings list would hide it.
             .position(x: min(max(dragPosition.x, 26), max(26, canvasSize.width - 26)),
                       y: min(max(dragPosition.y, 26), max(26, canvasSize.height - 26)))
             .allowsHitTesting(false)
         }
     }
 
-    private func kindLabel(for item: RadialMenuItem) -> String {
-        switch item.kind {
-        case .app: return text.kindApp
-        case .file: return text.kindFile
-        case .url: return text.kindURL
-        case .shortcut: return text.kindShortcut
-        case .tool: return text.kindTool
-        case .quickToggle: return FeatureStrings.quickToggles(L10n.shared.language).pageTitle
-        case .windowLayout: return FeatureStrings.windowLayout(L10n.shared.language).title
-        case .media: return text.kindMedia
-        case .submenu: return text.kindSubmenu
-        }
-    }
 }
 
 // MARK: - Radial Canvas Chip

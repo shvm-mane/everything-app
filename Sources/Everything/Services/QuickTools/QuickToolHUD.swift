@@ -4,32 +4,19 @@
 import AppKit
 import SwiftUI
 
-/// Small floating confirmation used by the quick tools (color picked, text
-/// copied, mic muted): a non-activating panel near the top of the screen with
-/// the mouse, fading out on its own. Purely visual; never takes focus.
 enum QuickToolHUD {
     private static var panel: NSPanel?
     private static var scrollingPanel: ScrollingCapturePanel?
     private static var scrollingModel: ScrollingCaptureHUDModel?
     private static var dismissWork: DispatchWorkItem?
-    /// How wide a message is allowed to get, on either of this file's two
-    /// message panels. A confirmation is read at a
-    /// glance, so anything past this is a preview rather than the whole value;
-    /// a short one still sizes to itself and is not padded out to this width.
     fileprivate static let messageWidthLimit: CGFloat = 360
-    /// Bumped by every show(). A dismiss whose fade-out was overtaken by a
-    /// newer show() must not order the panel out from its completion handler.
     private static var generation = 0
 
-    /// The confirmation panel, when one is on screen. A recording in progress
-    /// leaves it out of the picture; nothing else needs to know it exists.
     static var currentWindowNumber: Int? {
         guard let panel, panel.isVisible else { return nil }
         return panel.windowNumber
     }
 
-    /// The scrolling capture controls, when they are on screen. They belong to
-    /// the capture in progress and must stay out of its own pictures.
     static var currentScrollingWindowNumber: Int? {
         guard let scrollingPanel, scrollingPanel.isVisible else { return nil }
         return scrollingPanel.windowNumber
@@ -56,16 +43,6 @@ enum QuickToolHUD {
             }
             Text(message)
                 .font(.system(size: 12, weight: .semibold))
-                // What was copied can be a whole paragraph, and the panel is
-                // laid out at whatever the text asks for. Unbounded, one long
-                // line measures wider than the screen and the panel, centred on
-                // that width, hangs off both edges with nothing readable left.
-                //
-                // Truncating at the tail rather than the middle so that the
-                // ellipsis is always drawn: a value whose first paragraph ends
-                // on the second line is cut at a line break, not inside one,
-                // and middle truncation leaves no mark at all there — the
-                // preview then reads as the whole of what was copied.
                 .lineLimit(2)
                 .truncationMode(.tail)
                 .frame(maxWidth: messageWidthLimit, alignment: .leading)
@@ -95,9 +72,6 @@ enum QuickToolHUD {
         present(AnyView(content), dismissAfter: 0.92, windowShadow: false)
     }
 
-    /// The scrolling capture stays visible while the person moves the target.
-    /// Its non-activating panel takes key focus only so Return and Escape do
-    /// not leak into the page being captured.
     static func showScrollingCapture(message: String,
                                      finishTitle: String,
                                      cancelTitle: String,
@@ -267,8 +241,6 @@ private struct QuickToolCountdownView: View {
     }
 }
 
-/// A non-activating panel that can still own Return and Escape while the
-/// underlying window continues receiving pointer and scrolling events.
 private final class ScrollingCapturePanel: OverlayPanel {
     override var canBecomeKey: Bool { true }
 }
@@ -310,9 +282,6 @@ private struct ScrollingCaptureHUDView: View {
                 Text(model.message)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(2)
-                    // Same panel geometry as the confirmation above, so the
-                    // same bound: this one is laid out from fittingSize and
-                    // centred on it too.
                     .truncationMode(.tail)
                     .frame(maxWidth: QuickToolHUD.messageWidthLimit, alignment: .leading)
                 Text("\(model.height) px")

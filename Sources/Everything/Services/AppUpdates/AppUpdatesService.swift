@@ -5,41 +5,21 @@ import AppKit
 import Combine
 import CoreServices
 
-/// Finds which of the installed apps have a newer version waiting, in one
-/// list, and updates the ones the person picks.
-///
-/// Managed apps can be updated in place or handed to the store. Other apps
-/// are compared conservatively with a public online catalog and only opened,
-/// leaving their own updater in control.
-///
-/// Nothing runs at rest. The scan happens when the person opens the list or
-/// asks for it, and the background check only exists while its schedule is on.
 final class AppUpdatesService: ObservableObject {
     static let shared = AppUpdatesService()
 
     @Published private(set) var items: [AppUpdatesSupport.Item] = []
     @Published private(set) var rules: [AppUpdatesSupport.UpdateRule] = []
-    /// Latest scan, including skipped versions, so removing a rule needs no network work.
     private var allItems: [AppUpdatesSupport.Item] = []
     @Published private(set) var isChecking = false
     @Published private(set) var lastCheck: Date?
     @Published private(set) var nextCheck: Date?
-    /// Rows the person ticked. New findings arrive ticked, so the common
-    /// case is one click.
     @Published var selection: Set<String> = []
-    /// False means package-managed apps cannot be updated from this list.
     @Published private(set) var packageManagerAvailable = false
-    /// False means the online source failed, so an empty list is incomplete.
     @Published private(set) var onlineCatalogAvailable = true
     @Published private(set) var appStoreAvailable = true
     @Published private(set) var uncheckedAppNames: [String] = []
-    /// Apps the catalog knows whose own version cannot be compared with it.
-    /// They are named instead of listed, so nothing claims an update for them
-    /// or implies they are current.
     @Published private(set) var uncomparableAppNames: [String] = []
-    /// A check finished in THIS process. The time of the last check survives
-    /// relaunches, but its findings do not, so nothing may claim the Mac is
-    /// up to date until a scan has actually run here.
     @Published private(set) var hasCheckedThisSession = false
     @Published private(set) var lastError: String?
 
@@ -63,15 +43,11 @@ final class AppUpdatesService: ObservableObject {
     private var sourceRefreshPending = false
     private var automaticCheckPending = false
     private var knownIDs = Set<String>()
-    /// The person was sent elsewhere to finish an update, so the list is
-    /// about to be wrong until it is read again.
     private var pendingUpdateHandoffs = Set<UUID>()
     var updateHandoffPending: Bool {
         !pendingUpdateHandoffs.isEmpty
     }
     private var onlineCatalogCache: (loadedAt: Date, entries: [AppUpdatesSupport.CatalogEntry])?
-    /// Alive only while an upgrade this service started is running, so the
-    /// list refreshes itself even when no window is on screen to notice.
     private var upgradeObserver: AnyCancellable?
 
     private init() {
@@ -110,8 +86,6 @@ final class AppUpdatesService: ObservableObject {
 
     private func installWakeObserver() {
         guard wakeObserver == nil else { return }
-        // A check that came due during sleep never fires its timer; waking up
-        // recomputes and catches the miss.
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main) { [weak self] _ in
@@ -127,8 +101,6 @@ final class AppUpdatesService: ObservableObject {
         let timer = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in
             self?.check(automatic: true)
         }
-        // One shot a day: a loose tolerance costs nothing and lets the system
-        // group the wake-up with other work.
         timer.tolerance = 60
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -137,8 +109,6 @@ final class AppUpdatesService: ObservableObject {
 
     // MARK: - Checking
 
-    /// A source switch changes the answer. Let an in-flight scan finish its
-    /// read, discard that answer and immediately run once with the new choice.
     func sourceSelectionDidChange() {
         if isChecking {
             sourceRefreshPending = true
@@ -147,8 +117,6 @@ final class AppUpdatesService: ObservableObject {
         }
     }
 
-    /// Scans the enabled sources. `automatic` marks the background pass,
-    /// which alone can post a notification and re-arm the schedule.
     func check(automatic: Bool = false) {
         guard AppFeature.appUpdates.isAvailable else { return }
         if isChecking {
@@ -250,8 +218,6 @@ final class AppUpdatesService: ObservableObject {
                              uncheckedAppNames: [String],
                              uncomparableAppNames: [String],
                              automatic: Bool) {
-        // The feature can be switched off in the hub while a scan is in
-        // flight; its findings belong to a surface that no longer exists.
         guard AppFeature.appUpdates.isAvailable else {
             isChecking = false
             sourceRefreshPending = false
@@ -268,10 +234,6 @@ final class AppUpdatesService: ObservableObject {
         }
         allItems = scannedItems
         let newItems = AppUpdatesSupport.visibleItems(scannedItems, rules: rules)
-        // What was already announced survives relaunches, unlike knownIDs:
-        // otherwise the first background check of every launch would speak up
-        // about the same pending update again. Findings that are gone drop out,
-        // so an app updating again later is announced again.
         var announced = Self.announcedIDs().intersection(newItems.map(\.id))
         let fresh = newItems.filter { !announced.contains($0.id) }
         selection = AppUpdatesSupport.reconciledSelection(previous: selection,
@@ -299,9 +261,6 @@ final class AppUpdatesService: ObservableObject {
         Self.saveAnnouncedIDs(announced)
     }
 
-    /// Only the background pass speaks up, and only about apps the person has
-    /// not been told about yet, so a Mac with one stubborn pending update
-    /// stays quiet after the first notice. True when a notice went out.
     private func notifyIfWanted(freshCount: Int, total: Int) -> Bool {
         guard freshCount > 0,
               UserDefaults.standard.bool(forKey: DefaultsKey.appUpdatesNotify) else { return false }
@@ -440,8 +399,6 @@ final class AppUpdatesService: ObservableObject {
         var catalogFallbackPaths: Set<String> = []
         var uncomparableApps: [AppUpdatesSupport.InstalledApp] = []
 
-        /// A catalog match whose version cannot be compared still answers for
-        /// a missing feed; that app is named for its version instead.
         var answeredPaths: Set<String> { checkedPaths.union(uncomparableApps.map(\.path)) }
 
         func resolvingCatalogFallback(checkedPaths catalogPaths: Set<String>,
@@ -452,14 +409,11 @@ final class AppUpdatesService: ObservableObject {
                                 uncheckedApps: uncheckedApps + candidates.filter { missing.contains($0.path) })
         }
 
-        /// The feeds, with a missing one answered by whatever the catalog
-        /// found for that app, compared or only named.
         func resolvingCatalogFallback(answeredBy catalog: SourceResult,
                                       candidates: [AppUpdatesSupport.InstalledApp]) -> SourceResult {
             resolvingCatalogFallback(checkedPaths: catalog.answeredPaths, candidates: candidates)
         }
 
-        /// The catalog's uncompared apps, less those their own feed compared.
         func uncomparableAppNames(coveredBy feeds: SourceResult) -> [String] {
             AppUpdatesSupport.uncheckedAppNames(uncomparableApps, checkedPaths: feeds.checkedPaths)
         }
@@ -491,11 +445,8 @@ final class AppUpdatesService: ObservableObject {
         let architecture = "x86_64"
         #endif
 
-        // Four at a time, coalesced by URL, with a ceiling for the whole pass.
-        // All accumulated results are confined to workQueue.
         func checkBatch(_ start: Int) {
             guard start < feeds.count, Date() < deadline else {
-                // A feed the deadline cut off was not checked, so keep its apps named.
                 uncheckedPaths.formUnion(feeds[start...].flatMap { $0.value.map(\.path) })
                 completion(SourceResult(items: items, available: complete && start >= feeds.count,
                                         checkedPaths: checkedPaths,
@@ -590,8 +541,6 @@ final class AppUpdatesService: ObservableObject {
         setRule(for: item, version: nil)
     }
 
-    /// Excludes an app straight from its bundle, so one that is not in the list
-    /// (up to date, or never matched by a source) can still be left out.
     func addExclusion(appAt url: URL) {
         guard !isChecking,
               let app = Self.scannedApp(at: url, includePublisherFeeds: false) else { return }
@@ -604,7 +553,6 @@ final class AppUpdatesService: ObservableObject {
     }
 
     private func storeRule(bundleID: String, name: String, version: String?) {
-        // Same shape `decodedRules` accepts, so a rule saved now survives a reload.
         guard !bundleID.isEmpty, bundleID.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
               !bundleID.contains("/"),
               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -615,8 +563,6 @@ final class AppUpdatesService: ObservableObject {
     func removeRule(_ rule: AppUpdatesSupport.UpdateRule) {
         guard !isChecking, rules.contains(rule) else { return }
         saveRules(rules.filter { $0.id != rule.id })
-        // An excluded app was not queried in later scans. Do not invent a current
-        // result or launch a full scan just to remove its rule; Check now remains available.
         if rule.version == nil { hasCheckedThisSession = false }
     }
 
@@ -627,7 +573,6 @@ final class AppUpdatesService: ObservableObject {
         applyRules()
     }
 
-    /// Settings restore and reset use the same preference as the panel.
     private func reloadRules() {
         let restored = AppUpdatesSupport.decodedRules(
             UserDefaults.standard.string(forKey: DefaultsKey.appUpdatesRules))
@@ -670,9 +615,6 @@ final class AppUpdatesService: ObservableObject {
         }
     }
 
-    /// Updates what the person ticked: the package manager installs its share
-    /// in one command, and the store apps hand off to the App Store, which is
-    /// as far as any app can go there.
     func updateSelected() {
         let tokens = AppUpdatesSupport.tokens(in: items, selection: selection)
         if !tokens.isEmpty {
@@ -709,9 +651,6 @@ final class AppUpdatesService: ObservableObject {
         handOff(url)
     }
 
-    /// The destination installs its own update, so open it and tell the truth
-    /// again the moment the person is back. Opening runs off the main thread,
-    /// since launching a large app can take a while.
     private func handOff(_ url: URL) {
         let request = UUID()
         pendingUpdateHandoffs.insert(request)
@@ -721,9 +660,6 @@ final class AppUpdatesService: ObservableObject {
         }
     }
 
-    /// Watches the upgrade to its end and re-reads the list, so a row leaves
-    /// on its own instead of waiting for someone to press Check now. The
-    /// observer lives only for that one operation.
     private func startUpgrade(_ tokens: [String]) {
         upgradeObserver = HomebrewManager.shared.$operationStatus
             .dropFirst()
@@ -742,16 +678,10 @@ final class AppUpdatesService: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
-    /// After a package upgrade finishes the list is stale, so it re-checks
-    /// without touching the schedule.
     func refreshAfterUpgrade() {
         check()
     }
 
-    /// What a surface calls when it appears. It scans again when the answer
-    /// could have changed behind the app's back: nothing read yet in this
-    /// process, an update just finished elsewhere, or the last answer is
-    /// simply old. Otherwise reopening the panel costs nothing.
     func checkIfNeeded() {
         reloadRules()
         guard AppUpdatesSupport.shouldRecheck(hasCheckedThisSession: hasCheckedThisSession,
@@ -761,16 +691,11 @@ final class AppUpdatesService: ObservableObject {
         check()
     }
 
-    /// Called when the app comes back to the front. Returning from an updater
-    /// is the moment the list is most likely to be stale, and the window the
-    /// person left behind is buried because this app has no Dock icon.
     func applicationBecameActive() {
         guard updateHandoffPending else { return }
         checkIfNeeded()
     }
 
-    /// True while the app should reopen the window the update hand-off left
-    /// behind. Reading it clears the flag, so the window is restored once.
     func consumeUpdateHandoffReturn() -> Bool {
         guard updateHandoffPending else { return false }
         pendingUpdateHandoffs.removeAll()
@@ -779,8 +704,6 @@ final class AppUpdatesService: ObservableObject {
 
     // MARK: - Scanning the Applications folders
 
-    /// Reads the normal Applications folders plus shallow app results from
-    /// Spotlight in the user's home, all off the main thread.
     private static func scanInstalledApps(includePublisherFeeds: Bool) -> [AppUpdatesSupport.InstalledApp] {
         InstalledApps.applicationScanPaths(
             folderPaths: folderApplicationPaths(),
@@ -832,8 +755,6 @@ final class AppUpdatesService: ObservableObject {
         if let display = plist["CFBundleDisplayName"] as? String, !display.isEmpty {
             name = display
         }
-        // A store purchase always carries its receipt inside the bundle; it
-        // is the only reliable marker macOS gives.
         let hasReceipt = FileManager.default.fileExists(
             atPath: url.appendingPathComponent("Contents/_MASReceipt/receipt").path)
         let metadata = hasReceipt ? MDItemCreate(nil, url.path as CFString) : nil
@@ -848,7 +769,6 @@ final class AppUpdatesService: ObservableObject {
                 ? (try? String(contentsOf: configurationURL, encoding: .utf8)) : nil
             updateFeed = AppUpdateFeedSupport.feed(info: plist, configuration: configuration)
         }
-        // Positron keeps its own release beside its code, not in its bundle.
         let productURL = url.appendingPathComponent("Contents/Resources/app/product.json")
         let productSize = (try? productURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
         let productFile = productSize.map { $0 <= 256 * 1_024 } == true ? (try? Data(contentsOf: productURL)) : nil
@@ -863,19 +783,12 @@ final class AppUpdatesService: ObservableObject {
                                               updateFeed: updateFeed)
     }
 
-    /// This app never lists itself: it has its own updater, and letting the
-    /// package manager replace a running bundle is exactly what that updater
-    /// exists to do safely.
     private static func isOwnBundle(_ bundleID: String) -> Bool {
         bundleID == Bundle.main.bundleIdentifier || bundleID.hasPrefix("com.vorssaint")
     }
 
     private static let ownPackageTokens: Set<String> = ["vorssaint", "vorssaint@beta", "vorssaint-beta"]
 
-    /// The package manager refreshes its own catalog on the way, which can sit
-    /// on a slow network. A ceiling keeps a stalled command from leaving the
-    /// check spinning for the rest of the session; the next check simply tries
-    /// again.
     private static let commandTimeout: TimeInterval = 120
     private static let commandOutputLimit = 32 * 1_024 * 1_024
 

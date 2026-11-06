@@ -26,8 +26,6 @@ struct DiskDeviceReading: Identifiable, Equatable {
     var id: String
     var name: String
     var mountPath: String
-    /// Stable across renames and remounts, so the eject exclusion list matches
-    /// on it as well as on the name and the mount path.
     var volumeUUID: String?
     var bsdName: String?
     var wholeDisk: String?
@@ -99,9 +97,6 @@ struct DiskReading: Equatable {
 enum DiskSupport {
     static let nvmeDataUnitBytes: UInt64 = 512_000
 
-    /// Important-use capacity can add reclaimable space, but must never hide
-    /// bytes already free on the volume. Keep a real zero distinct from a
-    /// missing reading, and calculate physical usage from the raw free count.
     static func capacity(total: UInt64, rawFree: UInt64?, importantFree: UInt64?)
         -> (free: UInt64, used: UInt64, purgeable: UInt64?)? {
         guard total > 0, rawFree != nil || importantFree != nil else { return nil }
@@ -111,9 +106,6 @@ enum DiskSupport {
         return (free, total - physicalFree, purgeable)
     }
 
-    /// Short user-facing label for a volume format. `type` is the mount table
-    /// token (statfs f_fstypename / diskutil FilesystemType); `name` is the
-    /// verbose diskutil FilesystemName, used only to tell FAT widths apart.
     static func fileSystemLabel(type: String?, name: String? = nil) -> String? {
         guard let type = type?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
               !type.isEmpty else { return nil }
@@ -131,8 +123,6 @@ enum DiskSupport {
             return "FAT"
         case "cd9660": return "ISO 9660"
         default:
-            // Unknown formats only earn a tag when the token already reads
-            // like an acronym; anything longer is driver noise, not a format.
             guard (2...6).contains(type.count),
                   type.allSatisfy({ $0.isLetter || $0.isNumber }),
                   type.contains(where: \.isLetter) else { return nil }

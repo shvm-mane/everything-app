@@ -41,8 +41,6 @@ enum NotchFileToolsSupport {
         return inputs.allSatisfy { input in
             let source = input.resolvingSymlinksInPath().standardizedFileURL
             guard source.path != "/" else { return false }
-            // Native file identity handles aliases and case-insensitive volumes;
-            // comparing path spelling can put an archive inside its own input.
             var relationship = FileManager.URLRelationship.other
             do {
                 try manager.getRelationship(&relationship, ofDirectoryAt: source, toItemAt: existingDestination)
@@ -52,8 +50,6 @@ enum NotchFileToolsSupport {
     }
 }
 
-/// Owns one requested archive operation; cancellation and installation share a lock
-/// so a cancelled job cannot publish a partly written file over an existing item.
 final class NotchArchiveOperation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
@@ -104,8 +100,6 @@ final class NotchArchiveOperation: @unchecked Sendable {
         guard !cancelled else { lock.unlock(); throw CancellationError() }
         do { try child.run(); process = child; lock.unlock() }
         catch { lock.unlock(); throw error }
-        // At most one queued operation waits, off the UI thread. Cancellation
-        // terminates (then kills) the owned child before the next job can start.
         finished.wait()
         lock.lock()
         defer { process = nil; lock.unlock() }

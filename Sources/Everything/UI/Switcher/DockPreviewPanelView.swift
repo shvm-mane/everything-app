@@ -65,8 +65,6 @@ struct DockPreviewPinnedPanelView: View {
                 panel.selectNextWindow()
                 return panel.selectedWindowID
             },
-            // A pinned panel is a detached copy with no session to end, so it
-            // carries the tap and button actions but not drag-to-place.
             onBeginDrag: { _ in },
             onUpdateDrag: {},
             onEndDrag: { _ in }
@@ -165,9 +163,6 @@ private struct DockPreviewPanelContent: View {
                     .padding(.bottom, DockPreviewSupport.panelPadding)
                     .padding(.top, showsHeader ? 0 : DockPreviewSupport.panelPadding)
                 }
-                // A panel that already shows every window has nothing to
-                // scroll, and a scroll view that can move steals the drag that
-                // carries a window out of the panel.
                 .scrollDisabled(showsEveryWindow)
             }
         }
@@ -177,8 +172,6 @@ private struct DockPreviewPanelContent: View {
         .background(HUDBackdrop(cornerRadius: 18,
                                 opacity: DockPreviewSupport.sanitizedBackgroundOpacity(backgroundOpacity)))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        // The hairline keeps its full strength as the material fades: it is what
-        // still draws the panel's shape once the frost stops doing it.
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(minimalPreviews ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)
@@ -193,9 +186,6 @@ private struct DockPreviewPanelContent: View {
         DockPreviewSupport.showsPanelHeader(isPinned: isPinned)
     }
 
-    /// The panel is sized by the service against the real screen; this only
-    /// keeps the content from collapsing before the first capture lands, so a
-    /// nominal screen is enough for it.
     private var showsEveryWindow: Bool {
         DockPreviewSupport.visibleCardCount(
             itemCount: windows.count,
@@ -223,9 +213,6 @@ private struct DockPreviewPanelContent: View {
         HStack(spacing: 7) {
             dragTitleArea
             windowNavigationButtons(proxy: proxy)
-            // Both belong to the pinned panel alone. A hovered panel is
-            // dismissed by moving off it, and pinning one is a named item in
-            // any card's menu.
             if isPinned {
                 Button {
                     onTogglePinned()
@@ -264,9 +251,6 @@ private struct DockPreviewPanelContent: View {
             }
 
             HStack(spacing: 7) {
-                // A hovered panel sits above the Dock icon the pointer is
-                // resting on. A pinned panel outlives that pointer and has to
-                // name itself.
                 if isPinned {
                     if let icon = windows.first?.appIcon {
                         Image(nsImage: icon)
@@ -345,8 +329,6 @@ private struct DockPreviewPanelContent: View {
     private func revealSelection(_ windowID: CGWindowID?, proxy: ScrollViewProxy) {
         guard let windowID,
               let selected = windows.first(where: { $0.windowID == windowID }) else { return }
-        // Hover only highlights. Recentering each card that crosses the pointer
-        // during a scroll feeds another jump into the gesture.
         withAnimation(.easeOut(duration: 0.15)) {
             proxy.scrollTo(selected.id, anchor: .center)
         }
@@ -420,13 +402,6 @@ private struct DockPreviewCard: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .padding(DockPreviewSupport.cardThumbnailInset)
                 } else if let icon = window.appIcon {
-                    // Drawn as a watermark, not as content. Every card in a
-                    // panel belongs to the app whose Dock icon opened it, and
-                    // that icon is already in the header, so this says nothing
-                    // new — it only fills the space until a capture lands. At
-                    // full strength the capture replacing it reads as a jump;
-                    // at this weight it reads as the space filling in, and it
-                    // costs no transition, so nothing takes longer.
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -435,10 +410,6 @@ private struct DockPreviewCard: View {
                         .opacity(0.35)
                 }
 
-                // One row along the bottom of the picture: the app on the
-                // left, the window's state on the right, sharing a baseline --
-                // the App Switcher's card, which shows the same two things
-                // about the same kind of thing.
                 if !minimalPreviews {
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
@@ -472,9 +443,6 @@ private struct DockPreviewCard: View {
         }
         .padding(DockPreviewSupport.cardPadding)
         .frame(width: DockPreviewSupport.cardWidth, height: DockPreviewSupport.cardHeight)
-        // The selection animates on the two layers that draw it. Animating
-        // the card instead put every child in the transaction, so arriving on a
-        // card re-composited the shadowed app badge and it blinked once.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
@@ -535,18 +503,9 @@ private struct DockPreviewCard: View {
         }
     }
 
-    /// The title and the two window controls, side by side under the picture.
-    /// The controls used to float over the thumbnail in a capsule a third of
-    /// its height. The room they take here is held whether or not they are
-    /// drawn, so the title does not shift as the pointer arrives.
     private var titleBand: some View {
         HStack(alignment: .top, spacing: 4) {
             VStack(alignment: .leading, spacing: 2) {
-                // Full strength whether or not the card is selected. The App
-                // Switcher dims an unselected name because a grid of them is
-                // read at a glance and the selection has to carry; a Dock
-                // preview holds the windows of one app, where the name is the
-                // only thing telling them apart.
                 ScrollingTitle(text: window.displayTitle,
                                weight: isSelected ? .semibold : .regular,
                                width: DockPreviewSupport.cardTitleTextWidth,
@@ -646,8 +605,6 @@ private struct DockPreviewCard: View {
     }
 }
 
-/// Only middle clicks belong to this view; ordinary clicks and drags keep
-/// reaching the SwiftUI card underneath, including its context menu.
 private struct DockPreviewMiddleClick: NSViewRepresentable {
     let onClose: () -> Void
 

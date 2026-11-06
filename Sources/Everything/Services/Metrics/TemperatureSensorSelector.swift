@@ -25,12 +25,6 @@ struct CachedSensorReading {
 enum TemperatureSensorSelector {
     static let minimumChipTemperature = 10.0
 
-    // The alternate M1 layout was read on a MacBook Pro 13-inch
-    // (MacBookPro17,1) on macOS 27 and reported on a Mac mini (Macmini9,1,
-    // #1353), neither of which carries any key of the original layout.
-    // In contributed idle and load samples, Tp<n>a and Te<n>a tracked the
-    // named pACC/eACC MTR die sensors with the same index. Keep the b, x
-    // and z variants auxiliary; most read above those die sensors.
     private static let appleM1CPUCoreKeys: Set<String> = [
         "Tp09", "Tp0T",
         "Tp01", "Tp05", "Tp0D", "Tp0H",
@@ -57,9 +51,6 @@ enum TemperatureSensorSelector {
         "Tp0V", "Tp0Y", "Tp0b", "Tp0e",
     ]
 
-    // Observed on M4 Pro (Mac16,8) and M4 Max (Mac16,5, 10P + 4E).
-    // These are CPU regions, not a per-core map. Tex keys keep answering
-    // while Tpx keys park. currentPlatform validates the Max configuration.
     private static let appleM4ProMaxCPUCoreKeys: Set<String> = [
         "Tex0", "Tex1", "Tex2", "Tex3",
         "Tpx0", "Tpx1", "Tpx2", "Tpx3", "Tpx4", "Tpx5",
@@ -76,8 +67,6 @@ enum TemperatureSensorSelector {
 
     static func platform(brandString: String?) -> CPUTemperaturePlatform {
         let brand = brandString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // Preserve the established Tp/Te reading path for this supported chip
-        // until a verified per-core map is available.
         if brand == "Apple A18 Pro" { return .generic }
         switch appleSiliconGeneration(in: brand) {
         case 1: return .appleM1Family
@@ -103,9 +92,6 @@ enum TemperatureSensorSelector {
                         efficiencyCoreCount: sysctlInteger("hw.perflevel1.physicalcpu"))
     }
 
-    /// Only the measured Max configuration opts into the region map. Other
-    /// configurations and incomplete discovery keep the existing M4 readings
-    /// for the display, alerts, and CPU/SoC fan curves.
     static func platform(brandString: String?, modelIdentifier: String?,
                          performanceCoreCount: Int?, efficiencyCoreCount: Int?) -> CPUTemperaturePlatform {
         let identified = platform(brandString: brandString)
@@ -141,12 +127,6 @@ enum TemperatureSensorSelector {
         if let value = core.map({ $0.value }).max() {
             return value
         }
-        // Not every Mac carries the sensors its chip generation is mapped to.
-        // One that does not showed the hottest reading of its CPU families
-        // instead, for as long as the app has had this panel, until 3.3.3
-        // restricted the answer to the mapped sensors and left those Macs with
-        // nothing. This is that reading, restored exactly. Fan control is a
-        // separate decision and keeps requiring its own mapped readings.
         return valid.map { $0.value }.max()
     }
 

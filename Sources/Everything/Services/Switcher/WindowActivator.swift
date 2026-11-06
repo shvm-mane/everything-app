@@ -6,10 +6,6 @@ import ApplicationServices
 
 private let switcherAXPressedNotification = "AXPressed"
 
-/// Brings a switcher selection to the front: unminimizes if needed, makes the
-/// exact window the app's focused/main Accessibility window and activates the
-/// owning app. The focus pass is repeated after activation because Space changes
-/// are asynchronous and some apps settle their main window one run-loop later.
 enum WindowActivator {
     private static let focusRetryDelay: TimeInterval = 0.12
     private static let fullscreenFocusRetryDelays: [TimeInterval] = [0.18, 0.38, 0.68]
@@ -35,9 +31,6 @@ enum WindowActivator {
         }
 
         guard let app = NSRunningApplication(processIdentifier: item.pid) else { return }
-        // Only the delayed focus guards may treat a caller's handoff app as
-        // the source. The minimize restore, source staging and Space hops stay
-        // limited to the App Switcher session source.
         let retrySourcePID = SwitcherSupport.focusRetrySourcePID(
             sessionSourcePID: sourcePID,
             handoffSourcePID: handoffSourcePID,
@@ -45,9 +38,6 @@ enum WindowActivator {
         )
         let windowOwnerPID = item.windowOwnerPID
 
-        // Unhiding an app that is not hidden still brings every one of its
-        // windows forward (measured on macOS 27.2), so a window selection
-        // raised its siblings before fronting the window (issue #1503).
         if app.isHidden { app.unhide() }
         let activationPlan = SwitcherSupport.activationPlan(
             targetsSpecificWindow: item.windowID != nil
@@ -76,11 +66,6 @@ enum WindowActivator {
         }
         let targetStartedMinimized = item.isMinimized
             || windowIsMinimized(windowID: windowID, pid: windowOwnerPID)
-        // A window parked on a Space that is not visible cannot be reached by
-        // the Accessibility passes below; the hop travels there first and then
-        // runs the same focus pass on arrival (issue #339). A minimized window
-        // keeps its Accessibility element and can be deminiaturized directly
-        // on the regular path without relying on Space shortcuts being enabled.
         if !targetStartedMinimized,
            SpaceHop.beginIfNeeded(windowID: windowID,
                                   appPID: item.pid,
@@ -89,8 +74,6 @@ enum WindowActivator {
                                   app: app) {
             return
         }
-        // Only paths that schedule a focus pass need a snapshot. Include all
-        // of the owner's windows, even minimized, off-Space and auxiliary ones.
         let knownWindowIDs = retry || sourceWasFullscreen || item.isFullscreen
             ? windowIDs(ownerPID: windowOwnerPID, options: .optionAll)
             : []
@@ -213,7 +196,6 @@ enum WindowActivator {
         windowMinimizedState(windowID: windowID, pid: pid) == true
     }
 
-    /// Undo only a verified work-area constraint from the preview's Dock hold.
     static func restoreFrameAfterDockHold(_ item: SwitcherItem, original: CGRect,
                                          heldVisibleFrame: CGRect) {
         guard Permissions.shared.accessibility, let windowID = item.windowID else { return }
@@ -246,24 +228,14 @@ enum WindowActivator {
         AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
     }
 
-    /// Three-state minimized check for callers that must distinguish a window
-    /// reported as restored from one that could not be resolved or queried.
     static func windowMinimizedState(windowID: CGWindowID, pid: pid_t) -> Bool? {
         guard Permissions.shared.accessibility else { return nil }
         let axApp = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(axApp, 0.35)
-        // Observation runs before a hop and on every focus retry. Leave the
-        // remote scan to an explicit window action instead of repeating it here.
         guard let axWindow = axElement(windowID: windowID, in: axApp) else { return nil }
         return minimizedState(of: axWindow)
     }
 
-    /// Moves a window's top-left corner to a global Accessibility point.
-    ///
-    /// Our own windows are refused rather than special-cased: reading this
-    /// process's own Accessibility tree from the main thread is the one call
-    /// that can deadlock, and Vorssaint has no Dock icon to drag a preview
-    /// from in the first place.
     @discardableResult
     static func setWindowOrigin(_ origin: CGPoint, windowID: CGWindowID, pid: pid_t) -> Bool {
         guard Permissions.shared.accessibility,
@@ -276,14 +248,6 @@ enum WindowActivator {
         return AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, value) == .success
     }
 
-    /// Puts a window where a drag dropped it. Every window takes the same four
-    /// steps in the same order whatever state it was in, because a drop that
-    /// stops to check on a minimized window feels like a different gesture from
-    /// a drop that does not. Un-minimizing a window that is already out returns
-    /// immediately, so the step costs one attribute read.
-    ///
-    /// The position goes on before the window is restored: the restore then
-    /// ends at the drop point rather than flying to the window's old place.
     @discardableResult
     static func place(_ item: SwitcherItem, origin: CGPoint, pointer: CGPoint) -> Bool {
         guard Permissions.shared.accessibility,
@@ -301,10 +265,6 @@ enum WindowActivator {
         return placed
     }
 
-    /// Hands the keyboard to a window a drag just placed. Dropping a window
-    /// somewhere is a request to use it, and the app-level activation that
-    /// follows raises the app without saying which of its windows the user was
-    /// pointing at.
     static func focusPlacedWindow(_ item: SwitcherItem) {
         guard let windowID = item.windowID,
               item.windowOwnerPID != ProcessInfo.processInfo.processIdentifier
@@ -349,8 +309,6 @@ enum WindowActivator {
             || setResult == .success
     }
 
-    /// True means the close request was delivered or its response timed out;
-    /// the window may remain open for a save dialog. Callers verify removal.
     static func closeWindow(windowID: CGWindowID,
                             appPID: pid_t,
                             windowOwnerPID: pid_t) -> Bool {
@@ -366,20 +324,14 @@ enum WindowActivator {
         guard let axWindow = closableElement(windowID: windowID, in: axApp, pid: windowOwnerPID),
               let closeButton = elementAttribute(axWindow, kAXCloseButtonAttribute as String)
         else { return false }
-        // AX timeouts belong to each object, not its children.
         AXUIElementSetMessagingTimeout(closeButton, 0.35)
         guard boolAttribute(closeButton, kAXEnabledAttribute as String, default: true) else { return false }
 
         AutoQuitService.shared.recordProgrammaticCloseRequest(pid: appPID)
         let result = AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
-        // A save dialog may keep an action callback inside a modal loop until
-        // it times out. The request can already have arrived; never press again
-        // or leave fullscreen merely because its answer was cannotComplete.
         return result == .success || result == .cannotComplete
     }
 
-    /// Reuse the shared resolver for published and hidden-Space windows,
-    /// including fullscreen ones, without travelling first (issue #2708).
     private static func closableElement(windowID: CGWindowID, in axApp: AXUIElement, pid: pid_t) -> AXUIElement? {
         guard let window = axElement(windowID: windowID, in: axApp, pid: pid)
         else { return nil }
@@ -387,8 +339,6 @@ enum WindowActivator {
         return window
     }
 
-    /// A fullscreen window keeps its close button disabled (measured on macOS
-    /// 26.6). True when it was asked to leave fullscreen, so a close can follow.
     private static func leaveFullscreenToClose(windowID: CGWindowID, pid: pid_t) -> Bool {
         guard Permissions.shared.accessibility else { return false }
         let axApp = AXUIElementCreateApplication(pid)
@@ -399,16 +349,11 @@ enum WindowActivator {
         return AXUIElementSetAttributeValue(axWindow, "AXFullScreen" as CFString, kCFBooleanFalse) == .success
     }
 
-    /// Keeps the regular close path immediate. A fullscreen window first leaves
-    /// fullscreen, a hidden app is temporarily revealed, and a hidden-Space
-    /// target the lookup missed reuses the verified Space hop; each path polls
-    /// until Accessibility can close that exact window.
     static func closeWindowIncludingHiddenState(_ item: SwitcherItem,
                                                 completion: @escaping (Bool) -> Void) {
         windowCloseGeneration &+= 1
         let requestGeneration = windowCloseGeneration
         pendingWindowClose?.cancel()
-        // Cancellation calls completion, which can start a newer request.
         guard windowCloseGeneration == requestGeneration,
               pendingWindowClose == nil, let windowID = item.windowID else {
             completion(false)
@@ -481,7 +426,6 @@ enum WindowActivator {
             SpaceHop.cancelPending()
         }
         pending.finish(success: success)
-        // Completion can start another close synchronously.
         return pendingWindowClose == nil && windowCloseGeneration == requestGeneration
     }
 
@@ -505,9 +449,6 @@ enum WindowActivator {
         window.orderFrontRegardless()
     }
 
-    /// Prefer the selected window, but retain cooperative activation when the
-    /// private request or the Accessibility raise cannot be delivered. An
-    /// accessory window owner cannot supply its regular host's menu bar.
     private static func activateApp(_ app: NSRunningApplication,
                                     plan: SwitcherActivationPlan,
                                     windowID: CGWindowID? = nil,
@@ -678,12 +619,6 @@ enum WindowActivator {
             sourcePID: sourcePID,
             frontmostPID: currentFrontmostPID(),
             targetMinimizedState: minimizedState,
-            // The same scope the snapshot used. The on-screen list lags: a
-            // window the app has just opened is focused, and answered as
-            // focused by Accessibility, before the window server composites
-            // it — so comparing on-screen windows against an all-windows
-            // snapshot reported nothing new in exactly the race this guard
-            // exists for, and the focus reading below was never taken.
             targetAppWindowIDs: windowIDs(ownerPID: targetWindowOwnerPID, options: .optionAll),
             targetAppFocusedWindowID: currentFocusedWindowID(),
             targetWindowIsFocused: currentFocusedWindowID() == windowID,
@@ -766,8 +701,6 @@ enum WindowActivator {
         if let windowID {
             prepareWindowForActivation(windowID: windowID, pid: windowOwnerPID ?? pid)
         }
-        // A missing source window (including a fullscreen source) is still a
-        // return gesture, not a request to raise every window of that app.
         activateApp(sourceApp,
                     plan: SwitcherSupport.activationPlan(targetsSpecificWindow: true),
                     windowID: windowID,
@@ -863,9 +796,6 @@ enum WindowActivator {
         return raised == .success
     }
 
-    /// Ask the exact hidden-Space window to travel before application activation
-    /// or synthetic input can select a sibling. Success acknowledges the raise;
-    /// SpaceHop still verifies arrival and falls back if no travel takes place.
     static func raiseWindowOnHiddenSpace(windowID: CGWindowID, pid: pid_t) -> Bool {
         guard Permissions.shared.accessibility,
               pid > 0, pid != ProcessInfo.processInfo.processIdentifier else { return false }
@@ -880,28 +810,16 @@ enum WindowActivator {
         return AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString) == .success
     }
 
-    /// Every window the owner has right now, in the scope the retry guard
-    /// compares against. Taken by a hop at the moment it begins.
     static func focusSnapshot(ownerPID: pid_t) -> Set<CGWindowID> {
         windowIDs(ownerPID: ownerPID, options: .optionAll)
     }
 
-    /// Focus pass run by SpaceHop once the target window's Space became
-    /// visible and Accessibility can finally describe the window.
-    ///
-    /// Its pulses run up to a second after the switch, long enough for the
-    /// user to open a window in the app they just reached — Command-N right
-    /// after switching away from a fullscreen app lands here. They consult the
-    /// same guard as every other delayed pass, so a window the app did not
-    /// have when the hop began ends them instead of being covered.
     static func focusAfterSpaceHop(windowID: CGWindowID,
                                    appPID: pid_t,
                                    windowOwnerPID: pid_t,
                                    sourcePID: pid_t?,
                                    state: SwitcherWindowFocusRetryState) {
         guard let app = NSRunningApplication(processIdentifier: appPID), !app.isTerminated else { return }
-        // Travelling fronts whatever tops each desktop on the way, so this
-        // pass judges the app's own focus rather than who is in front.
         guard shouldContinueFocusRetry(windowID: windowID,
                                        targetPID: appPID,
                                        targetWindowOwnerPID: windowOwnerPID,
@@ -952,9 +870,6 @@ enum WindowActivator {
     }
 }
 
-/// Waits for an explicit close to become possible, then observes its result.
-/// A delivered request is never repeated. A remaining off-Space or hidden
-/// window is revealed so the user can answer its save dialog.
 fileprivate final class SwitcherPendingWindowClose {
     private static let pollInterval: TimeInterval = 0.1
     private static let timeout: TimeInterval = 4.0
@@ -1074,8 +989,6 @@ fileprivate final class SwitcherPendingWindowClose {
                 } else {
                     let canReveal = self.canRevealRemainingWindow()
                     let finished = WindowActivator.finishPendingWindowClose(self, success: true)
-                    // Finish first: cancelling the old hop must not cancel the
-                    // new hop, and completion may supersede this request.
                     if canReveal, finished, self.canRevealRemainingWindow() {
                         WindowActivator.activate(self.item, retry: false)
                     }
@@ -1086,8 +999,6 @@ fileprivate final class SwitcherPendingWindowClose {
                 WindowActivator.finishPendingWindowClose(self, success: false)
                 return
             }
-            // A window leaving fullscreen closes wherever it lands, once its
-            // close button is enabled again.
             if self.leavesFullscreen || !SpaceWindowBridge.isParkedOnHiddenSpace(windowID),
                WindowActivator.closeWindow(windowID: windowID,
                                            appPID: self.item.pid,
@@ -1109,8 +1020,6 @@ fileprivate final class SwitcherPendingWindowClose {
         guard !focusWasSuperseded, !appWasReactivated, WindowActivator.isCurrentActivation(generation),
               let foregroundPID, let foregroundWindowID,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == foregroundPID else { return false }
-        // Native selection of another window in the same app does not change
-        // our activation generation or send an app activation notification.
         return WindowActivator.focusedWindowID(for: foregroundPID) == foregroundWindowID
     }
 }

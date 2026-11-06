@@ -5,16 +5,6 @@ import Carbon.HIToolbox
 import Foundation
 import IOKit
 
-/// Tells its owner when macOS Secure Event Input turns on or off, without
-/// polling. The flag has no notification of its own, but the window server
-/// records its holder in the console users list on `IOResources`, and every
-/// update of that list publishes a resource, which takes `IOResources` busy
-/// and back. Measured on 27.2: one busy pair per change, plus a pair about
-/// every ten seconds for unrelated updates. Each message rereads the flag,
-/// about a microsecond, and only a change reaches the owner.
-///
-/// Main thread only. Where the interest cannot be registered, nothing is
-/// watched and the owner still reads the flag whenever it applies its state.
 final class SecureInputWatch {
     private let onChange: (Bool) -> Void
     private var port: IONotificationPortRef?
@@ -29,7 +19,6 @@ final class SecureInputWatch {
         stop()
     }
 
-    /// Safe to call repeatedly; only the first call after a stop registers.
     func start() {
         guard port == nil else { return }
         let resources = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources")
@@ -47,8 +36,6 @@ final class SecureInputWatch {
         }
         self.port = port
         IONotificationPortSetDispatchQueue(port, DispatchQueue.main)
-        // Read after registering, so a change in between still arrives as a
-        // message instead of falling into the gap.
         lastSeen = IsSecureEventInputEnabled()
     }
 

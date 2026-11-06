@@ -4,8 +4,6 @@
 import AppKit
 import Combine
 
-/// The system monitor remains the only battery sampler. Native connection
-/// notifications report an actual connection, independently of missing readings.
 final class NotchAccessoryService: NSObject {
     static let shared = NotchAccessoryService()
     private var subscription: AnyCancellable?
@@ -25,9 +23,6 @@ final class NotchAccessoryService: NSObject {
         activationTime = ProcessInfo.processInfo.systemUptime
         generation = UUID()
         let currentGeneration = generation
-        // The baseline is silent, including devices that were already low
-        // before the user enabled this feature. Connection baselines are
-        // rebuilt silently after lock/sleep; battery episodes survive both.
         connectionMonitor.start { [weak self] event in
             guard let self, self.active, self.generation == currentGeneration,
                   NotchAccessorySupport.isEnabled() else { return }
@@ -75,8 +70,6 @@ final class NotchAccessoryService: NSObject {
         switch event {
         case let .connected(name, majorClass, minorClass):
             let text = FeatureStrings.notchActivities(L10n.shared.language)
-            // The status stays short beside its icon, so the name gets a
-            // whole wing to itself before it has to be shortened.
             self.enqueue(NotchNotice(event: .accessory, title: text.connected, detail: name,
                 symbol: NotchAccessorySupport.symbol(name: name, majorClass: majorClass, minorClass: minorClass)),
                          device: name)

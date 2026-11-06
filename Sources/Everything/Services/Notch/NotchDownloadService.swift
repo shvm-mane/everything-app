@@ -8,8 +8,6 @@ import Darwin
 final class NotchDownloadService: ObservableObject {
     static let shared = NotchDownloadService()
 
-    /// Progress may unpublish on any queue. Only this main-actor boundary
-    /// holds the weak UI owner; native callbacks carry a Sendable reference.
     @MainActor private final class ProgressCallbacks {
         weak var owner: NotchDownloadService?
         let generation: UUID
@@ -33,7 +31,6 @@ final class NotchDownloadService: ObservableObject {
     @Published private(set) var folderName: String?
     @Published private(set) var folderUnavailable = false
     var onArrival: ((NotchDownloadItem) -> Void)?
-    /// A download went away unfinished: cancelled or failed.
     var onFailure: (() -> Void)?
 
     private var folder: URL?
@@ -56,7 +53,6 @@ final class NotchDownloadService: ObservableObject {
     private var chooser: NSOpenPanel?
     var isChoosingFolder: Bool { chooser != nil }
     private var chooserID = UUID()
-    /// The pending chooser was begun from the island's Downloads page.
     private var chooserInNotch = false
     private let queue = DispatchQueue(label: "com.vorssaint.notch.downloads", qos: .utility)
 
@@ -114,8 +110,6 @@ final class NotchDownloadService: ObservableObject {
             }
             guard let parent else { return }
             let returnID = self.chooserID
-            // Native panel dismissal restores its previous key window after the
-            // completion callback. Return on the next turn without changing pin.
             DispatchQueue.main.async { [weak self, weak parent] in
                 guard let self, let parent, self.chooserID == returnID, self.chooser == nil,
                       self.canReturnToDownloads(parent) else { return }
@@ -123,15 +117,10 @@ final class NotchDownloadService: ObservableObject {
             }
         }
         if let parent {
-            // An attached sheet moves/reskins a borderless island. Keep the
-            // chooser independent and above its parent instead, without
-            // changing the pin; isChoosingFolder keeps the surface alive.
             panel.level = NSWindow.Level(rawValue: parent.level.rawValue + 1)
-            // Like the sheet it replaces, it stays up while another app is active.
             panel.hidesOnDeactivate = false
             panel.begin(completionHandler: completed)
             NSApp.activate(ignoringOtherApps: true)
-            // Activation alone can leave the nonactivating island holding focus.
             panel.makeKeyAndOrderFront(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
@@ -169,9 +158,6 @@ final class NotchDownloadService: ObservableObject {
         chooser = nil
     }
 
-    /// The island's Downloads page went away: a folder chosen now could no
-    /// longer return to it and would be dropped in silence, so its chooser
-    /// ends with it. One begun in Settings stays up.
     func cancelNotchFolderChoice() {
         guard chooserInNotch, chooser != nil else { return }
         cancelFolderChoice()
@@ -193,7 +179,6 @@ final class NotchDownloadService: ObservableObject {
         if let announcements { DistributedNotificationCenter.default().removeObserver(announcements) }
         announcements = nil
         if let folder, securityScope {
-            // Let an already-running file read finish before releasing its scope.
             queue.async { folder.stopAccessingSecurityScopedResource() }
         }
         folder = nil
@@ -304,8 +289,6 @@ final class NotchDownloadService: ObservableObject {
                     name: old.expectedURL.lastPathComponent, receivedBytes: Int64(values.fileSize ?? 0),
                     fraction: 1, completed: true, active: false, date: Date())
             }
-            // A partial gone with no file in its place and no other partial
-            // taking it over did not finish.
             let failed = current.map { current in
                 previous.values.filter { old in
                     current.partials[old.url] == nil
@@ -331,8 +314,6 @@ final class NotchDownloadService: ObservableObject {
                 }
                 completed.forEach(self.recordCompletion)
                 if !failed.isEmpty {
-                    // The publisher may finish just after its partial vanishes.
-                    // Wait for its evidence, never for an unrelated arrival.
                     self.queue.asyncAfter(deadline: .now() + 2) { [weak self] in
                         let unfinished = failed.contains { observer?.didFinish($0) != true }
                         DispatchQueue.main.async {

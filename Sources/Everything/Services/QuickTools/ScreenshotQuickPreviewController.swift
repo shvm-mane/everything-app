@@ -5,9 +5,6 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Drives the QR button, which appears after the capture is scanned so the
-/// preview never waits on detection to show, and the buttons grayed out
-/// because the after-capture action already did their work.
 final class ScreenshotQuickPreviewModel: ObservableObject {
     @Published var qr: BarcodeDetector.Reading?
     @Published var disabledActions: Set<ScreenshotQuickPreviewController.Action> = []
@@ -16,8 +13,6 @@ final class ScreenshotQuickPreviewModel: ObservableObject {
     @Published var deletingShare = false
 }
 
-/// A transient capture preview that stays outside Command Tab and reflects
-/// automatic Save or Copy work that may already have completed.
 final class ScreenshotQuickPreviewController {
     enum Action {
         case edit
@@ -31,14 +26,9 @@ final class ScreenshotQuickPreviewController {
     private let capture: ScreenshotSelectionController.Capture
     private let strings: ScreenshotFeatureStrings
     private let defaultAction: ScreenshotDefaultAction
-    /// Runs one action and reports which sub-actions actually happened —
-    /// save-and-copy can succeed by halves, and only the done halves gray
-    /// their buttons out. Empty means the action failed entirely.
     private let action: (Action) -> Set<Action>
     private let share: (ScreenshotShareDuration,
                         @escaping @MainActor (ScreenshotShareRecord?) -> Void) -> Void
-    /// Writes the capture as it would be saved into a temporary file for the
-    /// system share sheet.
     private let shareFile: () -> URL?
     private let shareAnchor = ShelfSharePickerAnchor.Anchor()
     private var systemSharing = false
@@ -154,11 +144,6 @@ final class ScreenshotQuickPreviewController {
         self.panel = panel
         installKeyMonitor(for: panel)
         panel.orderFrontRegardless()
-        // On by default: leaving the keyboard behind after a capture is what
-        // #1463 reported, since Command-C and Command-S did nothing until a
-        // click. Taking it costs the caret in the app being typed into
-        // (#1089), so persistent previews always leave focus where it was;
-        // a click can still hand focus to the preview explicitly.
         if presentationPolicy.takesFocus {
             panel.makeKey()
         }
@@ -173,7 +158,6 @@ final class ScreenshotQuickPreviewController {
         scheduleAutoDismiss()
     }
 
-    /// Closing while a share link is being made would delete that link.
     private func dismissForClickElsewhere() {
         guard !model.sharing else { return }
         close()
@@ -186,9 +170,6 @@ final class ScreenshotQuickPreviewController {
         if !inside { scheduleAutoDismiss() }
     }
 
-    /// Scans the full resolution capture off the main thread and reveals the
-    /// QR button if a code is found. Silent when there is none, so a plain
-    /// screenshot preview is untouched.
     private func scanForQR() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let image = self?.capture.image, let reading = BarcodeDetector.read(image) else { return }
@@ -201,23 +182,16 @@ final class ScreenshotQuickPreviewController {
         }
     }
 
-    /// Hands the code to the shared result panel, which spells out the
-    /// content before anything is copied. The preview steps aside.
     private func showQRResult() {
         guard let reading = model.qr else { return }
         close()
         QRResultController.shared.show(reading: reading)
     }
 
-    /// The screenshot is already available at full resolution, so OCR can
-    /// begin without showing another capture surface.
     private func copyText() {
         guard !closed, AppFeature.screenOCR.isAvailable else { return }
         let image = capture.image
         close()
-        // An after-capture copy landing during recognition would make the
-        // clipboard newer than the text, which would then be dropped, so
-        // recognition starts once that copy is in.
         ScreenshotService.shared.afterAutoCopy {
             ScreenTextService.shared.copyText(from: image)
         }
@@ -264,15 +238,10 @@ final class ScreenshotQuickPreviewController {
 
     private func perform(_ requested: Action) {
         guard !closed else { return }
-        // Keyboard shortcuts honor the grayed-out buttons: what the
-        // after-capture action already did is not done twice.
         guard !model.disabledActions.contains(requested) else { return }
         dismissWork?.cancel()
         dismissWork = nil
         if requested == .edit {
-            // Release the island's non-activating key panel before promoting
-            // the app and constructing another SwiftUI window. Defer past the
-            // button's current update rather than nesting editor layout in it.
             let action = action
             close()
             DispatchQueue.main.async { _ = action(requested) }
@@ -294,9 +263,6 @@ final class ScreenshotQuickPreviewController {
         }
     }
 
-    /// The system share sheet: AirDrop, messages and every other target the
-    /// Mac offers. The preview waits while the sheet is up, and a chosen
-    /// target finishes it the way Copy does.
     private func performSystemShare() {
         guard !closed, !systemSharing else { return }
         dismissWork?.cancel()
@@ -421,9 +387,6 @@ final class ScreenshotQuickPreviewController {
             forKey: DefaultsKey.screenshotPreviewPosition) ?? ""
         let position = ScreenshotSupport.QuickPreviewPosition(rawValue: storedPosition)
             ?? .automatic
-        // With an after-capture action the preview is just a confirmation,
-        // so it sits quietly in the corner and leaves sooner, instead of
-        // popping up next to the selection and waiting.
         let effectivePosition: ScreenshotSupport.QuickPreviewPosition =
             position == .automatic && defaultAction != .none
                 ? .bottomRight
@@ -498,10 +461,6 @@ final class ScreenshotQuickPreviewController {
                 self.perform(.discard)
                 return nil
             case kVK_Escape:
-                // Escape only dismisses. Before the after-capture actions it
-                // was equivalent to discard; now a discard can delete a file
-                // the HUD just announced as saved, and "make this popup go
-                // away" must never do that. Deleting stays on Trash and ⌫.
                 self.close()
                 return nil
             default:
@@ -514,13 +473,6 @@ final class ScreenshotQuickPreviewController {
 private final class ScreenshotQuickPreviewPanel: OverlayPanel {
     override var canBecomeKey: Bool { true }
 
-    /// The preview shows up unasked for, so presenting it leaves the keyboard
-    /// where it was unless the person opted in, and a click is what hands it
-    /// over. Its shortcuts read a local monitor, and that monitor is delivered
-    /// nothing until this panel is key. The hand-off sits in `sendEvent`
-    /// rather than `mouseDown` because the hosted SwiftUI content answers a
-    /// press on a button itself, and a window's `mouseDown` never runs for the
-    /// clicks a view has taken.
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown, !isKeyWindow {
             makeKey()
@@ -576,7 +528,6 @@ private struct ScreenshotQuickPreviewView: View {
                 qrControl
                     .transition(.scale.combined(with: .opacity))
             }
-            // The floating preview shows Copy text on its thumbnail.
             if embedded, featureRuntime.isAvailable(.screenOCR) {
                 textControl
             }
@@ -699,9 +650,6 @@ private struct ScreenshotQuickPreviewView: View {
                 if showsDismissButton { thumbnailDismissButton }
             }
             .overlay(alignment: .topTrailing) {
-                // The floating action row already fills its fixed width in
-                // longer languages, so Copy text, share and pin ride on the
-                // thumbnail there instead of squeezing Save, Copy and Edit.
                 if !embedded { thumbnailButtons }
             }
 
@@ -731,8 +679,6 @@ private struct ScreenshotQuickPreviewView: View {
     }
 
     private func previewHoverChanged(_ inside: Bool) {
-        // The island tracks the image and header together. Leaving just the
-        // image must not restart dismissal while its actions are still hovered.
         guard !embedded else { return }
         hoverChanged(inside)
     }
@@ -789,7 +735,6 @@ private struct ScreenshotQuickPreviewView: View {
         )
     }
 
-    /// A code was found: open the result panel that spells out its content.
     private var qrControl: some View {
         Button(action: showQR) {
             Image(systemName: "qrcode")
@@ -802,7 +747,6 @@ private struct ScreenshotQuickPreviewView: View {
         .accessibilityLabel(L10n.shared.s.qrResultTitle)
     }
 
-    /// Runs OCR against the full-resolution capture and copies its text.
     private var textControl: some View {
         Button(action: copyText) {
             Image(systemName: "text.viewfinder").frame(width: 28, height: 28)
@@ -815,9 +759,6 @@ private struct ScreenshotQuickPreviewView: View {
 
     @ViewBuilder private var shareMenu: some View {
         if embedded {
-            // The island hides the menu arrow, so a primary action would leave
-            // the durations behind a press and hold that nothing hints at. A
-            // click there opens the durations, as it always has.
             shareMenuChrome(Menu { shareDurations } label: { shareMenuLabel },
                             help: strings.shareSectionTitle)
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
@@ -878,8 +819,6 @@ private struct ScreenshotQuickPreviewView: View {
     }
 }
 
-/// The island header has its own surface; native button bezels waste the space
-/// needed by its title at the minimum width. Keep 28-point targets in that host.
 private struct ScreenshotPreviewActionStyle: ViewModifier {
     let embedded: Bool
     var prominent = false

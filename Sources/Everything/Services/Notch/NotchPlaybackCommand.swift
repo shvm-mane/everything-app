@@ -3,8 +3,6 @@
 
 import Foundation
 
-/// The adapter's recording revision travels with the user's action. A process
-/// alone is not enough: it may start another recording before the pipe is read.
 struct NotchPlaybackContext: Equatable {
     let pid: Int32
     let revision: UUID
@@ -20,8 +18,6 @@ struct NotchPlaybackContext: Equatable {
     }
 }
 
-/// Immutable context from the queue row the user actually chose. Native caches
-/// may change before a queued command runs; they cannot replace this context.
 struct NotchQueueSelection: Equatable {
     static let maximumItems = 20
     let requestID: UUID
@@ -43,7 +39,6 @@ struct NotchQueueSelection: Equatable {
     }
 }
 
-/// A bounded command shared by the UI process and its playback adapter.
 enum NotchPlaybackCommand: Equatable {
     case toggle, next, previous
     case seek(Double)
@@ -135,8 +130,6 @@ enum NotchPlaybackCommand: Equatable {
     }
 }
 
-/// Queue actions already carry their own immutable selection. Basic controls
-/// also need a destination; a bare legacy command is never accepted by the pipe.
 struct NotchPlaybackRequest: Equatable {
     let command: NotchPlaybackCommand
     let context: NotchPlaybackContext?
@@ -168,8 +161,6 @@ struct NotchPlaybackRequest: Equatable {
     }
 }
 
-/// Pipe delivery can split one line or batch many. An oversized line is discarded
-/// through its newline only; subsequent queue-stop and valid commands still run.
 struct NotchPlaybackCommandFramer {
     private var line = Data()
     private var discarding = false

@@ -139,7 +139,6 @@ struct FanControlResponse: Codable, Equatable, Sendable {
 }
 
 enum FanControlPolicy {
-    /// Retained only for the legacy XPC entry point used by older app builds.
     static let coolingDuration: TimeInterval = 15 * 60
     static let heartbeatLimit: TimeInterval = 7
     static let verificationFailureLimit = 3
@@ -188,8 +187,6 @@ enum FanControlPolicy {
             && abs(target - expected) <= max(2, expected * 0.001)
     }
 
-    /// Not every Mac exposes `Ftst`. Where it is present the unlock write has to
-    /// succeed; where it is absent there is nothing to force and nothing to fail.
     static func forceTestSatisfied(keyExists: Bool, writeSucceeded: Bool) -> Bool {
         !keyExists || writeSucceeded
     }

@@ -3,26 +3,18 @@
 
 import SwiftUI
 
-/// The closed island while Keep Awake runs: the cup of its tile left of the
-/// camera, in the tile's yellow, and on the right the time a timed session
-/// has left, or infinity for one without an end. Both open Controls, where
-/// the tile is. The wings are as wide as the wider side needs.
 struct NotchKeepAwakeStrip: View {
     @ObservedObject var service: NotchService
-    /// Where the island draws it: its own strip as of the last update, or
-    /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var awake = KeepAwakeManager.shared
     @ObservedObject private var l10n = L10n.shared
 
     var body: some View {
-        // Ending a session clears its end before the strip has left.
         NotchStripHold(awake.endDate, shows: awake.isActive) { content(end: $0) }
     }
 
     @ViewBuilder private func content(end: Date?) -> some View {
         if let end {
-            // The reading changes once a minute, so the clock wakes only then.
             TimelineView(.periodic(from: NotchKeepAwakeSupport.tickStart(until: end, now: Date()), by: 60)) { context in
                 strip(end: end, now: context.date)
             }
@@ -38,8 +30,6 @@ struct NotchKeepAwakeStrip: View {
         let iconSize = NotchTimerSupport.stripIconSize(height: height)
         let textSize = NotchTimerSupport.stripTextSize(height: height)
         return Button { service.openActivity(NotchCompactActivity.keepAwake.module) } label: {
-            // Everything: the time left (if any) on the left, the cup on the
-            // right, in white; an open-ended session shows only the cup.
             HStack(spacing: 0) {
                 ZStack {
                     if wing >= 42, let end {
@@ -77,14 +67,11 @@ struct NotchKeepAwakeStrip: View {
         Text(text)
             .font(.system(size: size, weight: .medium)).monospacedDigit()
             .lineLimit(1).minimumScaleFactor(0.65)
-            // A reading that gains or loses a character, like 10m becoming
-            // 9m, resizes the wings; the service measures the same reading.
             .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
                 DispatchQueue.main.async { service.refreshPresentation() }
             }
     }
 
-    /// What the menu bar panel says about the session, read aloud.
     static func status(end: Date?, language: AppLanguage) -> String {
         let strings = Strings.localized(language)
         if let end { return "\(strings.keepAwakeEndsIn) \(end.formatted(date: .omitted, time: .shortened))" }

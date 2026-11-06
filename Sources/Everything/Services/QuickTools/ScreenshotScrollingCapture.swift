@@ -4,9 +4,6 @@
 import AppKit
 import CoreGraphics
 
-/// Watches a selected region while the person scrolls it, then joins only
-/// overlaps that can be identified confidently. Pixel polling also handles
-/// scrollbar drags and keyboard scrolling without global event permissions.
 enum ScreenshotScrollingCapture {
     final class FinishSignal: @unchecked Sendable {
         private let lock = NSLock()
@@ -77,7 +74,6 @@ enum ScreenshotScrollingCapture {
                 let now = ProcessInfo.processInfo.systemUptime
                 if finishSignal.isRequested, finishRequestedAt == nil {
                     finishRequestedAt = now
-                    // Take one final frame even if no wheel event was delivered.
                     scrollPending = true
                 }
                 if let finishRequestedAt,
@@ -97,8 +93,6 @@ enum ScreenshotScrollingCapture {
                                      result: .limited)
                 }
 
-                // Observe pixels throughout the session. Wheel monitors miss
-                // scrollbar drags, keyboard scrolling and some other apps.
                 let sinceLastCapture = now - lastCaptureAt
                 if sinceLastCapture < sampleInterval {
                     try await Task.sleep(nanoseconds: UInt64(
@@ -136,9 +130,6 @@ enum ScreenshotScrollingCapture {
                     guard overlap > 0, overlap < current.height else { return .failed }
                     let establishingContent = contentSampleColumns == nil
                     if establishingContent {
-                        // Matching may use only the narrow text at one edge of
-                        // a Terminal. It is evidence of movement, not the bounds
-                        // of the selected image; keep every selected column.
                         let pixelColumns = 0..<current.width
                         let fixedBottomRows = ScreenshotSupport.scrollingFixedBottomRows(
                             previous: previousSample,
@@ -215,9 +206,6 @@ enum ScreenshotScrollingCapture {
                         else { return .failed }
                         footerSlice = footer
                     }
-                    // Keep only new pixels. Retaining every full frame made a
-                    // common Retina selection hit the memory guard after about
-                    // eleven scrolls even though the final image was still safe.
                     slices.append(strip)
                     totalHeight = nextHeight
                     retainedPixels += stripPixels
@@ -226,9 +214,6 @@ enum ScreenshotScrollingCapture {
                     await onProgress(totalHeight)
 
                 case .advanced(_, .backward, _):
-                    // Scrolling back never duplicates pixels already kept. A
-                    // later forward movement can continue from the furthest
-                    // accepted frame without inventing a seam.
                     hasUnmatchedContent = false
 
                 case .unmatched:
@@ -287,10 +272,6 @@ enum ScreenshotScrollingCapture {
         }
     }
 
-    /// ScreenCaptureKit can pad a region with a transparent edge row. Keeping
-    /// that row in each appended strip produces a dark seam in image viewers.
-    /// Remove only fully transparent outer rows/columns before matching, so the
-    /// overlap and strip coordinates describe the same actual screen pixels.
     private static func contentFrame(_ image: CGImage) -> CGImage? {
         if [.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo) { return image }
         let width = image.width, height = image.height
@@ -327,10 +308,6 @@ enum ScreenshotScrollingCapture {
     }
 
     private static func sample(_ image: CGImage) -> ScreenshotSupport.ScrollingSample? {
-        // Keep native vertical rows for exact offsets and enough horizontal
-        // detail to distinguish digits in a wide Terminal. A 32-column thumbnail
-        // can make different digits look identical; the matcher selects a few
-        // informative columns from this wider sample to bound its work.
         let width = min(256, image.width)
         let height = image.height
         guard width > 0, height > 0 else { return nil }
@@ -350,8 +327,6 @@ enum ScreenshotScrollingCapture {
                                                  pixels: pixels)
     }
 
-    /// A cropped CGImage may keep its full source storage alive. Drawing the
-    /// new strip into its own bitmap makes the retained-pixel guard truthful.
     private static func copiedStrip(from image: CGImage,
                                     columns: Range<Int>,
                                     topCrop: Int,
