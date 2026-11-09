@@ -11,7 +11,9 @@ struct ScrollingTitle: View {
     let scrolls: Bool
 
     @State private var began: Date?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private var shouldScroll: Bool {
         scrolls && !reduceMotion && overflows

@@ -189,7 +189,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     func hide(animated: Bool, transitionContent: NotchContentTransition = .dismiss) {
         guard isPresented else { return }
-        let animate = animated && !relocationHidden && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animate = animated && !relocationHidden && !PerformanceMode.reduceMotion
         guard !hidesWhenSettled || !animate else { return }
         if relocationHidden {
             restoresKeyAfterRelocation = false
@@ -224,7 +224,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
             probe.attach(level: panel.level, screen: geometry.screen)
         }
         let canAnimate = animated && !relocationHidden && (isPresented || revealing)
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            && !PerformanceMode.reduceMotion
         let previousGutter = quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter
         let previousBottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         let previousFrame = currentGeometry.frame(for: CGSize(width: targetSize.width + previousGutter * 2, height: targetSize.height + previousBottom))
@@ -569,7 +569,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func fadeMissionControl(to alpha: CGFloat, completion: (() -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
+            context.duration = PerformanceMode.reduceMotion ? 0 : 0.14 / PerformanceMode.motionSpeed
             panel.animator().alphaValue = alpha
         }, completionHandler: completion)
     }
@@ -927,6 +927,9 @@ private final class NotchCanvas: NSView {
     private var hoverTrackingArea: NSTrackingArea?
     var hoverChanged: ((Bool) -> Void)?
     private let silhouette = CAShapeLayer()
+    // The glass draws a bright rim along its top edge, and its own shading can
+    // land a frame late; this keeps the edge at the bezel black either way.
+    private let bezelShade = CAGradientLayer()
     private let edge = CAShapeLayer()
     private let edgeMask = CALayer()
     private(set) var floatingGap: CGFloat?
@@ -975,6 +978,12 @@ private final class NotchCanvas: NSView {
         edgeMask.frame = CGRect(x: -10_000, y: Self.outlineTopGap, width: 20_000, height: 20_000)
         edge.mask = edgeMask
         layer?.addSublayer(edge)
+        bezelShade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.black.withAlphaComponent(0).cgColor]
+        bezelShade.locations = [0, 0.5, 1]
+        bezelShade.zPosition = 1
+        bezelShade.actions = ["position": NSNull(), "bounds": NSNull(), "frame": NSNull()]
+        bezelShade.frame = CGRect(x: -10_000, y: 0, width: 20_000, height: 4)
+        layer?.addSublayer(bezelShade)
         contentVisibility.name = "notch.contentVisibility"
         contentVisibility.backgroundColor = NSColor.black.cgColor
         contentVisibility.opacity = 1
@@ -1235,11 +1244,14 @@ private final class NotchCanvas: NSView {
             setBackdropContour(inCanvas(silhouettePath(for: CGSize(width: contentSize.width + 3,
                                                                    height: contentSize.height + 2))))
             if fromBlack {
-                let duration: CFTimeInterval = 0.24
+                let duration: CFTimeInterval = 0.24 / PerformanceMode.motionSpeed
                 let glass = CAKeyframeAnimation(keyPath: "opacity")
-                glass.values = [0, 1, 1]
-                glass.keyTimes = [0, 0.55, 1]
-                glass.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .linear)]
+                // Held back a few frames until the shading above the glass
+                // has drawn, or the bare rim flashes at the bezel.
+                glass.values = [0, 0, 1, 1]
+                glass.keyTimes = [0, 0.35, 0.7, 1]
+                glass.timingFunctions = [CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeOut),
+                                         CAMediaTimingFunction(name: .linear)]
                 let black = CAKeyframeAnimation(keyPath: "backgroundColor")
                 black.values = [startColor ?? NSColor.black.cgColor, NSColor.black.cgColor,
                                 layer?.backgroundColor ?? NSColor.clear.cgColor]
@@ -1253,7 +1265,7 @@ private final class NotchCanvas: NSView {
                 let underlay = CABasicAnimation(keyPath: "backgroundColor")
                 underlay.fromValue = NSColor.black.cgColor
                 underlay.toValue = layer?.backgroundColor
-                underlay.duration = 0.1
+                underlay.duration = 0.1 / PerformanceMode.motionSpeed
                 underlay.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 layer?.add(underlay, forKey: "everything.growUnderlay")
             }
@@ -1265,21 +1277,15 @@ private final class NotchCanvas: NSView {
         }
         if collapsesToBlack {
             collapsesToBlack = false
-            let timing = CAMediaTimingFunction(name: .easeOut)
-            let glass = CABasicAnimation(keyPath: "opacity")
-            glass.fromValue = backdrop.layer?.presentation()?.opacity ?? 1
-            glass.toValue = 0
+            // Glass over black shows its bright rim at the bezel, so the
+            // glass goes at once and the black carries the close.
             closingToBlack = true
             freezesBackdropContour = true
             layer?.removeAnimation(forKey: Self.collapseFadeKey)
+            backdrop.layer?.removeAnimation(forKey: Self.collapseFadeKey)
             layer?.backgroundColor = NSColor.black.cgColor
-            for (target, fade) in [(backdrop.layer, glass)] {
-                fade.duration = 0.2
-                fade.timingFunction = timing
-                fade.fillMode = .forwards
-                fade.isRemovedOnCompletion = false
-                target?.add(fade, forKey: Self.collapseFadeKey)
-            }
+            backdrop.layer?.opacity = 0
+            backdropHeldHidden = true
             if let borderAnimation = animation.copy() as? CAAnimation {
                 borderAnimation.delegate = nil
                 edge.add(borderAnimation, forKey: Self.motionKey)
@@ -1406,7 +1412,7 @@ private final class NotchCanvas: NSView {
             let animation = CAKeyframeAnimation(keyPath: "opacity")
             animation.values = [0, 0, 1]
             animation.keyTimes = [0, 0.75, 1]
-            animation.duration = 0.34
+            animation.duration = 0.34 / PerformanceMode.motionSpeed
             animation.timingFunctions = [CAMediaTimingFunction(name: .linear),
                                          CAMediaTimingFunction(name: .easeOut)]
             contentVisibility.opacity = 1
@@ -1415,7 +1421,7 @@ private final class NotchCanvas: NSView {
             let reveal = CAKeyframeAnimation(keyPath: "opacity")
             reveal.values = [0, 0, 1]
             reveal.keyTimes = [0, 0.18, 1]
-            reveal.duration = 0.26
+            reveal.duration = 0.26 / PerformanceMode.motionSpeed
             reveal.timingFunctions = [CAMediaTimingFunction(name: .linear),
                                       CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)]
             contentVisibility.opacity = 1
@@ -1435,7 +1441,7 @@ private final class NotchCanvas: NSView {
             if kind == .depart {
                 animation.values = [currentOpacity, 0]
                 animation.keyTimes = [0, 1]
-                animation.duration = 0.1
+                animation.duration = 0.1 / PerformanceMode.motionSpeed
                 animation.timingFunctions = [CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 1)]
                 animation.fillMode = .forwards
                 animation.isRemovedOnCompletion = false
@@ -1460,7 +1466,7 @@ private final class NotchCanvas: NSView {
         animation.toValue = 1
         animation.beginTime = CACurrentMediaTime() + 0.04
         animation.fillMode = .backwards
-        animation.duration = 0.16
+        animation.duration = 0.16 / PerformanceMode.motionSpeed
         animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         contentVisibility.removeAnimation(forKey: "notch.opacity")
         contentVisibility.add(animation, forKey: "notch.opacity")
@@ -1559,7 +1565,7 @@ private final class NotchCanvas: NSView {
     func showMascotBridge(look: NotchMascotLook, size: CGFloat, mood: NotchMascotMood, from: CGFloat, to: CGFloat,
                           baseline: CGFloat, duration: CFTimeInterval, scale: (from: CGFloat, to: CGFloat),
                           trailsGrowth: Bool, hop: CGFloat) {
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = PerformanceMode.reduceMotion
         let timing = trailsGrowth ? CAMediaTimingFunction(controlPoints: 0.6, 0, 0.3, 1)
             : CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
         mascotBridgeSpot = (to, baseline, size)
@@ -1601,11 +1607,11 @@ private final class NotchCanvas: NSView {
     func hideMascotBridge(fading: Bool = false) {
         mascotBridgeSpot = nil
         guard fading, !mascotBridge.isHidden, let layer = mascotBridge.layer,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { concealMascotBridge(); return }
+              !PerformanceMode.reduceMotion else { concealMascotBridge(); return }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = layer.presentation()?.opacity ?? 1
         fade.toValue = 0
-        fade.duration = 0.12
+        fade.duration = 0.12 / PerformanceMode.motionSpeed
         fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
         fade.fillMode = .forwards
         fade.isRemovedOnCompletion = false

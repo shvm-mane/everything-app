@@ -9,7 +9,9 @@ struct RadialMenuView: View {
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     @AppStorage(DefaultsKey.liquidGlassEnabled) private var liquidGlassEnabled = false
 
     @State private var wedgeAngle = 0.0
@@ -91,7 +93,7 @@ struct RadialMenuView: View {
             .overlay(Circle().strokeBorder(PanelSurface.border(for: colorScheme), lineWidth: 0.8))
             .overlay(sliceGuides)
             .frame(width: RadialMenuLayout.wheelDiameter, height: RadialMenuLayout.wheelDiameter)
-            .shadow(color: .black.opacity(colorScheme == .light ? 0.22 : 0.55), radius: 24, y: 8)
+            .shadow(color: .black.opacity(colorScheme == .light ? 0.12 : 0.28), radius: 16, y: 5)
     }
 
     @ViewBuilder
@@ -284,7 +286,9 @@ private struct RadialChipView: View {
             Image(nsImage: customImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 27, height: 27)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: RadialMenuLayout.chipSize, height: RadialMenuLayout.chipSize)
+                .clipShape(Circle())
         } else if item.usesFileIcon {
             Image(nsImage: RadialMenuIconStore.fileIcon(for: item.payload))
                 .resizable()

@@ -15,18 +15,6 @@ enum FontSize: String, CaseIterable {
         let idx = all.firstIndex(of: self) ?? 0
         return all[(idx + 1) % all.count]
     }
-
-    var larger: FontSize {
-        let all = FontSize.allCases
-        let idx = all.firstIndex(of: self) ?? 0
-        return all[min(idx + 1, all.count - 1)]
-    }
-
-    var smaller: FontSize {
-        let all = FontSize.allCases
-        let idx = all.firstIndex(of: self) ?? 0
-        return all[max(idx - 1, 0)]
-    }
 }
 
 @MainActor
@@ -72,12 +60,9 @@ final class EditorModel: ObservableObject {
     @Published private(set) var findCurrentDisplayIndex: Int = 0
     @Published var findHighlightToken: Int = 0
     private(set) var findHighlightRange = NSRange(location: 0, length: 0)
-    @Published private(set) var reminderFlashToken: Int = 0
-    private(set) var reminderFlashRange = NSRange(location: 0, length: 0)
     private var findMatches: [NSRange] = []
     private var findIndex = 0
 
-    weak var editor: NoteEditor?
 
     private static let placeholders = [
         "What's on your mind?",
@@ -115,7 +100,7 @@ final class EditorModel: ObservableObject {
     }
 
     @Published private(set) var reduceTransparency =
-        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+        PerformanceMode.reduceTransparency {
         didSet { onChromeChange?() }
     }
 
@@ -188,7 +173,7 @@ final class EditorModel: ObservableObject {
             object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+                self?.reduceTransparency = PerformanceMode.reduceTransparency
             }
         }
         let hasSeenTour = UserDefaults.standard.bool(forKey: "wisp.HasSeenFirstRunTour")
@@ -206,7 +191,6 @@ final class EditorModel: ObservableObject {
             text = loaded
             lastSavedText = loaded
             lastLoadedMTime = Self.fileMTime(at: url)
-            ReminderStore.shared.loaded(loaded)
         } else {
             StorageLocation.startDownloadIfPlaceholder()
         }
@@ -273,17 +257,14 @@ final class EditorModel: ObservableObject {
         }
         lastSavedText = loaded
         lastLoadedMTime = mtime
-        ReminderStore.shared.loaded(loaded)
     }
 
     func adoptLoadedText(_ newText: String) {
-        if newText != text { ReminderStore.shared.archive(noteText: text, keeping: newText) }
         isReloading = true
         text = newText
         isReloading = false
         lastSavedText = newText
         lastLoadedMTime = Self.fileMTime(at: StorageLocation.currentURL)
-        ReminderStore.shared.loaded(newText)
     }
 
     nonisolated private static func fileMTime(at url: URL) -> Date? {
@@ -300,9 +281,6 @@ final class EditorModel: ObservableObject {
         requestFocus()
     }
 
-    func makeTextLarger() { fontSize = fontSize.larger }
-    func makeTextSmaller() { fontSize = fontSize.smaller }
-    func resetTextSize() { fontSize = .medium }
 
     func cycleTheme() {
         themePreference = themePreference.next
@@ -345,24 +323,6 @@ final class EditorModel: ObservableObject {
         guard themePreference == .system else { return }
         let resolved = themePreference.resolve()
         _ = resolved
-    }
-
-    func markReminderDone(id: String) {
-        reloadFromDiskIfChanged()
-        guard let reminder = ReminderStore.shared.reminder(id: id),
-              let range = ReminderStore.shared.locate(reminder, in: text) else { return }
-        let ticked = Reminders.ticked(reminder.line)
-        if editor?.replaceLine(range, reading: reminder.line, with: ticked) != true {
-            text = (text as NSString).replacingCharacters(in: range, with: ticked)
-        }
-        saveNow()
-    }
-
-    func showReminder(id: String) {
-        guard let reminder = ReminderStore.shared.reminder(id: id),
-              let range = ReminderStore.shared.locate(reminder, in: text) else { return }
-        reminderFlashRange = range
-        reminderFlashToken &+= 1
     }
 
     func jumpTo(_ heading: Heading) {
@@ -466,7 +426,6 @@ final class EditorModel: ObservableObject {
         } catch {
             saveFailed = true
         }
-        ReminderStore.shared.reconcile(noteText: newText)
     }
 
     private func scheduleSave() {
@@ -493,7 +452,9 @@ struct EditorView: View {
     var hotKeyDisplay: String = ""
     var showsHeader = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.displayScale) private var displayScale
 
@@ -513,13 +474,10 @@ struct EditorView: View {
                         scrollTarget: model.scrollTarget,
                         findHighlightToken: model.findHighlightToken,
                         findHighlightRange: model.findHighlightRange,
-                        reminderFlashToken: model.reminderFlashToken,
-                        reminderFlashRange: model.reminderFlashRange,
                         fontSize: model.fontSize,
                         fontFace: model.fontFace,
                         theme: model.theme,
-                        transparency: model.effectiveTransparency,
-                        connect: { model.editor = $0 }
+                        transparency: model.effectiveTransparency
                     )
                     .padding(.horizontal, 10)
                     .padding(.top, 2)
@@ -536,10 +494,12 @@ struct EditorView: View {
                     }
                 }
                 if !showsHeader {
+                    if !model.headings.isEmpty {
+                        Rectangle().fill(.white.opacity(0.1)).frame(height: 0.5)
+                    }
                     HeaderBar(headings: model.headings) { heading in
                         model.jumpTo(heading)
                     }
-                    .padding(.bottom, 2)
                 } else {
                 BottomBar(
                     wordCount: model.wordCount,

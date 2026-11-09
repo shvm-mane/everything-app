@@ -1066,7 +1066,7 @@ struct NotchMascotView: NSViewRepresentable {
         let view = NotchMascotHostView(frame: CGRect(x: 0, y: 0, width: size, height: size))
         view.followsDrag = followsDrag
         view.configure(look: look, size: size, mood: mood, idles: idles,
-                       reduceMotion: context.environment.accessibilityReduceMotion, animated: false)
+                       reduceMotion: context.environment.accessibilityReduceMotion || PerformanceMode.isOn, animated: false)
         if let reaction {
             view.react(NotchMascotReactionEvent(id: UUID(), reaction: reaction, start: CACurrentMediaTime()),
                        lift: size * 0.32)
@@ -1076,7 +1076,7 @@ struct NotchMascotView: NSViewRepresentable {
 
     func updateNSView(_ view: NotchMascotHostView, context: Context) {
         view.configure(look: look, size: size, mood: mood, idles: idles,
-                       reduceMotion: context.environment.accessibilityReduceMotion, animated: true)
+                       reduceMotion: context.environment.accessibilityReduceMotion || PerformanceMode.isOn, animated: true)
         view.place(at: nil, visible: nil)
         if let cue { view.play(cue, id: cueID) }
     }
@@ -1102,7 +1102,7 @@ struct NotchMascotTrackView: NSViewRepresentable {
 
     func updateNSView(_ view: NotchMascotHostView, context: Context) {
         view.configure(look: look, size: track.size, mood: awake ? mood : .sleepy, idles: rests && awake,
-                       reduceMotion: context.environment.accessibilityReduceMotion, animated: true)
+                       reduceMotion: context.environment.accessibilityReduceMotion || PerformanceMode.isOn, animated: true)
         let x = rests ? track.rest : track.mirrored ? -track.size * 2 : track.width + track.size * 2
         var visible: [CGRect]?
         if let hidden = track.hidden {
@@ -1130,7 +1130,9 @@ struct NotchMascotActivityVisit: ViewModifier {
     @ObservedObject var service: NotchService
     let track: NotchMascotTrack?
     var ownStrip = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     func body(content: Content) -> some View {
         let visit = track == nil ? nil : service.mascotVisit.flatMap {

@@ -8,7 +8,9 @@ struct NotchLyricsView: View {
     @ObservedObject private var service = NotchLyricsService.shared
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(DefaultsKey.notchLyricsOnline) private var online = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     private var text: NotchMusicExtrasStrings { FeatureStrings.notchMusicExtras(l10n.language) }
 
     var body: some View {

@@ -1231,7 +1231,7 @@ final class ClipboardHistoryService: ObservableObject {
                               min(target.origin.y, visibleFrame.maxY - target.height - 16))
         panel.setFrame(target,
                        display: true,
-                       animate: animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                       animate: animated && !PerformanceMode.reduceMotion)
     }
 
     private func installKeyMonitor(for panel: NSPanel) {

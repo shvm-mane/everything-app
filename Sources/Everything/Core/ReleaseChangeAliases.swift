@@ -70,8 +70,6 @@ enum ReleaseChangeAliases {
         case .shelf: return [.exact("Shelf"), .island("shelf"), "drop zone", "docked shelf", "temporary shelf",
             "on the shelf", "shelf files"]
         case .urlCleaner: return ["clean url", "url cleaner", "url cleaning"]
-        case .diskImageInstaller: return ["disk image installer", "disk images", "disk image",
-            "disk image installation"]
         case .mixer: return ["volume mixer", "sound mixer", "mixer", "per-app audio output", "per-app output",
             "app's volume"]
         case .soundOutputSwitcher: return ["output switcher", "sound output switcher"]

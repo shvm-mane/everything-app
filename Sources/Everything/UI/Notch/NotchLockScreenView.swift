@@ -33,7 +33,9 @@ struct NotchLockScreenIsland: View {
     var window: CGSize? = nil
     var origin: CGPoint = .zero
     @ObservedObject private var music = NotchMusicService.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     var body: some View {
         let wing = max(0, (size.width - cameraWidth) / 2)
@@ -72,7 +74,9 @@ struct NotchLockScreenIsland: View {
 
 private struct NotchLockScreenGlass: ViewModifier {
     let cornerRadius: CGFloat
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
@@ -134,7 +138,9 @@ struct NotchLockScreenPlayer: View {
     let size: CGSize
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     @State private var requestedPlaying: Bool?
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }
     private var accent: Color { music.artworkTint?.color ?? .white }
@@ -271,7 +277,9 @@ struct NotchLockScreenActivities: View {
     @AppStorage(DefaultsKey.notchAgentsReadout) private var readout = NotchAgentReadout.elapsed.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitFocus) private var focus = NotchAgentLimitFocus.mostUsed.rawValue
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in

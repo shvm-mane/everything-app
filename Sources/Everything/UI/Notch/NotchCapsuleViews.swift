@@ -59,7 +59,9 @@ struct NotchCapsuleNoticeView: View {
     let notice: NotchNotice
     let geometry: NotchGeometry
     let size: CGSize
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private var tint: Color {
         switch notice.event {
@@ -100,11 +102,13 @@ struct NotchCapsuleNoticeView: View {
             NotchMeter(value: level, height: CapsuleLayout.meterHeight, tint: tint)
                 .frame(width: CapsuleLayout.meterWidth)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: level)
-            Text(notice.detail)
-                .font(Font(CapsuleLayout.levelFont as CTFont))
-                .lineLimit(1)
-                .contentTransition(.numericText())
-                .frame(width: CapsuleLayout.levelReadingWidth(notice.detail), alignment: .trailing)
+            if !notice.detail.isEmpty {
+                Text(notice.detail)
+                    .font(Font(CapsuleLayout.levelFont as CTFont))
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+                    .frame(width: CapsuleLayout.levelReadingWidth(notice.detail), alignment: .trailing)
+            }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: notice.detail)
         .transaction { $0.disablesAnimations = false }
@@ -155,7 +159,9 @@ struct NotchCapsuleRestingView: View {
     @AppStorage(DefaultsKey.notchLowBatteryThreshold) private var lowBatteryThreshold = NotchSupport.defaultLowBatteryThreshold
     @AppStorage(DefaultsKey.notchLowBatteryEarly) private var earlyBatteryWarning = false
     @AppStorage(DefaultsKey.notchLowBatteryEarlyThreshold) private var earlyBatteryThreshold = NotchSupport.defaultEarlyBatteryThreshold
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     let size: CGSize
     var displayGeometry: NotchGeometry? = nil
 
@@ -228,7 +234,9 @@ struct NotchCapsuleMusicStrip: View {
     var interactive = false
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private var geometry: NotchGeometry { snapshot?.geometry ?? displayGeometry ?? service.geometry }
     private var shown: NotchCompactMusicSnapshot? {

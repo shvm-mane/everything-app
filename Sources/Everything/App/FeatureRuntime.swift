@@ -37,7 +37,6 @@ final class FeatureRuntime: ObservableObject {
             AudioInputDeviceManager.shared.syncWithPreferences()
         },
         .brightness: { BrightnessService.shared.syncWithPreferences() },
-        .diskImageInstaller: { DiskImageInstallerService.shared.syncWithPreferences() },
         .colorPicker: { ScreenCaptureService.shared.syncWithPreferences() },
     ]
 }

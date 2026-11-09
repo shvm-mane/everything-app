@@ -8,7 +8,9 @@ struct NotchScrollEdgeFade: ViewModifier {
     var length: CGFloat = 16
     @State private var beyondStart = false
     @State private var beyondEnd = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     func body(content: Content) -> some View {
         if #available(macOS 15, *) {

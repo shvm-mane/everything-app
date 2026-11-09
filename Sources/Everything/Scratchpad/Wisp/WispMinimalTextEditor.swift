@@ -8,13 +8,10 @@ struct MinimalTextEditor: NSViewRepresentable {
     var scrollTarget: Int
     var findHighlightToken: Int
     var findHighlightRange: NSRange
-    var reminderFlashToken: Int
-    var reminderFlashRange: NSRange
     var fontSize: FontSize
     var fontFace: FontFace
     var theme: WispTheme
     var transparency: Transparency
-    var connect: (NoteEditor) -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = CaretTextView.scrollableTextView()
@@ -60,8 +57,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         textView.textStorage?.delegate = context.coordinator
         context.coordinator.observeWidth(of: scrollView, textView: textView)
         context.coordinator.textView = textView
-        context.coordinator.observeReminders(in: textView)
-        connect(context.coordinator)
 
         Self.applyPalette(
             to: textView, face: fontFace, size: fontSize,
@@ -101,14 +96,12 @@ struct MinimalTextEditor: NSViewRepresentable {
             }
         }
         coordinator.stopObservingWidth()
-        coordinator.stopObservingReminders()
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
             textView.string = text
-            context.coordinator.forgetDrafts()
             context.coordinator.pendingEdit = nil
             context.coordinator.lastHighlight = nil
             if let storage = textView.textStorage {
@@ -164,13 +157,6 @@ struct MinimalTextEditor: NSViewRepresentable {
                 textView.window?.makeFirstResponder(textView)
             }
         }
-        if context.coordinator.lastReminderFlashToken != reminderFlashToken {
-            context.coordinator.lastReminderFlashToken = reminderFlashToken
-            let range = reminderFlashRange
-            DispatchQueue.main.async {
-                context.coordinator.flash(range, in: textView)
-            }
-        }
         if context.coordinator.lastFindHighlightToken != findHighlightToken {
             context.coordinator.lastFindHighlightToken = findHighlightToken
             let range = findHighlightRange
@@ -209,7 +195,6 @@ struct MinimalTextEditor: NSViewRepresentable {
     private func applyFont(to textView: NSTextView) {
         let font = Self.makeFont(face: fontFace, size: fontSize.pointSize)
         textView.font = font
-        (textView as? CaretTextView)?.labelFont = font
         var attrs = textView.typingAttributes
         attrs[.font] = font
         textView.typingAttributes = attrs
@@ -245,8 +230,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             lm.ruleColor = palette.divider
             lm.codeBlockColor = WispPalette.codeBackground(for: theme, transparency: transparency)
         }
-        (textView as? CaretTextView)?.answerColor = palette.text.withAlphaComponent(0.5)
-        (textView as? CaretTextView)?.labelFont = font
         if let storage = textView.textStorage {
             restyle(storage, face: face, size: size, theme: theme, transparency: transparency)
         }
@@ -271,7 +254,7 @@ struct MinimalTextEditor: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NoteEditor, NSTextViewDelegate, NSTextStorageDelegate, NSGestureRecognizerDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate, NSGestureRecognizerDelegate {
         var text: Binding<String>
         var lastFocusToken: Int = 0
         var lastScrollToken: Int = 0
@@ -284,24 +267,7 @@ struct MinimalTextEditor: NSViewRepresentable {
         var lastHighlight: NSRange?
         private var typedSingleCharacter = false
         private var widthObserver: NSObjectProtocol?
-        var lastReminderFlashToken = 0
-        private var draftReminders: Set<String> = []
-        private var draftOrigins: [String: String] = [:] {
-            didSet { if draftOrigins != oldValue { reminderStore.editing = draftOrigins } }
-        }
-        private var restoredDrafts: Set<String> = []
-        private var editIsUndo = false
-        private var editInserts = ""
-        private var lineBeforeEdit: String?
         weak var textView: NSTextView?
-        private var inTextDidChange = false
-        lazy var reminderStore: ReminderStore = .shared
-        private var reminderObservers: [NSObjectProtocol] = []
-        private var flashTimer: Timer?
-        private var flashStep = 0
-        private weak var flashLayoutManager: NSLayoutManager?
-        private var flashRange = NSRange(location: 0, length: 0)
-        private var flashHoldsStill = false
 
         init(text: Binding<String>) {
             self.text = text
@@ -359,10 +325,7 @@ struct MinimalTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            inTextDidChange = true
-            defer { inTextDidChange = false }
             text.wrappedValue = textView.string
-            stopFlash()
 
             typedSingleCharacter = false
 
@@ -377,175 +340,11 @@ struct MinimalTextEditor: NSViewRepresentable {
                 edited: clearsHighlight ? nil : edited
             )
             redrawLines(around: edited, in: textView)
-            noteDraftReminders(around: edited, in: textView)
-            commitDraftReminders(in: textView, includingCaretLine: false)
-        }
-
-        // MARK: Reminders
-
-        private func noteDraftReminders(around edited: NSRange, in textView: NSTextView) {
-            let before = lineBeforeEdit
-            lineBeforeEdit = nil
-            guard let storage = textView.textStorage else { return }
-            let ns = storage.string as NSString
-            let start = min(edited.location, ns.length)
-            let end = min(max(start, NSMaxRange(edited)), ns.length)
-            let lines = ns.lineRange(for: NSRange(location: start, length: end - start))
-            guard ns.range(of: "remind me", options: .caseInsensitive, range: lines).location != NSNotFound
-                    || before.map({ draftReminders.contains($0) }) == true else { return }
-            var edited: [(line: String, range: NSRange)] = []
-            ns.enumerateSubstrings(in: lines, options: .byLines) { line, range, _, _ in
-                if let line { edited.append((line, range)) }
-            }
-            var origin = before
-            if let before, !edited.contains(where: { $0.line == before }) {
-                draftReminders.remove(before)
-                restoredDrafts.remove(before)
-                if let inherited = draftOrigins.removeValue(forKey: before) { origin = inherited }
-            }
-            for (line, range) in edited where line != before && Reminders.isReminder(line)
-                && !reminderStore.isExternal(line)
-                && (range.location >= storage.length
-                    || storage.attribute(.wispCodeBlock, at: range.location, effectiveRange: nil) == nil) {
-                draftReminders.insert(line)
-                let putBack = editIsUndo || editInserts.contains(line) || before.map { Reminders.ticked(line) == $0 } == true
-                if putBack { restoredDrafts.insert(line) } else { restoredDrafts.remove(line) }
-                if let origin { draftOrigins[line] = origin }
-            }
-        }
-
-        func commitDraftReminders(in textView: NSTextView, includingCaretLine: Bool) {
-            guard !draftReminders.isEmpty else { return }
-            let ns = textView.string as NSString
-            let caret = min(textView.selectedRange().location, ns.length)
-            let caretLine = Self.lineText(at: caret, in: ns)
-            let finished = draftReminders.filter { includingCaretLine || $0 != caretLine }
-            guard !finished.isEmpty else { return }
-            let inNote = ReminderStore.present(finished, in: textView.string)
-            for draft in finished {
-                draftReminders.remove(draft)
-                let origin = draftOrigins.removeValue(forKey: draft)
-                let restored = restoredDrafts.remove(draft) != nil
-                if inNote.contains(draft) { reminderStore.commit(line: draft, origin: origin, restored: restored) }
-            }
-        }
-
-        func forgetDrafts() {
-            draftReminders = []
-            draftOrigins = [:]
-            restoredDrafts = []
-            lineBeforeEdit = nil
-        }
-
-        // MARK: NoteEditor
-
-        func finishEditing() {
-            guard let textView else { return }
-            commitDraftReminders(in: textView, includingCaretLine: true)
-        }
-
-        func replaceLine(_ range: NSRange, reading line: String, with replacement: String) -> Bool {
-            guard let textView else { return false }
-            return replaceLine(range, reading: line, with: replacement, in: textView)
-        }
-
-        private func replaceLine(_ range: NSRange, reading line: String, with replacement: String, in textView: NSTextView) -> Bool {
-            guard textView.string == text.wrappedValue else { return false }
-            let ns = textView.string as NSString
-            guard NSMaxRange(range) <= ns.length,
-                  ns.lineRange(for: NSRange(location: range.location, length: 0)).location == range.location,
-                  Self.lineText(at: range.location, in: ns) == line else { return false }
-            LineEditing.apply(
-                LineEditing.replacing(range, with: replacement, keeping: textView.selectedRange()),
-                to: textView, scroll: false
-            )
-            return true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView, !textView.isFieldEditor,
                   pendingEdit == nil else { return }
-            commitDraftReminders(in: textView, includingCaretLine: false)
-        }
-
-        func observeReminders(in textView: NSTextView) {
-            let center = NotificationCenter.default
-            reminderObservers.append(center.addObserver(
-                forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
-            ) { [weak self, weak textView] note in
-                let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
-                MainActor.assumeIsolated {
-                    guard let self, let textView, sender == textView.window.map(ObjectIdentifier.init) else { return }
-                    self.commitDraftReminders(in: textView, includingCaretLine: true)
-                }
-            })
-            reminderObservers.append(center.addObserver(
-                forName: ReminderStore.didChange, object: nil, queue: .main
-            ) { [weak textView] _ in
-                MainActor.assumeIsolated { textView?.needsDisplay = true }
-            })
-        }
-
-        func stopObservingReminders() {
-            reminderObservers.forEach(NotificationCenter.default.removeObserver)
-            reminderObservers = []
-            flashTimer?.invalidate()
-        }
-
-        func flash(_ range: NSRange, in textView: NSTextView) {
-            guard let layoutManager = textView.layoutManager,
-                  range.length > 0, NSMaxRange(range) <= (textView.string as NSString).length else { return }
-            textView.window?.makeFirstResponder(textView)
-            textView.setSelectedRange(NSRange(location: NSMaxRange(range), length: 0))
-            textView.scrollRangeToVisible(range)
-            flashTimer?.invalidate()
-            if let previous = flashLayoutManager {
-                previous.removeTemporaryAttribute(.backgroundColor, forCharacterRange: flashRange)
-            }
-            layoutManager.addTemporaryAttribute(.backgroundColor, value: Self.flashColor(1), forCharacterRange: range)
-            flashLayoutManager = layoutManager
-            flashRange = range
-            flashStep = 0
-            flashHoldsStill = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            flashTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.stepFlash() }
-            }
-        }
-
-        private func stopFlash() {
-            guard flashTimer?.isValid == true || flashLayoutManager != nil else { return }
-            flashTimer?.invalidate()
-            if let layoutManager = flashLayoutManager, let storage = layoutManager.textStorage {
-                layoutManager.removeTemporaryAttribute(
-                    .backgroundColor, forCharacterRange: NSRange(location: 0, length: storage.length)
-                )
-            }
-            flashLayoutManager = nil
-        }
-
-        private func stepFlash() {
-            guard let layoutManager = flashLayoutManager else {
-                flashTimer?.invalidate()
-                return
-            }
-            flashStep += 1
-            let strength = flashHoldsStill
-                ? (flashStep < 15 ? 1.0 : 0.0)
-                : min(1, max(0, 1 - Double(flashStep - 5) / 10))
-            if strength <= 0 {
-                layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: flashRange)
-                flashTimer?.invalidate()
-            } else {
-                layoutManager.addTemporaryAttribute(.backgroundColor, value: Self.flashColor(strength), forCharacterRange: flashRange)
-            }
-        }
-
-        private static func flashColor(_ strength: Double) -> NSColor {
-            NSColor.controlAccentColor.withAlphaComponent(0.28 * strength)
-        }
-
-        private static func lineText(at location: Int, in ns: NSString) -> String {
-            LineEditing.splitTerminator(ns.substring(with: ns.lineRange(for: NSRange(location: location, length: 0)))).body
         }
 
         private func redrawLines(around edited: NSRange, in textView: NSTextView) {
@@ -569,7 +368,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             guard let click = recognizer as? NSClickGestureRecognizer,
                   let textView = recognizer.view as? NSTextView else { return false }
             let point = click.location(in: textView)
-            if (textView as? CaretTextView)?.reminderTick(at: point) != nil { return true }
             if NSEvent.modifierFlags.contains(.command) {
                 return Self.link(in: textView, at: point) != nil
             }
@@ -579,7 +377,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         @objc func handleCheckboxClick(_ recognizer: NSClickGestureRecognizer) {
             guard let textView = recognizer.view as? NSTextView else { return }
             let point = recognizer.location(in: textView)
-            if tickReminder(at: point, in: textView) { return }
             if NSEvent.modifierFlags.contains(.command) {
                 if let url = Self.link(in: textView, at: point) {
                     NSWorkspace.shared.open(url)
@@ -599,13 +396,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             while lineEnd > line.location, ns.character(at: lineEnd - 1) == 0x0A { lineEnd -= 1 }
             let inMarker = selection.location >= line.location && selection.location <= NSMaxRange(box)
             textView.setSelectedRange(inMarker ? NSRange(location: lineEnd, length: 0) : selection)
-        }
-
-        func tickReminder(at point: NSPoint, in textView: NSTextView) -> Bool {
-            guard let line = (textView as? CaretTextView)?.reminderTick(at: point) else { return false }
-            let text = (textView.string as NSString).substring(with: line)
-            _ = replaceLine(line, reading: text, with: Reminders.ticked(text), in: textView)
-            return true
         }
 
         private static func isInCodeBlock(_ textView: NSTextView, at location: Int) -> Bool {
@@ -637,6 +427,24 @@ struct MinimalTextEditor: NSViewRepresentable {
             return index < (textView.string as NSString).length ? index : nil
         }
 
+        /// Keeps the caret out of the hidden `- [ ] ` marker drawn as a checkbox.
+        func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange old: NSRange,
+                      toCharacterRange new: NSRange) -> NSRange {
+            guard new.length == 0 else { return new }
+            let ns = textView.string as NSString
+            guard new.location <= ns.length else { return new }
+            let lineRange = ns.lineRange(for: NSRange(location: new.location, length: 0))
+            let line = ns.substring(with: lineRange)
+            guard let box = Checkbox.boxRange(in: line) else { return new }
+            var end = lineRange.location + NSMaxRange(box)
+            if end < ns.length, ns.character(at: end) == 0x20 { end += 1 }
+            guard new.location < end else { return new }
+            if old.length == 0, old.location == end, new.location < end, lineRange.location > 0 {
+                return NSRange(location: lineRange.location - 1, length: 0)
+            }
+            return NSRange(location: end, length: 0)
+        }
+
         private static func checkboxRange(in textView: NSTextView, at point: NSPoint) -> NSRange? {
             guard let index = characterIndex(in: textView, at: point) else { return nil }
             let ns = textView.string as NSString
@@ -654,9 +462,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 return handleEnter(in: textView)
             }
-            if commandSelector == #selector(NSResponder.insertTab(_:)) {
-                return acceptAnswer(in: textView)
-            }
             return false
         }
 
@@ -667,17 +472,6 @@ struct MinimalTextEditor: NSViewRepresentable {
         ) -> Bool {
             typedSingleCharacter = affectedCharRange.length == 0
                 && (replacementString as NSString?)?.length == 1
-            if !inTextDidChange {
-                editIsUndo = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
-                editInserts = replacementString ?? ""
-            }
-            if !inTextDidChange, !(textView.hasMarkedText() && lineBeforeEdit != nil) {
-                let ns = textView.string as NSString
-                let line = ns.lineRange(for: NSRange(location: min(affectedCharRange.location, ns.length), length: 0))
-                lineBeforeEdit = NSMaxRange(affectedCharRange) <= NSMaxRange(line)
-                    ? Self.lineText(at: line.location, in: ns) : nil
-            }
-
             guard replacementString == "-",
                   affectedCharRange.length == 0
             else { return true }
@@ -705,27 +499,6 @@ struct MinimalTextEditor: NSViewRepresentable {
             let twoDashRange = NSRange(location: lineRange.location, length: 2)
             replaceWithHorizontalRule(in: textView, range: twoDashRange)
             return false
-        }
-
-        private func acceptAnswer(in textView: NSTextView) -> Bool {
-            guard let storage = textView.textStorage,
-                  let insertion = Self.answerInsertion(in: storage, selection: textView.selectedRange())
-            else { return false }
-            replace(in: textView, range: NSRange(location: insertion.location, length: 0), with: insertion.text)
-            return true
-        }
-
-        static func answerInsertion(in storage: NSTextStorage, selection: NSRange) -> (location: Int, text: String)? {
-            let ns = storage.string as NSString
-            let caret = selection.location
-            guard selection.length == 0, caret > 0, caret <= ns.length,
-                  let answer = storage.attribute(.wispMathAnswer, at: caret - 1, effectiveRange: nil) as? String
-            else { return nil }
-            var i = caret
-            while i < ns.length, ns.character(at: i) == 0x20 || ns.character(at: i) == 0x09 { i += 1 }
-            guard i == ns.length || [0x0A, 0x0D, 0x2028, 0x2029].contains(ns.character(at: i)) else { return nil }
-            let gap = ns.character(at: caret - 1) == 0x3D ? " " : ""
-            return (caret, gap + answer)
         }
 
         private func handleEnter(in textView: NSTextView) -> Bool {
@@ -790,10 +563,4 @@ struct MinimalTextEditor: NSViewRepresentable {
             textView.scrollRangeToVisible(newRange)
         }
     }
-}
-
-@MainActor
-protocol NoteEditor: AnyObject {
-    func finishEditing()
-    func replaceLine(_ range: NSRange, reading line: String, with replacement: String) -> Bool
 }

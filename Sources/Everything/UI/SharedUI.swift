@@ -45,7 +45,9 @@ struct HUDBackdrop: View {
     var opacity: Double = 1
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     @AppStorage(DefaultsKey.liquidGlassEnabled) private var liquidGlassEnabled = false
 
     private var materialOpacity: Double {

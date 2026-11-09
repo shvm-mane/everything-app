@@ -69,7 +69,7 @@ struct NotchLevelSlider: NSViewRepresentable {
             slider.doubleValue = bounded
             if NotchSliderEasing.eases(enabled: easesChanges,
                                        onScreen: slider.window?.occlusionState.contains(.visible) == true,
-                                       reduceMotion: context.environment.accessibilityReduceMotion,
+                                       reduceMotion: context.environment.accessibilityReduceMotion || PerformanceMode.isOn,
                                        tracking: cell?.isTracking != false) {
                 context.coordinator.ease(from: drawn, to: bounded)
             } else {
@@ -204,8 +204,25 @@ private final class NotchLevelCell: NSSliderCell {
             : bounds.insetBy(dx: 1, dy: max(1, bounds.height * 0.11))
     }
 
+    // The knob is invisible, so map the pointer onto the drawn bar rather
+    // than AppKit's knob travel, which is inset at both ends.
+    private func track(_ point: NSPoint, in controlView: NSView) {
+        let bar = barRect(flipped: controlView.isFlipped)
+        let fraction = isFader
+            ? (controlView.isFlipped ? bar.maxY - point.y : point.y - bar.minY) / max(1, bar.height)
+            : (point.x - bar.minX) / max(1, bar.width)
+        doubleValue = minValue + Double(min(1, max(0, fraction))) * (maxValue - minValue)
+    }
+
+    override func continueTracking(last lastPoint: NSPoint, current currentPoint: NSPoint, in controlView: NSView) -> Bool {
+        let continues = super.continueTracking(last: lastPoint, current: currentPoint, in: controlView)
+        track(currentPoint, in: controlView)
+        return continues
+    }
+
     override func startTracking(at startPoint: NSPoint, in controlView: NSView) -> Bool {
         let started = super.startTracking(at: startPoint, in: controlView)
+        track(startPoint, in: controlView)
         if started {
             isTracking = true
             trackingChanged?(true)

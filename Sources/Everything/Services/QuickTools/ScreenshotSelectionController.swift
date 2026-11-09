@@ -1224,7 +1224,7 @@ private final class ScreenshotOverlayView: NSView {
     }
 
     func refreshGuideVisibility() {
-        guard screenCaptureOptions?.controlsInNotch != true, let panel else {
+        guard screenCaptureOptions?.controlsInNotch != true, controller?.isPickingColor != true, let panel else {
             guideHost.isHidden = true
             return
         }
@@ -1690,7 +1690,9 @@ private struct CaptureChromeBackdrop<S: Shape>: View {
     let shape: S
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
 
     private var plateOpacity: Double {
         guard !reduceTransparency else { return 0 }

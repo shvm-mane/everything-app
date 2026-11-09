@@ -19,7 +19,9 @@ struct NotchMusicStrip: View {
     var interactive = false
     @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private typealias Layout = NotchMusicStripLayout
     private var geometry: NotchGeometry { snapshot?.geometry ?? displayGeometry ?? service.compactActivityGeometry }
@@ -157,7 +159,9 @@ struct NotchMusicStripButton: View {
     let playing: Bool
     let tint: Color
     let height: CGFloat
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     var body: some View {
         let symbol = playing ? "pause.fill" : "play.fill"
@@ -177,7 +181,9 @@ struct NotchMusicStripButton: View {
 
 struct NotchMusicSwipeFeedback: ViewModifier {
     var enabled = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     @State private var trigger = 0
     @State private var direction: CGFloat = -1
 

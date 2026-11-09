@@ -61,7 +61,9 @@ struct NotchQuickAccessView: View {
     @ObservedObject private var microphone = MicMuteService.shared
     @ObservedObject private var recorder = ScreenRecorderService.shared
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var followsGlass: Bool {
@@ -141,7 +143,7 @@ struct NotchQuickAccessView: View {
             .frame(width: NotchQuickAccessLayout.width, height: height)
             .background(followsGlass ? Color.black.opacity(0.02) : Color.black, in: Capsule())
             .overlay {
-                Capsule().strokeBorder(.white.opacity(selected || contrast == .increased ? 0.5 : 0.14), lineWidth: 0.75)
+                Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.75)
                     .allowsHitTesting(false)
             }
             .contentShape(Capsule())

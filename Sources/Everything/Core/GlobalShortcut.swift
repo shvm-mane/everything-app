@@ -209,6 +209,8 @@ struct GlobalShortcut: Equatable, Hashable {
                                                   modifiers: [.control, .option, .command])
     static let scratchpadDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                   modifiers: [.option])
+    static let claudeUsageDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_U),
+                                                   modifiers: [.option, .command])
     static let notchDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_I),
                                              modifiers: [.control, .option, .command])
     static let snippetLibraryDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_L),

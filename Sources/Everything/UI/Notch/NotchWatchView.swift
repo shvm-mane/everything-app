@@ -20,7 +20,9 @@ struct NotchWatchThumbnail: View {
 struct NotchWatchEye: View {
     let size: CGFloat
     var hidden = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     var body: some View {
         NotchWatchEyeBridge(size: size, hidden: hidden, animates: !hidden && !reduceMotion)

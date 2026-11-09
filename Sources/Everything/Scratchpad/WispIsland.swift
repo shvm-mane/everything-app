@@ -28,7 +28,6 @@ final class WispIsland {
     }
 
     func prepareToExit() {
-        model.editor?.finishEditing()
         model.flushSave()
     }
 

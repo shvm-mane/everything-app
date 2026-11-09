@@ -31,15 +31,7 @@ enum HelpContent {
                 Row(what: "Make a task, or tick it off", how: ["⌘L"], kind: .keys),
                 Row(what: "Move the line up or down", how: ["⌥↑", "⌥↓"], kind: .keys),
                 Row(what: "Open a link", how: ["⌘-click"], kind: .keys),
-                Row(what: "Text size", how: ["⌘-", "⌘=", "⌘0"], kind: .keys),
                 Row(what: "Insert today's date", how: ["⇧⌘D"], kind: .keys),
-            ]),
-            Section(title: "Calculate — end a line with =", rows: [
-                Row(what: "Sums", how: ["12 × 3 + 4 ="], kind: .syntax),
-                Row(what: "Units", how: ["5 km in mi ="], kind: .syntax),
-                Row(what: "Percentages", how: ["20% of 150 ="], kind: .syntax),
-                Row(what: "Money, symbol kept", how: ["$12 × 3 ="], kind: .syntax),
-                Row(what: "Type the answer in", how: ["Tab"], kind: .keys),
             ]),
             Section(title: "Markdown", rows: [
                 Row(what: "Heading, listed in the top bar", how: ["#", "##", "###"], kind: .syntax),
@@ -48,17 +40,6 @@ enum HelpContent {
                 Row(what: "Bold, italic", how: ["**bold**", "*italic*"], kind: .syntax),
                 Row(what: "Code, inline or fenced", how: ["`code`", "```"], kind: .syntax),
                 Row(what: "Divider", how: ["---"], kind: .syntax),
-                Row(what: "Emoji", how: [":rocket:", ":check:", ":bulb:"], kind: .syntax),
-            ]),
-            Section(title: "Menu bar icon, right-click", rows: [
-                Row(what: "Eight fonts, serif and sans", how: ["Font"], kind: .menu),
-                Row(what: "How much desktop shows through", how: ["wisp.Transparency"], kind: .menu),
-                Row(what: "Change the keybind", how: ["Set Keybind…"], kind: .menu),
-                Row(what: "Start with your Mac", how: ["Launch at Login"], kind: .menu),
-                Row(what: "Close on a click elsewhere", how: ["Close When Clicking Outside"], kind: .menu),
-                Row(what: "Follow the pointer across displays", how: ["Open on Pointer's Screen"], kind: .menu),
-                Row(what: "Sync with iCloud Drive or Dropbox", how: ["Storage Location…"], kind: .menu),
-                Row(what: "Earlier versions", how: ["Reveal in Finder"], kind: .menu),
             ]),
         ]
     }

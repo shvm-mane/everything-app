@@ -1,178 +1,6 @@
 import AppKit
 
 final class CaretTextView: NSTextView {
-    var answerColor: NSColor = .tertiaryLabelColor {
-        didSet { needsDisplay = true }
-    }
-
-    var labelFont: NSFont? {
-        didSet { needsDisplay = true }
-    }
-
-    static var reminderLabel: ((String) -> TrailingLabel?)?
-
-    override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
-        drawAnswers(in: rect)
-    }
-
-    private func drawAnswers(in dirtyRect: NSRect) {
-        guard let layoutManager, let container = textContainer,
-              let storage = textStorage, storage.length > 0 else { return }
-        let origin = textContainerOrigin
-        let band = NSRect(
-            x: 0, y: dirtyRect.minY - origin.y,
-            width: container.size.width, height: dirtyRect.height
-        )
-        let glyphs = layoutManager.glyphRange(forBoundingRect: band, in: container)
-        guard glyphs.length > 0 else { return }
-        let chars = layoutManager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
-        storage.enumerateAttribute(.wispMathAnswer, in: chars) { value, range, _ in
-            guard let answer = value as? String, range.length > 0 else { return }
-            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? bodyFont
-            if let place = placement([(range.length == 1 ? " " : "", answer)], symbol: nil, fitting: false,
-                                     after: range, font: font) {
-                draw(place, symbol: nil, font: font, strong: false)
-            }
-        }
-        for (anchor, label) in reminderLabels(in: chars) {
-            guard let (place, symbol) = reminderPlacement(label, after: anchor) else { continue }
-            draw(place, symbol: symbol, font: bodyFont, strong: hoveredTick == NSMaxRange(anchor))
-        }
-    }
-
-    private func reminderLabels(in range: NSRange) -> [(anchor: NSRange, label: TrailingLabel)] {
-        guard let hook = Self.reminderLabel, let storage = textStorage else { return [] }
-        let ns = storage.string as NSString
-        var found: [(NSRange, TrailingLabel)] = []
-        ns.enumerateSubstrings(in: ns.lineRange(for: range), options: [.byLines, .substringNotRequired]) { _, line, _, _ in
-            guard Reminders.mightBeReminder(ns, line),
-                  storage.attribute(.wispCodeBlock, at: line.location, effectiveRange: nil) == nil,
-                  let anchor = Self.labelAnchor(of: line, in: ns),
-                  let label = hook(ns.substring(with: line)) else { return }
-            found.append((anchor, label))
-        }
-        return found
-    }
-
-    static func labelAnchor(of line: NSRange, in ns: NSString) -> NSRange? {
-        var end = NSMaxRange(line)
-        while end > line.location, ns.character(at: end - 1) == 0x20 || ns.character(at: end - 1) == 0x09 { end -= 1 }
-        return end > line.location ? line : nil
-    }
-
-    private struct Placement {
-        let text: String
-        let textOrigin: NSPoint
-        let symbolRect: NSRect?
-    }
-
-    private func reminderPlacement(_ label: TrailingLabel, after range: NSRange) -> (Placement, NSImage?)? {
-        guard let storage = textStorage, NSMaxRange(range) <= storage.length else { return nil }
-        let last = (storage.string as NSString).character(at: NSMaxRange(range) - 1)
-        let lead = last == 0x20 || last == 0x09 ? "  " : "   "
-        let symbol = label.symbol.flatMap { symbolImage($0, font: bodyFont) }
-        var candidates = [(lead, label.full), (lead, label.short), (" ", label.short)]
-        if symbol != nil { candidates.append((" ", "")) }
-        return placement(candidates, symbol: symbol, fitting: true, after: range, font: bodyFont).map { ($0, symbol) }
-    }
-
-    private var symbolCache: [String: NSImage] = [:]
-
-    private func symbolImage(_ name: String, font: NSFont) -> NSImage? {
-        let key = "\(name) \(font.pointSize) \(answerColor)"
-        if let cached = symbolCache[key] { return cached }
-        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize * 0.8, weight: .regular)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [answerColor.withAlphaComponent(1)]))
-        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) else { return nil }
-        if symbolCache.count > 8 { symbolCache = [:] }
-        symbolCache[key] = image
-        return image
-    }
-
-    private var bodyFont: NSFont { labelFont ?? font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize) }
-
-    private func placement(
-        _ candidates: [(lead: String, text: String)], symbol: NSImage?, fitting: Bool,
-        after range: NSRange, font: NSFont
-    ) -> Placement? {
-        guard let layoutManager, let container = textContainer, NSMaxRange(range) > 0 else { return nil }
-        let origin = textContainerOrigin
-        let last = layoutManager.glyphIndexForCharacter(at: NSMaxRange(range) - 1)
-        guard last < layoutManager.numberOfGlyphs else { return nil }
-        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: last, length: 1), in: container)
-        let fragment = layoutManager.lineFragmentRect(forGlyphAt: last, effectiveRange: nil)
-        let baseline = fragment.minY + layoutManager.location(forGlyphAt: last).y
-        let x = origin.x + glyphRect.maxX
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        func width(_ text: String) -> CGFloat { (text as NSString).size(withAttributes: attributes).width }
-        let space = width(" ")
-        let symbolWidth = symbol.map { $0.size.width } ?? 0
-        func total(_ c: (lead: String, text: String)) -> CGFloat {
-            width(c.lead) + (symbol == nil ? 0 : symbolWidth + (c.text.isEmpty ? 0 : space)) + width(c.text)
-        }
-        let room = visibleRect.maxX - x - 4
-        guard let chosen = fitting ? candidates.first(where: { total($0) <= room }) : candidates.first else { return nil }
-        var at = x + width(chosen.lead)
-        var symbolRect: NSRect?
-        if let symbol {
-            let middle = origin.y + baseline - font.capHeight / 2
-            symbolRect = NSRect(x: at, y: middle - symbol.size.height / 2, width: symbol.size.width, height: symbol.size.height)
-            at += symbolWidth + space
-        }
-        return Placement(text: chosen.text, textOrigin: NSPoint(x: at, y: origin.y + baseline - font.ascender), symbolRect: symbolRect)
-    }
-
-    private func draw(_ place: Placement, symbol: NSImage?, font: NSFont, strong: Bool) {
-        if let symbol, let rect = place.symbolRect {
-            symbol.draw(in: rect, from: .zero, operation: .sourceOver,
-                        fraction: strong ? 1 : answerColor.alphaComponent, respectFlipped: true, hints: nil)
-        }
-        NSAttributedString(string: place.text, attributes: [.font: font, .foregroundColor: answerColor])
-            .draw(at: place.textOrigin)
-    }
-
-    // MARK: The tick on a sent reminder
-
-    private var hoveredTick: Int? {
-        didSet {
-            guard hoveredTick != oldValue else { return }
-            toolTip = hoveredTick == nil ? nil : "Mark done"
-        }
-    }
-    private var hoveredRect: NSRect? {
-        didSet {
-            guard hoveredRect != oldValue else { return }
-            if let oldValue { setNeedsDisplay(oldValue) }
-            if let hoveredRect { setNeedsDisplay(hoveredRect) }
-        }
-    }
-
-    private var tickTracking: NSTrackingArea?
-
-    func reminderTick(at point: NSPoint) -> NSRange? {
-        tickHit(at: point)?.line
-    }
-
-    private func tickHit(at point: NSPoint) -> (line: NSRange, labelEnd: Int, rect: NSRect)? {
-        guard let layoutManager, let container = textContainer, let storage = textStorage,
-              storage.length > 0, layoutManager.numberOfGlyphs > 0 else { return nil }
-        let origin = textContainerOrigin
-        let glyph = layoutManager.glyphIndex(for: NSPoint(x: point.x - origin.x, y: point.y - origin.y), in: container)
-        let ns = storage.string as NSString
-        let index = min(layoutManager.characterIndexForGlyph(at: glyph), ns.length - 1)
-        var start = 0, end = 0, contentsEnd = 0
-        ns.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: index, length: 0))
-        for (anchor, label) in reminderLabels(in: NSRange(location: start, length: contentsEnd - start)) where label.ticksLine {
-            guard let place = reminderPlacement(label, after: anchor)?.0, let symbol = place.symbolRect,
-                  symbol.insetBy(dx: -4, dy: -4).contains(point) else { continue }
-            let whole = symbol.union(NSRect(origin: place.textOrigin, size: NSSize(width: visibleRect.maxX - place.textOrigin.x, height: symbol.height)))
-            return (NSRange(location: start, length: contentsEnd - start), NSMaxRange(anchor), whole.insetBy(dx: -4, dy: -4))
-        }
-        return nil
-    }
-
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 1, event.modifierFlags.intersection([.shift, .command, .option]).isEmpty,
            let layoutManager, let textContainer {
@@ -194,25 +22,6 @@ final class CaretTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tickTracking, trackingAreas.contains(tickTracking) { return }
-        let area = NSTrackingArea(
-            rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self, userInfo: nil
-        )
-        addTrackingArea(area)
-        tickTracking = area
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        let hit = tickHit(at: convert(event.locationInWindow, from: nil))
-        hoveredTick = hit?.labelEnd
-        hoveredRect = hit?.rect
-        if hit != nil { NSCursor.pointingHand.set() } else if isOverCheckbox(convert(event.locationInWindow, from: nil)) { NSCursor.arrow.set() }
-    }
-
     override func resetCursorRects() {
         super.resetCursorRects()
         guard let layoutManager, let textContainer, let storage = textStorage, storage.length > 0 else { return }
@@ -232,6 +41,11 @@ final class CaretTextView: NSTextView {
         else { super.cursorUpdate(with: event) }
     }
 
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        if isOverCheckbox(convert(event.locationInWindow, from: nil)) { NSCursor.arrow.set() }
+    }
+
     /// Whether `point` is over a task's drawn checkbox.
     private func isOverCheckbox(_ point: NSPoint) -> Bool {
         guard let layoutManager, let textContainer, let storage = textStorage, storage.length > 0 else { return false }
@@ -244,15 +58,7 @@ final class CaretTextView: NSTextView {
         return index < storage.length && storage.attribute(.wispCheckbox, at: index, effectiveRange: nil) != nil
     }
 
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        hoveredTick = nil
-        hoveredRect = nil
-    }
-
     override func didChangeText() {
-        hoveredTick = nil
-        hoveredRect = nil
         super.didChangeText()
         window?.invalidateCursorRects(for: self)
     }
@@ -298,9 +104,3 @@ final class CaretTextView: NSTextView {
     }
 }
 
-struct TrailingLabel: Equatable {
-    let full: String
-    let short: String
-    var symbol: String? = nil
-    var ticksLine = false
-}

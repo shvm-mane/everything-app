@@ -1,7 +1,6 @@
 import AppKit
 
 extension NSAttributedString.Key {
-    static let wispMathAnswer = NSAttributedString.Key("wispMathAnswer")
 
     static let wispLink = NSAttributedString.Key("wispLink")
     static let wispBullet = NSAttributedString.Key("wispBullet")
@@ -107,10 +106,6 @@ enum MarkdownStyler {
                 continue
             }
 
-            if !(Reminders.mightBeReminder(ns, content) && Reminders.isReminder(ns.substring(with: content))) {
-                styleAnswer(content, storage: storage, ns: ns)
-            }
-
             let first = ns.character(at: content.location)
             if first == 0x23,
                let match = headingPattern.firstMatch(in: text, range: content) {
@@ -149,27 +144,6 @@ enum MarkdownStyler {
         let paragraph = (style.body.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
         paragraph.headIndent = indent
         storage.addAttribute(.paragraphStyle, value: paragraph, range: content)
-    }
-
-    private static func styleAnswer(_ content: NSRange, storage: NSTextStorage, ns: NSString) {
-        var lineEnd = NSMaxRange(content)
-        while lineEnd > content.location, isBreak(ns.character(at: lineEnd - 1)) { lineEnd -= 1 }
-        var end = lineEnd
-        while end > content.location, ns.character(at: end - 1) == 0x20 || ns.character(at: end - 1) == 0x09 {
-            end -= 1
-        }
-        guard end > content.location, ns.character(at: end - 1) == 0x3D,
-              let answer = InlineMath.answer(
-                forLine: ns.substring(with: NSRange(location: content.location, length: lineEnd - content.location))
-              ) else { return }
-        storage.addAttribute(
-            .wispMathAnswer, value: answer,
-            range: NSRange(location: end - 1, length: lineEnd - (end - 1))
-        )
-    }
-
-    private static func isBreak(_ c: unichar) -> Bool {
-        c == 0x0A || c == 0x0D || c == 0x2028 || c == 0x2029
     }
 
     private static func styleCheckedItem(

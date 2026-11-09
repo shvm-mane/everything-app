@@ -7,7 +7,9 @@ struct NotchNoticeView: View {
     let notice: NotchNotice
     let geometry: NotchGeometry
     var hidesMascot = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private var wings: NotchNoticeWings { notice.wings(in: geometry) }
     private var tint: Color {

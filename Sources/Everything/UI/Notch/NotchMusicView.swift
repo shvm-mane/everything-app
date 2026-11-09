@@ -15,7 +15,9 @@ struct NotchMusicView: View {
     @AppStorage(DefaultsKey.notchMusicShowVolume) private var showVolume = false
     @State private var extra: MusicExtra?
     private enum MusicExtra { case lyrics, queue }
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     @Environment(\.notchSettingsPreview) private var preview
     @Environment(\.notchBand) private var band
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }
@@ -351,7 +353,9 @@ private struct NotchMusicSideButton: View {
     let tint: Color
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     private let height: CGFloat = 44
     private let plate: CGFloat = 32
 
@@ -459,7 +463,9 @@ private struct NotchMusicTransport: View {
     var slot: CGFloat? = nil
     @ObservedObject private var service = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
     @Environment(\.notchSettingsPreview) private var preview
     @State private var requestedPlaying: Bool?
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }

@@ -12,7 +12,10 @@ struct NotchView: View {
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceMode = false
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     private var text: NotchStrings { FeatureStrings.notch(l10n.language) }
 
     var body: some View {
@@ -29,6 +32,25 @@ struct NotchView: View {
             .foregroundStyle(.white)
             .background(shape.offset(x: service.surfaceShift).fill(Color.black.opacity(0.01)))
             .contentShape(shape.offset(x: service.surfaceShift))
+            .overlay {
+                if performanceMode, service.usesGlassSurface {
+                    // Without glass the open island gets the selected pill's
+                    // outline, fading out into the bezel at the top.
+                    shape.offset(x: service.surfaceShift)
+                        .stroke(.white.opacity(0.5), lineWidth: 1.5)
+                        .mask {
+                            VStack(spacing: 0) {
+                                LinearGradient(stops: [.init(color: .clear, location: 0),
+                                                       .init(color: .clear, location: 0.3),
+                                                       .init(color: .white, location: 1)],
+                                               startPoint: .top, endPoint: .bottom)
+                                    .frame(height: 64)
+                                Color.white
+                            }
+                        }
+                        .allowsHitTesting(false)
+                }
+            }
             .onTapGesture { }
             .onChange(of: reduceTransparency) {
                 DispatchQueue.main.async { service.refreshPresentation(animated: false) }
@@ -42,6 +64,7 @@ struct NotchView: View {
             .environment(\.notchGlassSurface, usesGlassSurface)
             .tint(.white)
             .accessibilityIdentifier("notch.surface")
+            .transaction { $0.animation = $0.animation?.speed(PerformanceMode.motionSpeed) }
     }
 
     private var usesGlassSurface: Bool {

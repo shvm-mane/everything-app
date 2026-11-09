@@ -77,8 +77,8 @@ final class HorizontalRuleLayoutManager: NSLayoutManager {
             let fragment = lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
             let baseline = fragment.minY + self.location(forGlyphAt: glyphs.location).y
             let side = (font.capHeight + 5).rounded()
-            let midY = origin.y + baseline - font.xHeight / 2
-            let box = NSRect(x: origin.x + whole.maxX - side - 2, y: midY - side / 2, width: side, height: side)
+            let midY = origin.y + baseline - (font.ascender + font.descender) / 2
+            let box = NSRect(x: origin.x + whole.maxX - side - 4, y: midY - side / 2, width: side, height: side)
             let path = NSBezierPath(roundedRect: box, xRadius: side * 0.28, yRadius: side * 0.28)
             if mark.checked {
                 mark.color.withAlphaComponent(0.85).setFill()
@@ -115,7 +115,12 @@ final class HorizontalRuleLayoutManager: NSLayoutManager {
                         forGlyphAt: glyphRange.location,
                         effectiveRange: nil
                     )
-                    let cy = origin.y + fragmentRect.midY
+                    // Line height multiple adds its extra above the glyphs;
+                    // centre on the gap between neighbouring text instead.
+                    let font = (textStorage.attribute(.font, at: lineRange.location, effectiveRange: nil) as? NSFont)
+                        ?? NSFont.systemFont(ofSize: 14)
+                    let natural = defaultLineHeight(for: font)
+                    let cy = origin.y + fragmentRect.midY + max(0, fragmentRect.height - natural) / 2
                     let lineRect = CGRect(
                         x: origin.x + fragmentRect.minX,
                         y: cy - 0.5,

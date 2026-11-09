@@ -829,7 +829,7 @@ enum NotchCapsuleLayout {
     }
 
     static func noticeContent(title: String, detail: String, level: Bool) -> CGFloat {
-        if level { return symbolWidth + spacing + meterWidth + spacing + levelReadingWidth(detail) }
+        if level { return symbolWidth + spacing + meterWidth + (detail.isEmpty ? 0 : spacing + levelReadingWidth(detail)) }
         let detailWidth = width(detail, font: detailFont)
         return symbolWidth + spacing + width(title, font: titleFont) + (detailWidth > 0 ? groupSpacing + detailWidth : 0)
     }
@@ -1218,7 +1218,7 @@ enum NotchQuickAccessLayout {
     static let gap: CGFloat = 10
     static let gutter: CGFloat = 64
     static let rowSpacing: CGFloat = 54
-    static let withdrawalDuration = 0.06
+    static let withdrawalDuration = 0.03
     static let hoverMargin: CGFloat = 16
     static let hoverExitDelay = 0.18
 
@@ -2256,6 +2256,7 @@ enum NotchMotion {
 
         func progress(at time: TimeInterval) -> Double {
             guard time > 0 else { return 0 }
+            let time = time * PerformanceMode.motionSpeed
             let natural = 2 * Double.pi / duration
             let damping = 1 - bounce
             if damping >= 1 { return 1 - exp(-natural * time) * (1 + natural * time) }

@@ -93,6 +93,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var showsKeyboardFocus = false
     @Published private(set) var shortcutRegistrationFailed = false
     private let hotkey = QuickToolHotkey(id: 81)
+    private let claudeHotkey = QuickToolHotkey(id: 90)
     @Published private(set) var peeking = false
     @Published private(set) var dragPlaceholder = false
     @Published private(set) var choosingFileDropDestination = false
@@ -297,6 +298,7 @@ final class NotchService: ObservableObject {
 
     private init() {
         hotkey.onPress = { [weak self] in self?.toggleFromShortcut() }
+        claudeHotkey.onPress = { [weak self] in self?.toggleClaudeUsage() }
     }
 
     private var hiddenUntilHover: Bool {
@@ -422,7 +424,7 @@ final class NotchService: ObservableObject {
     }
 
     private func switchCompactSelection(_ change: () -> Void) {
-        let animation: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animation: Animation? = PerformanceMode.reduceMotion
             ? nil : .smooth(duration: 0.2)
         withAnimation(animation) {
             objectWillChange.send()
@@ -974,6 +976,17 @@ final class NotchService: ObservableObject {
         let failed = !hotkey.sync(enabled: NotchSupport.holdsShortcut() && !ShortcutCapture.isCapturing,
                                   shortcut: shortcut, storageKey: DefaultsKey.notchShortcut)
         if failed != shortcutRegistrationFailed { shortcutRegistrationFailed = failed }
+        let defaults = UserDefaults.standard
+        _ = claudeHotkey.sync(enabled: NotchAgentSupport.isEnabled() && !ShortcutCapture.isCapturing
+                                  && defaults.bool(forKey: DefaultsKey.claudeUsageShortcutEnabled),
+                              shortcut: GlobalShortcut.saved(for: DefaultsKey.claudeUsageShortcut, fallback: .claudeUsageDefault),
+                              storageKey: DefaultsKey.claudeUsageShortcut)
+    }
+
+    private func toggleClaudeUsage() {
+        guard acceptsUserInteraction, NotchAgentSupport.isEnabled() else { return }
+        if expanded, selected == .agents, !showingAppPanel, !showingSections, !showingCommandBar { collapse() }
+        else { open(.agents) }
     }
 
     private func refreshModules() {
@@ -991,6 +1004,7 @@ final class NotchService: ObservableObject {
     func stop(restoreCapture: Bool = true) {
         preferenceSyncWork?.cancel(); preferenceSyncWork = nil
         hotkey.unregister()
+        claudeHotkey.unregister()
         if shortcutRegistrationFailed { shortcutRegistrationFailed = false }
         NotchLyricsService.shared.stop()
         NotchFileToolsService.shared.stop()
@@ -1269,7 +1283,7 @@ final class NotchService: ObservableObject {
             && UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverExpands) && !showsCompactActivityPicker
         let emphasize = inside && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking && !dragPlaceholder
             && notice == nil && captureControls == nil && !opensOnHover
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            && !PerformanceMode.reduceMotion
         if hoverEmphasized != emphasize || showedPicker != showsCompactActivityPicker || unnamesMusic {
             hoverEmphasized = emphasize
             if unnamesMusic { syncMenuSpaceMonitoring() }
@@ -1934,8 +1948,8 @@ final class NotchService: ObservableObject {
     func showBrightness(_ level: Double) -> Bool {
         let text = FeatureStrings.notch(L10n.shared.language)
         return show(NotchNotice(event: .brightness, title: text.brightness,
-                                detail: "\(BrightnessSupport.wholePercent(level))%",
-                                symbol: "sun.max.fill", level: level))
+                                detail: "",
+                                symbol: level < 0.5 ? "sun.min.fill" : "sun.max.fill", level: level))
     }
 
     @discardableResult
@@ -2088,12 +2102,12 @@ final class NotchService: ObservableObject {
             && notice == nil && !dragPlaceholder && captureControls == nil
         if departingMusic != nil {
             if canKeepDeparting && requested == .none && animated
-                && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return .none }
+                && !PerformanceMode.reduceMotion { return .none }
             musicDepartureWork?.cancel(); musicDepartureWork = nil
             departingMusic = nil
             return requested == .none ? (animated ? .reveal : .replace) : requested
         }
-        guard requested == .none, animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+        guard requested == .none, animated, !PerformanceMode.reduceMotion,
               panel?.isVisible == true, let presentedMusic, !musicVisible else { return requested }
         if canKeepDeparting {
             departingMusic = heldMusic ?? presentedMusic
@@ -2173,7 +2187,7 @@ final class NotchService: ObservableObject {
                                color: compactActivityIsVisible && compactActivity == .timer ? .systemOrange : .white)
         if mascotBridging, !mascotBridgeTargetShows { endMascotBridgeNow(fading: true) }
         if mascotRestedInView, compactActivity != nil, !mascotLingers,
-           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+           !PerformanceMode.reduceMotion {
             NotificationCenter.default.post(name: .notchMascotRestYields, object: nil)
         }
         var presented = expanded ? expandedGeometry : geometry
@@ -3589,10 +3603,11 @@ final class NotchService: ObservableObject {
         if let output, output.isHeadphones {
             symbol = NotchAccessorySupport.symbol(for: .audio, name: output.name)
         } else {
-            symbol = value == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill"
+            symbol = value == 0 ? "speaker.slash.fill"
+                : value < 0.34 ? "speaker.wave.1.fill" : value < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
         }
         return show(NotchNotice(event: .volume, title: FeatureStrings.notch(L10n.shared.language).volume,
-                                detail: "\(Int((value * 100).rounded()))%",
+                                detail: "",
                                 symbol: symbol, level: value))
     }
 
@@ -3754,7 +3769,7 @@ extension NotchService {
             return
         }
         let coversNothing = mascotRestsInView || (mascotTucked && idleContent == .none && compactActivity == nil)
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, !coversNothing {
+        if PerformanceMode.reduceMotion, !coversNothing {
             if asked { beginMascotCameo(.celebrate) } else { scheduleMascotVisit(after: NotchMascotSupport.nextVisitDelay()) }
             return
         }
@@ -3770,7 +3785,7 @@ extension NotchService {
         mascotVisitWork?.cancel(); mascotVisitWork = nil
         guard let ended = mascotVisit else { return }
         if ended.kind.reaction != nil, mascotRestsInView, CACurrentMediaTime() >= ended.start + ended.duration - 0.05,
-           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+           !PerformanceMode.reduceMotion {
             let back = NotchMascotVisit(id: UUID(), kind: .arrive, greeting: .idle,
                                         start: max(ended.start + ended.duration, CACurrentMediaTime() - 0.1))
             setMascotVisit(back)
@@ -3780,7 +3795,7 @@ extension NotchService {
             return
         }
         if running, !NotchMascotSupport.isEnabled(), !ended.kind.endsOutOfSight, ended.kind != .farewell,
-           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, idleContent == .none, compactActivity == nil,
+           !PerformanceMode.reduceMotion, idleContent == .none, compactActivity == nil,
            !mascotInBar, canHostMascotVisit() {
             let farewell = NotchMascotVisit(id: UUID(), kind: .farewell, greeting: .happy, start: CACurrentMediaTime())
             setMascotVisit(farewell)
@@ -3817,7 +3832,7 @@ extension NotchService {
     }
 
     fileprivate func stageMascotEntrance(arriving: Bool) {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, idleContent == .none,
+        guard !PerformanceMode.reduceMotion, idleContent == .none,
               compactActivity == nil, !mascotInBar, arriving || !mascotTucked, canHostMascotVisit(),
               arriving ? mascotVisit == nil || mascotVisit?.kind == .farewell : mascotVisit == nil else { return }
         let visit = NotchMascotVisit(id: UUID(), kind: arriving ? .arrive : .farewell,
@@ -3892,7 +3907,7 @@ extension NotchService {
         let shown = mascotRestsInView && canHostMascotVisit()
         mascotTucked = true
         mascotTuckWork?.cancel(); mascotTuckWork = nil
-        guard shown, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return true }
+        guard shown, !PerformanceMode.reduceMotion else { return true }
         let tuck = NotchMascotVisit(id: UUID(), kind: NotchMascotSupport.hideAway, greeting: .idle,
                                     start: CACurrentMediaTime())
         mascotVisitWork?.cancel()
@@ -3987,7 +4002,7 @@ extension NotchService {
         guard away != mascotInBar else { return }
         if away, mascotVisit != nil { endMascotVisit() }
         let home = homecoming.flatMap { mood -> NotchMascotVisit? in
-            guard !away, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, NotchMascotSupport.isEnabled(),
+            guard !away, !PerformanceMode.reduceMotion, NotchMascotSupport.isEnabled(),
                   !mascotTucked, idleContent == .none, compactActivity == nil, canHostMascotVisit(returning: true)
             else { return nil }
             return NotchMascotVisit(id: UUID(), kind: .home, greeting: mood, start: CACurrentMediaTime())
@@ -4007,7 +4022,7 @@ extension NotchService {
         if mascotBridging, notice != nil { endMascotBridgeNow() }
         guard incoming.mascot != nil, notice == nil, noticeCanPresent, mascotVisit == nil,
               NotchMascotSupport.isEnabled(), geometry.isNotched, !geometry.floats,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !PerformanceMode.reduceMotion,
               mascotRestsInView, canHostMascotVisit() else { return nil }
         endMascotBridgeNow()
         let from = mascotClosedOffset
@@ -4034,7 +4049,7 @@ extension NotchService {
 
     func mascotNoticeBridgeBackStart(from ending: NotchNotice?) -> CGFloat? {
         guard let ending, ending.mascot != nil, NotchMascotSupport.isEnabled(), mascotVisit == nil,
-              geometry.isNotched, !geometry.floats, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              geometry.isNotched, !geometry.floats, !PerformanceMode.reduceMotion,
               mascotRestsInView else { return nil }
         endMascotBridgeNow()
         let from = ending.mascotOffset(in: geometry)
@@ -4113,7 +4128,7 @@ extension NotchService {
         guard previous == nil || mascotVisit == nil else { return }
         mascotSideAtSync = side
         guard let previous, previous != side, !geometry.floats,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !PerformanceMode.reduceMotion,
               mascotRestsInView, canHostMascotVisit() else { return }
         let cross = NotchMascotVisit(id: UUID(), kind: .cross, greeting: .wink, start: CACurrentMediaTime())
         mutatePresentation { mascotVisit = cross }

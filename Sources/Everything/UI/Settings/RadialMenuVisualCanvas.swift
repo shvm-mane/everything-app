@@ -29,7 +29,9 @@ struct RadialMenuVisualCanvas: View {
     @State private var wedgeShown = false
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private let canvasHeight: CGFloat = 300
     private let wheelDiameter: CGFloat = 260
@@ -442,7 +444,9 @@ private struct RadialCanvasChip: View {
             Image(nsImage: customImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 26, height: 26)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
         } else if item.usesFileIcon {
             Image(nsImage: RadialMenuIconStore.fileIcon(for: item.payload))
                 .resizable()

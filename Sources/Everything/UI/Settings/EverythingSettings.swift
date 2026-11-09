@@ -197,6 +197,7 @@ private struct GeneralPage: View {
         UserDefaults.standard.bool(forKey: DefaultsKey.launchAtLoginWanted) ? .enabled : .off
     @State private var loginPending = false
     @State private var automation: OSStatus?
+    @AppStorage(PerformanceMode.key) private var performanceMode = false
 
     var body: some View {
         Form {
@@ -209,6 +210,10 @@ private struct GeneralPage: View {
                     LabeledContent("macOS needs your approval") {
                         Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                     }
+                }
+                Toggle(isOn: Binding(get: { !performanceMode }, set: { performanceMode = !$0 })) {
+                    Text("Liquid glass")
+                    Text("Glass, blur and extra animations. Turn off for the lightest footprint.")
                 }
             }
             Section {
@@ -312,6 +317,10 @@ private struct IslandPage: View {
 private struct ClaudePage: View {
     @ObservedObject private var usage = AgentUsageService.shared
     @AppStorage(DefaultsKey.notchAgentsEnabled) private var enabled = true
+    @AppStorage(DefaultsKey.claudeUsageShortcutEnabled) private var keybindOn = true
+    @AppStorage(DefaultsKey.claudeUsageShortcut) private var stored = GlobalShortcut.claudeUsageDefault.storageValue
+
+    private var shortcut: GlobalShortcut { GlobalShortcut(storageValue: stored) ?? .claudeUsageDefault }
 
     private static let claudeHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
     private var claudeFound: Bool { FileManager.default.fileExists(atPath: Self.claudeHome.path) }
@@ -323,6 +332,21 @@ private struct ClaudePage: View {
                     Text("Show Claude in the island")
                 }
                 LabeledContent {
+                    HStack(spacing: 8) {
+                        KeybindField(display: shortcut.displayString) { event in
+                            let modifiers = GlobalShortcutModifiers(eventFlags: event.modifierFlags)
+                            guard modifiers.hasPrimaryModifier else { return false }
+                            stored = GlobalShortcut(keyCode: Int64(event.keyCode), modifiers: modifiers).storageValue
+                            NotchService.shared.syncWithPreferences()
+                            return true
+                        }
+                        .disabled(!keybindOn || !enabled)
+                        Toggle("", isOn: $keybindOn).labelsHidden().toggleStyle(.switch).disabled(!enabled)
+                    }
+                } label: {
+                    Text("Keybind")
+                }
+                LabeledContent {
                     status(claudeFound ? (usage.snapshot.seen.contains(.claude) ? "Connected" : "Waiting for Claude Code") : "Not found",
                            ok: claudeFound)
                 } label: {
@@ -332,6 +356,7 @@ private struct ClaudePage: View {
         }
         .formStyle(.grouped)
         .onChange(of: enabled) { _, _ in NotchService.shared.syncWithPreferences() }
+        .onChange(of: keybindOn) { _, _ in NotchService.shared.syncWithPreferences() }
     }
 
     private func status(_ text: String, ok: Bool) -> some View {
@@ -375,11 +400,10 @@ private struct ScratchpadPage: View {
                 }
                 if Self.newYorkAvailable {
                     Picker(selection: Binding(
-                        get: { [.newYork, .sfMono].contains(model.fontFace) ? model.fontFace : FontFace.sanFrancisco },
+                        get: { model.fontFace == .newYork ? .newYork : FontFace.sanFrancisco },
                         set: { model.fontFace = $0 })) {
                         Text("SF Pro").tag(FontFace.sanFrancisco)
                         Text("New York").tag(FontFace.newYork)
-                        Text("SF Mono").tag(FontFace.sfMono)
                     } label: {
                         Text("Font")
                     }
@@ -413,7 +437,7 @@ private struct ScratchpadPage: View {
         .formStyle(.grouped)
         .onChange(of: keybindOn) { _, _ in ScratchpadService.shared.syncWithPreferences() }
         .onAppear {
-            if ![.sanFrancisco, .sfMono].contains(model.fontFace) && (model.fontFace != .newYork || !Self.newYorkAvailable) {
+            if model.fontFace != .sanFrancisco && (model.fontFace != .newYork || !Self.newYorkAvailable) {
                 model.fontFace = .sanFrancisco
             }
         }

@@ -10,7 +10,9 @@ struct NotchButtonStyle: ButtonStyle {
     var highlights = true
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     func makeBody(configuration: Configuration) -> some View {
         let active = enabled && hovered
@@ -72,7 +74,9 @@ struct NotchRollingDigits: ViewModifier {
     let value: String
     let countsDown: Bool
     var everySecond = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     func body(content: Content) -> some View {
         content
@@ -126,7 +130,9 @@ struct NotchIconButton: View {
     let title: String
     var selected = false
     let action: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     var body: some View {
         Button(action: action) {
@@ -255,7 +261,9 @@ struct NotchRail<Item: Identifiable, Content: View>: View {
     var rowSpacing: CGFloat = 8
     var scrollTarget: Item.ID? = nil
     @ViewBuilder let content: (Item) -> Content
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage(PerformanceMode.key) private var performanceModeMotion = false
+    private var reduceMotion: Bool { systemReduceMotion || performanceModeMotion }
 
     private var columns: Int { NotchLayout.railColumns(count: items.count, rows: rows) }
     private var starts: [Int] { Array(stride(from: 0, to: items.count, by: max(1, rows))) }
@@ -461,7 +469,9 @@ struct NotchSurfaceBackground: View {
     let glass: Bool
     var translucent = false
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
 
     private var offersGlass: Bool {
 #if compiler(>=6.2)
@@ -479,7 +489,7 @@ struct NotchSurfaceBackground: View {
         ZStack {
             Color.black.opacity(showsGlass || showsTranslucent ? presentation.restingBlack : 1)
 #if compiler(>=6.2)
-            if #available(macOS 26, *), showsGlass, presentation.restingBlack < 1 {
+            if #available(macOS 26, *), showsGlass {
                 let shape = NotchBackdropShape(contour: presentation.contour)
                 Color.clear
                     .glassEffect(.clear, in: shape)
@@ -492,6 +502,7 @@ struct NotchSurfaceBackground: View {
                             .frame(maxHeight: .infinity, alignment: .top)
                             .mask(shape)
                     }
+                    .opacity(presentation.restingBlack < 1 ? 1 : 0)
             }
 #endif
             if showsTranslucent, presentation.restingBlack < 1 {
@@ -590,7 +601,9 @@ struct NotchControlSurface: ViewModifier {
     var selected = false
     var interactive = true
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @AppStorage(PerformanceMode.key) private var performanceModeTransparency = false
+    private var reduceTransparency: Bool { systemReduceTransparency || performanceModeTransparency }
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.notchGlassSurface) private var glassSurface
 

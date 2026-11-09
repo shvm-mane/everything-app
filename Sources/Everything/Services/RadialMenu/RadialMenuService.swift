@@ -776,14 +776,16 @@ final class RadialMenuService: ObservableObject {
         panel.hasShadow = false
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
-        panel.contentViewController = NSHostingController(rootView: RadialMenuView())
+        panel.contentViewController = NSHostingController(rootView: RadialMenuView().transaction {
+            $0.animation = $0.animation?.speed(PerformanceMode.motionSpeed)
+        })
         self.panel = panel
         return panel
     }
 }
 
 private enum WheelMotion {
-    static var isEnabled: Bool { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    static var isEnabled: Bool { !PerformanceMode.reduceMotion }
 
     static func present(_ panel: NSPanel) {
         panel.ignoresMouseEvents = false

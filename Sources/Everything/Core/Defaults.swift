@@ -163,10 +163,7 @@ enum DefaultsKey {
     static let finderCutPasteShowHUD = "finderCutPasteShowHUD"
     static let finderRenameEnabled = "finderRenameEnabled"
     static let finderRenameShortcut = "finderRenameShortcut"
-    static let diskImageInstallerTrashesDownload = "diskImageInstallerTrashesDownload"
-    static let diskImageInstallerRevealsApp = "diskImageInstallerRevealsApp"
     static let finderPasteImageAsFile = "finderPasteImageAsFile"
-    static let diskImageInstallerUseUserApplications = "diskImageInstallerUseUserApplications"
     static let autoQuitEnabled = "autoQuitEnabled"
     static let autoQuitExceptions = "autoQuitExceptions"
     static let autoQuitDockApps = "autoQuitDockApps"
@@ -826,6 +823,8 @@ enum DefaultsKey {
     static let notchOpenOnHover = "notchOpenOnHover"
     static let notchShortcutEnabled = "notchShortcutEnabled"
     static let notchShortcut = "notchShortcut"
+    static let claudeUsageShortcutEnabled = "claudeUsageShortcutEnabled"
+    static let claudeUsageShortcut = "claudeUsageShortcut"
     static let notchHideInFullscreen = "notchHideInFullscreen"
     static let notchHoverInFullscreen = "notchHoverInFullscreen"
     static let notchHideUntilHover = "notchHideUntilHover"
@@ -1316,6 +1315,8 @@ enum Defaults {
         DefaultsKey.notchOpenOnHover: false,
         DefaultsKey.notchShortcutEnabled: false,
         DefaultsKey.notchShortcut: GlobalShortcut.notchDefault.storageValue,
+        DefaultsKey.claudeUsageShortcutEnabled: true,
+        DefaultsKey.claudeUsageShortcut: GlobalShortcut.claudeUsageDefault.storageValue,
         DefaultsKey.notchHideInFullscreen: false,
         DefaultsKey.notchHoverInFullscreen: false,
         DefaultsKey.notchHideUntilHover: false,
@@ -1603,9 +1604,6 @@ enum Defaults {
         DefaultsKey.pastePlainShortcut: GlobalShortcut.pastePlainDefault.storageValue,
         DefaultsKey.finderRenameEnabled: false,
         DefaultsKey.finderRenameShortcut: GlobalShortcut.finderRenameDefault.storageValue,
-        DefaultsKey.diskImageInstallerUseUserApplications: false,
-        DefaultsKey.diskImageInstallerTrashesDownload: true,
-        DefaultsKey.diskImageInstallerRevealsApp: false,
         DefaultsKey.colorPickerShortcutEnabled: false,
         DefaultsKey.colorPickerShortcut: GlobalShortcut.colorPickerDefault.storageValue,
         DefaultsKey.colorPickerFormat: "hex",
